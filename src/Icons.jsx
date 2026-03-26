@@ -18,6 +18,13 @@ export const IconStop = (p) => <I {...p} d="M6 6h12v12H6z" />;
 export const IconSkipPrev = (p) => <I {...p} d="M6 6h2v12H6zm3.5 6l8.5 6V6z" />;
 export const IconSkipNext = (p) => <I {...p} d="M6 18l8.5-6L6 6v12zM16 6v12h2V6h-2z" />;
 export const IconHelp = (p) => <I {...p} d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm1 17h-2v-2h2v2zm2.07-7.75l-.9.92C13.45 12.9 13 13.5 13 15h-2v-.5c0-1.1.45-2.1 1.17-2.83l1.24-1.26c.37-.36.59-.86.59-1.41 0-1.1-.9-2-2-2s-2 .9-2 2H8c0-2.21 1.79-4 4-4s4 1.79 4 4c0 .88-.36 1.68-.93 2.25z" />;
+export const IconInfo = ({ size = 18, color = "currentColor" }) => (
+  <svg viewBox="0 0 24 24" width={size} height={size} fill="none" style={s}>
+    <circle cx="12" cy="12" r="10" fill={color} />
+    <rect x="11" y="10" width="2" height="7" rx="1" fill="#fff" />
+    <circle cx="12" cy="7" r="1.25" fill="#fff" />
+  </svg>
+);
 export const IconEqualizer = (p) => <I {...p} d="M10 20h4V4h-4v16zm-6 0h4v-8H4v8zM16 9v11h4V9h-4z" />;
 
 // Export: cassette with down arrow

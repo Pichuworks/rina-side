@@ -1,15 +1,18 @@
 import React, { useState, useRef, useCallback, useMemo, useEffect } from "react";
-import { transcodeToWav, likelyNeedsTranscode, isSharedArrayBufferAvailable } from "./ffmpeg-helper.js";
-import { IconAdd, IconAutoAwesome, IconFileOpen, IconSave, IconPlay, IconPause, IconStop, IconSkipPrev, IconSkipNext, IconExport, IconHelp, IconTape, IconClearSide, IconClearAll, IconPalette } from "./Icons.jsx";
+import { transcodeToWav, likelyNeedsTranscode } from "./ffmpeg-helper.js";
+import { IconAdd, IconAutoAwesome, IconFileOpen, IconSave, IconPlay, IconStop, IconExport, IconHelp, IconClearSide, IconClearAll, IconPalette, IconInfo } from "./Icons.jsx";
 import Player from "./Player.jsx";
 import SideWaveform from "./SideWaveform.jsx";
 
 // ═══════════════════════════════════════════════════════════════
 // SIDE — Sequential Interleaved Dubbing Engine
 // 阿佐谷202室 磁带転写ツール
-// ver 0.3 — build 2026.03
+// ver 0.9 Release Candidate I
 // by 天使天才天王寺璃奈 (Angel, Genius, Tennoji Rina)
 // ═══════════════════════════════════════════════════════════════
+
+const APP_VERSION = "0.9 Release Candidate I";
+const APP_GITHUB = "https://github.com/Pichuworks/rina-side";
 
 // ── i18n ─────────────────────────────────────────────────────
 const LANGS = { "zh-CN": { label: "简中" }, ja: { label: "日本語" }, en: { label: "EN" } };
@@ -17,7 +20,7 @@ const LANGS = { "zh-CN": { label: "简中" }, ja: { label: "日本語" }, en: { 
 const I18N = {
   appTitle:        { "zh-CN": "SIDE — 磁带转录引擎", ja: "SIDE — 磁帯転写エンジン", en: "SIDE — Cassette Dubbing Engine" },
   appSubtitle:     { "zh-CN": "阿佐谷202室 · 磁带转录工具", ja: "阿佐ヶ谷202号室 · 磁帯転写ツール", en: "Asagaya Room 202 · Cassette Transcription Tool" },
-  appVersion:      { "zh-CN": "ver 0.3 · build 2026.03 · by 天使天才天王寺璃奈", ja: "ver 0.3 · build 2026.03 · by 天使天才天王寺璃奈", en: "ver 0.3 · build 2026.03 · by Angel, Genius, Tennoji Rina" },
+  appVersion:      { "zh-CN": `Ver ${APP_VERSION} · by 天使天才天王寺璃奈`, ja: `Ver ${APP_VERSION} · by 天使天才天王寺璃奈`, en: `Ver ${APP_VERSION} · by Angel, Genius, Tennoji Rina` },
   tapeSpec:        { "zh-CN": "磁带规格", ja: "テープ規格", en: "Tape Format" },
   tapeCustom:      { "zh-CN": "自定义", ja: "カスタム", en: "Custom" },
   minPerSide:      { "zh-CN": "分钟/面", ja: "min/面", en: "min/side" },
@@ -49,6 +52,7 @@ const I18N = {
   gap:             { "zh-CN": "间隔", ja: "ギャップ", en: "gap" },
   resetGap:        { "zh-CN": "重置", ja: "リセット", en: "reset" },
   tipSampleRate:   { "zh-CN": "采样率", ja: "サンプルレート", en: "Sample rate" },
+  tipBitDepth:     { "zh-CN": "位深", ja: "ビット深度", en: "Bit depth" },
   tipChannels:     { "zh-CN": "声道数", ja: "チャンネル数", en: "Channels" },
   tipPeakLevel:    { "zh-CN": "峰值电平", ja: "ピークレベル", en: "Peak level" },
   tipHeadSilence:  { "zh-CN": "音轨头部静音长度", ja: "トラック先頭の無音", en: "Head silence duration" },
@@ -76,43 +80,145 @@ const I18N = {
   clearSide:              { "zh-CN": "清空当前面", ja: "この面をクリア", en: "Clear this side" },
   clearAll:               { "zh-CN": "清空全部", ja: "全てクリア", en: "Clear all" },
   resampleWarn:           { "zh-CN": "以下音轨将被降采样", ja: "以下のトラックはダウンサンプリングされます", en: "The following tracks will be downsampled" },
+  bitDepthWarn:           { "zh-CN": "以下音轨将发生位深转换", ja: "以下のトラックはビット深度変換されます", en: "The following tracks will change bit depth" },
   prevTrack:              { "zh-CN": "上一曲", ja: "前の曲", en: "Previous" },
   nextTrack:              { "zh-CN": "下一曲", ja: "次の曲", en: "Next" },
   playlistImportError:    { "zh-CN": "歌单文件解析失败", ja: "プレイリスト解析エラー", en: "Failed to parse playlist" },
   effectiveCapacity:      { "zh-CN": "有效容量", ja: "実効容量", en: "Effective capacity" },
+  help:                   { "zh-CN": "帮助", ja: "ヘルプ", en: "Help" },
+  theme:                  { "zh-CN": "主题配色", ja: "テーマ配色", en: "Theme" },
+  about:                  { "zh-CN": "关于", ja: "About", en: "About" },
 };
 
 function t(key, lang) { const e = I18N[key]; return e ? (e[lang] || e["zh-CN"] || key) : key; }
+function themeName(key, lang) {
+  const names = THEME_NAMES[key];
+  return names ? (names[lang] || names["zh-CN"] || key) : key;
+}
 const RINA_SMILE = "[^_^]";
 
 // ── Constants ────────────────────────────────────────────────
 // ── Character Themes ────────────────────────────────────────
 // Colors based on official 応援色, adjusted for UI readability
 const THEMES = {
-  default:  {name:"Default",      accent:"#D4859A",bg:"#F5F3F0",bgCard:"#FFFFFF",bgDeep:"#EBE8E4",border:"#D5D0CA",accentDim:"#F2D6DE",sideA:"#7BA3C9",sideB:"#82B891",group:""},
-  rina:     {name:"天王寺璃奈",    accent:"#D4859A",bg:"#F8F4F5",bgCard:"#FFFFFF",bgDeep:"#F0E8EB",border:"#DDD2D6",accentDim:"#F2D6DE",sideA:"#7BA3C9",sideB:"#82B891",group:"niji"},
-  keke:     {name:"唐可可",        accent:"#49BDF0",bg:"#F2F7FA",bgCard:"#FAFCFF",bgDeep:"#E4EEF5",border:"#C8D8E4",accentDim:"#CCE8FA",sideA:"#49BDF0",sideB:"#82B891",group:"liella"},
-  tomori:   {name:"高松灯",        accent:"#77BBDD",bg:"#F2F6F9",bgCard:"#FAFCFF",bgDeep:"#E4EDF4",border:"#C8D5DF",accentDim:"#D0E5F3",sideA:"#77BBDD",sideB:"#82B891",group:"mygo"},
-  raana:    {name:"要乐奈",        accent:"#77DD77",bg:"#F2F8F2",bgCard:"#FAFFFA",bgDeep:"#E2EEE2",border:"#C5D8C5",accentDim:"#C8F0C8",sideA:"#7BA3C9",sideB:"#77DD77",group:"mygo"},
-  soyo:     {name:"长崎爽世",      accent:"#DDAA11",bg:"#F9F7F0",bgCard:"#FFFEF8",bgDeep:"#F0ECDD",border:"#DDD7C4",accentDim:"#F0E4C0",sideA:"#7BA3C9",sideB:"#DDAA11",group:"mygo"},
-  anon:     {name:"千早爱音",      accent:"#FF8899",bg:"#FAF3F4",bgCard:"#FFFAFB",bgDeep:"#F2E6E8",border:"#E0D0D4",accentDim:"#FFD8DF",sideA:"#7BA3C9",sideB:"#FF8899",group:"mygo"},
-  taki:     {name:"椎名立希",      accent:"#7777AA",bg:"#F4F3F8",bgCard:"#FBFAFF",bgDeep:"#E6E3F0",border:"#D0CDD9",accentDim:"#D4D0E8",sideA:"#7777AA",sideB:"#82B891",group:"mygo"},
-  sakiko:   {name:"丰川祥子",      accent:"#7799CC",bg:"#F2F5F9",bgCard:"#FAFBFF",bgDeep:"#E4ECF4",border:"#C8D2DF",accentDim:"#CCDCf0",sideA:"#7799CC",sideB:"#82B891",group:"mujica"},
-  mutsumi:  {name:"若叶睦",        accent:"#779977",bg:"#F3F7F3",bgCard:"#FAFFF9",bgDeep:"#E4EDE3",border:"#C8D5C6",accentDim:"#CCE0CC",sideA:"#7BA3C9",sideB:"#779977",group:"mujica"},
-  nyamu:    {name:"祐天寺若麦",    accent:"#AA4477",bg:"#F8F2F5",bgCard:"#FFFAFC",bgDeep:"#F0E4EA",border:"#DDD0D6",accentDim:"#E8C4D6",sideA:"#7BA3C9",sideB:"#AA4477",group:"mujica"},
-  hatsuka:  {name:"三角初华",      accent:"#BB9955",bg:"#F8F6F0",bgCard:"#FFFDF8",bgDeep:"#EFEBdf",border:"#D8D2C2",accentDim:"#E8DCC0",sideA:"#BB9955",sideB:"#82B891",group:"mujica"},
-  uika:     {name:"八幡海铃",      accent:"#335566",bg:"#F0F4F6",bgCard:"#F8FBFC",bgDeep:"#E0E8EC",border:"#C4D0D6",accentDim:"#BCCDD8",sideA:"#335566",sideB:"#82B891",group:"mujica"},
+  default:  {accent:"#D4859A",bg:"#E8ECF2",bgCard:"#F4F6FA",bgDeep:"#DCE2EA",border:"#C8CED8",accentDim:"#F2D6DE",group:""},
+  keke:     {accent:"#49BDF0",bg:"#F2F7FA",bgCard:"#FAFCFF",bgDeep:"#E4EEF5",border:"#C8D8E4",accentDim:"#CCE8FA",group:"liella"},
+  tomori:   {accent:"#77BBDD",bg:"#F2F6F9",bgCard:"#FAFCFF",bgDeep:"#E4EDF4",border:"#C8D5DF",accentDim:"#D0E5F3",group:"mygo"},
+  raana:    {accent:"#77DD77",bg:"#F2F8F2",bgCard:"#FAFFFA",bgDeep:"#E2EEE2",border:"#C5D8C5",accentDim:"#C8F0C8",group:"mygo"},
+  soyo:     {accent:"#FFDD88",bg:"#FAF8F2",bgCard:"#FFFEF8",bgDeep:"#F2EEDD",border:"#DDD8C8",accentDim:"#F5EDC8",group:"mygo"},
+  anon:     {accent:"#FF8899",bg:"#FAF3F4",bgCard:"#FFFAFB",bgDeep:"#F2E6E8",border:"#E0D0D4",accentDim:"#FFD8DF",group:"mygo"},
+  taki:     {accent:"#7777AA",bg:"#F4F3F8",bgCard:"#FBFAFF",bgDeep:"#E6E3F0",border:"#D0CDD9",accentDim:"#D4D0E8",group:"mygo"},
+  sakiko:   {accent:"#7799CC",bg:"#F2F5F9",bgCard:"#FAFBFF",bgDeep:"#E4ECF4",border:"#C8D2DF",accentDim:"#CCDCF0",group:"mujica"},
+  mutsumi:  {accent:"#779977",bg:"#F3F7F3",bgCard:"#FAFFF9",bgDeep:"#E4EDE3",border:"#C8D5C6",accentDim:"#CCE0CC",group:"mujica"},
+  nyamu:    {accent:"#AA4477",bg:"#F8F2F5",bgCard:"#FFFAFC",bgDeep:"#F0E4EA",border:"#DDD0D6",accentDim:"#E8C4D6",group:"mujica"},
+  hatsuka:  {accent:"#BB9955",bg:"#F8F6F0",bgCard:"#FFFDF8",bgDeep:"#EFEBDF",border:"#D8D2C2",accentDim:"#E8DCC0",group:"mujica"},
+  uika:     {accent:"#335566",bg:"#F0F4F6",bgCard:"#F8FBFC",bgDeep:"#E0E8EC",border:"#C4D0D6",accentDim:"#BCCDD8",group:"mujica"},
 };
-const THEME_ORDER = ["default","rina","keke","tomori","raana","soyo","anon","taki","sakiko","mutsumi","nyamu","hatsuka","uika"];
+const THEME_ORDER = ["default","keke","tomori","raana","soyo","anon","taki","sakiko","mutsumi","nyamu","hatsuka","uika"];
+const THEME_NAMES = {
+  default: { "zh-CN": "天王寺璃奈", ja: "天王寺 璃奈", en: "Rina Tennoji" },
+  keke:    { "zh-CN": "唐可可",     ja: "唐 可可",     en: "Keke Tang" },
+  tomori:  { "zh-CN": "高松灯",     ja: "高松 燈",     en: "Tomori Takamatsu" },
+  raana:   { "zh-CN": "要乐奈",     ja: "要 楽奈",     en: "Rana Kaname" },
+  soyo:    { "zh-CN": "长崎爽世",   ja: "長崎 そよ",   en: "Soyo Nagasaki" },
+  anon:    { "zh-CN": "千早爱音",   ja: "千早 愛音",   en: "Anon Chihaya" },
+  taki:    { "zh-CN": "椎名立希",   ja: "椎名 立希",   en: "Taki Shiina" },
+  sakiko:  { "zh-CN": "丰川祥子",   ja: "豊川 祥子",   en: "Sakiko Togawa" },
+  mutsumi: { "zh-CN": "若叶睦",     ja: "若葉 睦",     en: "Mutsumi Wakaba" },
+  nyamu:   { "zh-CN": "祐天寺若麦", ja: "祐天寺 にゃむ", en: "Nyamu Yutenji" },
+  hatsuka: { "zh-CN": "三角初华",   ja: "三角 初華",   en: "Uika Misumi" },
+  uika:    { "zh-CN": "八幡海铃",   ja: "八幡 海鈴",   en: "Umiri Yahata" },
+};
+
+// Derive SIDE A/B colors from accent: A = accent, B = accent hue-rotated ~150° + desaturated
+function hexToHsl(hex){const r=parseInt(hex.slice(1,3),16)/255,g=parseInt(hex.slice(3,5),16)/255,b=parseInt(hex.slice(5,7),16)/255;
+  const mx=Math.max(r,g,b),mn=Math.min(r,g,b),l=(mx+mn)/2;let h=0,s=0;
+  if(mx!==mn){const d=mx-mn;s=l>0.5?d/(2-mx-mn):d/(mx+mn);
+    if(mx===r)h=((g-b)/d+(g<b?6:0))/6;else if(mx===g)h=((b-r)/d+2)/6;else h=((r-g)/d+4)/6;}
+  return[h*360,s*100,l*100];}
+function mixHex(a,b,t){
+  const ar=parseInt(a.slice(1,3),16),ag=parseInt(a.slice(3,5),16),ab=parseInt(a.slice(5,7),16);
+  const br=parseInt(b.slice(1,3),16),bg=parseInt(b.slice(3,5),16),bb=parseInt(b.slice(5,7),16);
+  const mix=(x,y)=>Math.round(x+(y-x)*t).toString(16).padStart(2,"0");
+  return `#${mix(ar,br)}${mix(ag,bg)}${mix(ab,bb)}`;
+}
+function getContrastColor(hex){
+  const r=parseInt(hex.slice(1,3),16),g=parseInt(hex.slice(3,5),16),b=parseInt(hex.slice(5,7),16);
+  const yiq=(r*299+g*587+b*114)/1000;
+  return yiq>=170?"#2D2D38":"#FFFFFF";
+}
+function hslToHex(h,s,l){h=((h%360)+360)%360;s/=100;l/=100;const a=s*Math.min(l,1-l);
+  const f=n=>{const k=(n+h/30)%12;return Math.round(255*(l-a*Math.max(Math.min(k-3,9-k,1),-1)));};
+  return`#${[f(0),f(8),f(4)].map(v=>v.toString(16).padStart(2,"0")).join("")}`;}
+function deriveSideColors(accent){const[h,s,l]=hexToHsl(accent);
+  return{sideA:accent,sideB:hslToHex((h+150)%360,Math.max(s*0.6,20),Math.min(Math.max(l,40),60))};}
+function deriveAccentInk(accent){
+  return mixHex(accent,"#1F2430",0.6);
+}
+function deriveTapeTypeColors(accent){
+  return{
+    TYPE_I:mixHex("#8F5A33",accent,0.28),
+    TYPE_II:mixHex("#3A9FB3",accent,0.22),
+    TYPE_IV:mixHex("#585E74",accent,0.34),
+  };
+}
+
 
 const TAPE_PRESETS = {
   C46: { label: "C-46", sideMinutes: 23 }, C60: { label: "C-60", sideMinutes: 30 },
   C90: { label: "C-90", sideMinutes: 45 }, C120: { label: "C-120", sideMinutes: 60 },
 };
 const TAPE_TYPES = {
-  TYPE_I:  { label: "Type I (Normal)", color: "#8B7355", peakDb: -3, desc: "TDK D, Maxell UR" },
-  TYPE_II: { label: "Type II (Chrome)", color: "#4A9B8E", peakDb: -1, desc: "TDK SA, Maxell XLII" },
-  TYPE_IV: { label: "Type IV (Metal)", color: "#7B6B8A", peakDb: 0, desc: "TDK MA, Maxell MX" },
+  TYPE_I:  { label: "Type I (Normal)", peakDb: -3, desc: "TDK D, Maxell UR" },
+  TYPE_II: { label: "Type II (Chrome)", peakDb: -1, desc: "TDK SA, Maxell XLII" },
+  TYPE_IV: { label: "Type IV (Metal)", peakDb: 0, desc: "TDK MA, Maxell MX" },
+};
+const TAPE_SIM_PROFILES = {
+  TAPE_I: {
+    drive: 1.8,
+    headBumpFreq: 118,
+    headBumpGain: 1.2,
+    presenceFreq: 3200,
+    presenceGain: 0.6,
+    highShelfFreq: 5000,
+    highShelfGain: -2.9,
+    lowpassFreq: 12800,
+    lowpassQ: 0.42,
+    compThreshold: -22,
+    compKnee: 10,
+    compRatio: 1.85,
+    hissLevel: 0.03,
+  },
+  TAPE_II: {
+    drive: 1.6,
+    headBumpFreq: 108,
+    headBumpGain: 0.9,
+    presenceFreq: 3600,
+    presenceGain: 1.0,
+    highShelfFreq: 5900,
+    highShelfGain: -1.8,
+    lowpassFreq: 14500,
+    lowpassQ: 0.34,
+    compThreshold: -19,
+    compKnee: 9,
+    compRatio: 1.55,
+    hissLevel: 0.022,
+  },
+  TAPE_IV: {
+    drive: 1.42,
+    headBumpFreq: 96,
+    headBumpGain: 0.6,
+    presenceFreq: 4000,
+    presenceGain: 1.1,
+    highShelfFreq: 6900,
+    highShelfGain: -0.9,
+    lowpassFreq: 17200,
+    lowpassQ: 0.26,
+    compThreshold: -16,
+    compKnee: 7,
+    compRatio: 1.28,
+    hissLevel: 0.014,
+  },
 };
 const DEFAULT_GAP = 3.0;
 const SILENCE_THRESHOLD = 0.005;
@@ -163,6 +269,73 @@ function detectSilence(ab) {
 function getPeak(ab){let p=0;for(let c=0;c<ab.numberOfChannels;c++){const d=ab.getChannelData(c);for(let i=0;i<d.length;i++){const a=Math.abs(d[i]);if(a>p)p=a;}}return p;}
 function getRMS(ab){let s=0,n=0;for(let c=0;c<ab.numberOfChannels;c++){const d=ab.getChannelData(c);for(let i=0;i<d.length;i++){s+=d[i]*d[i];n++;}}return Math.sqrt(s/n);}
 function toDb(v){return v>0?20*Math.log10(v):-Infinity;}
+function readExtended80(dv, off){
+  const raw=dv.getUint16(off,false);
+  if(raw===0) return 0;
+  const sign=(raw&0x8000)!==0?-1:1;
+  const exp=(raw&0x7FFF)-16383;
+  const hi=dv.getUint32(off+2,false);
+  const lo=dv.getUint32(off+6,false);
+  const mant=Number((BigInt(hi)<<32n)|BigInt(lo));
+  return sign * mant * (2 ** (exp - 63));
+}
+function detectSourceAudioMeta(filename, buf){
+  const ext=(filename.match(/\.([^.]+)$/)||[])[1]?.toLowerCase();
+  const meta={sampleRate:null,channels:null,bitDepth:null};
+  if(!buf || !(buf instanceof ArrayBuffer)) return meta;
+  const dv=new DataView(buf);
+  try{
+    if((ext==="wav"||ext==="wave") && buf.byteLength>=44){
+      for(let off=12;off+8<=buf.byteLength;){
+        const id=String.fromCharCode(dv.getUint8(off),dv.getUint8(off+1),dv.getUint8(off+2),dv.getUint8(off+3));
+        const size=dv.getUint32(off+4,true);
+        if(id==="fmt "&&off+8+size<=buf.byteLength&&size>=16){
+          meta.channels=dv.getUint16(off+10,true);
+          meta.sampleRate=dv.getUint32(off+12,true);
+          meta.bitDepth=dv.getUint16(off+22,true);
+          return meta;
+        }
+        off+=8+size+(size%2);
+      }
+    }
+    if((ext==="aif"||ext==="aiff") && buf.byteLength>=12){
+      for(let off=12;off+8<=buf.byteLength;){
+        const id=String.fromCharCode(dv.getUint8(off),dv.getUint8(off+1),dv.getUint8(off+2),dv.getUint8(off+3));
+        const size=dv.getUint32(off+4,false);
+        if(id==="COMM"&&off+8+size<=buf.byteLength&&size>=18){
+          meta.channels=dv.getUint16(off+8,false);
+          meta.bitDepth=dv.getUint16(off+14,false);
+          meta.sampleRate=Math.round(readExtended80(dv,off+16));
+          return meta;
+        }
+        off+=8+size+(size%2);
+      }
+    }
+    if(ext==="flac"&&buf.byteLength>=42){
+      let off=4;
+      while(off+4<=buf.byteLength){
+        const header=dv.getUint8(off);
+        const isLast=(header&0x80)!==0;
+        const type=header&0x7F;
+        const size=(dv.getUint8(off+1)<<16)|(dv.getUint8(off+2)<<8)|dv.getUint8(off+3);
+        off+=4;
+        if(type===0&&off+size<=buf.byteLength&&size>=18){
+          const b10=dv.getUint8(off+10);
+          const b11=dv.getUint8(off+11);
+          const b12=dv.getUint8(off+12);
+          const b13=dv.getUint8(off+13);
+          meta.sampleRate=(b10<<12)|(b11<<4)|(b12>>4);
+          meta.channels=((b12&0x0E)>>1)+1;
+          meta.bitDepth=(((b12&0x01)<<4)|(b13>>4))+1;
+          return meta;
+        }
+        off+=size;
+        if(isLast) break;
+      }
+    }
+  }catch{}
+  return meta;
+}
 // Pre-downsample AudioBuffer to N min/max peak pairs per channel — O(samples) once at load
 function downsamplePeaks(ab, N=2048){
   const result=[];
@@ -191,6 +364,10 @@ export default function CassetteTool() {
   const [theme,setTheme] = useState("default");
   const [showThemePicker,setShowThemePicker] = useState(false);
   const th = THEMES[theme] || THEMES.default;
+  const sideColors = useMemo(()=>deriveSideColors(th.accent),[th.accent]);
+  const accentInk = useMemo(()=>deriveAccentInk(th.accent),[th.accent]);
+  const tapeTypeColors = useMemo(()=>deriveTapeTypeColors(th.accent),[th.accent]);
+  const accentContrast = useMemo(()=>getContrastColor(th.accent),[th.accent]);
   const T = useCallback((k) => t(k, lang), [lang]);
 
   const [tapePreset,setTapePreset] = useState("C60");
@@ -209,13 +386,14 @@ export default function CassetteTool() {
   const [playing,setPlaying] = useState(false);
   const [paused,setPaused] = useState(false);
   const [playingSide,setPlayingSide] = useState(null);
+  const [playbackView,setPlaybackView] = useState({ token: 0, schedule: [], totalDur: 0 });
   const playingIdxRef = useRef(-1);
   const playPosRef = useRef(0);
-  const playRef = useRef({sources:[],startTime:0,raf:null,ctx:null});
+  const playRef = useRef({sources:[],auxSources:[],nodes:[],startTime:0,raf:null,ctx:null,schedule:[],totalDur:0});
   const meterRef = useRef({el:null,peakL:0,peakR:0,decayL:0,decayR:0});
   const analyserRef = useRef({L:null,R:null});
   const [meterMode,setMeterMode] = useState("vfd"); // vfd | vu | spectrum | waveform
-  const [simMode,setSimMode] = useState("off"); // off | tape | vinyl
+  const [simMode,setSimMode] = useState("off"); // off | TAPE_I | TAPE_II | TAPE_IV | vinyl
   const [processing,setProcessing] = useState(false);
   const [procMsg,setProcMsg] = useState("");
   const [expProg,setExpProg] = useState(null);
@@ -224,6 +402,7 @@ export default function CassetteTool() {
   const [activeTab,setActiveTab] = useState("A");
   const [toast,setToast] = useState(null);
   const [showHelp,setShowHelp] = useState(false);
+  const [showAbout,setShowAbout] = useState(false);
   const [ffmpegStatus,setFfmpegStatus] = useState("idle"); // idle | loading | ready | unavailable
 
   const acRef = useRef(null);
@@ -236,6 +415,10 @@ export default function CassetteTool() {
   const sideMin = tapePreset==="CUSTOM"?customMin:TAPE_PRESETS[tapePreset].sideMinutes;
   const sideSec = sideMin * 60;
   const effectiveSec = Math.max(0, sideSec - tailMargin * 60);
+  const playbackStructureKey = useMemo(()=>JSON.stringify({
+    defaultGap, smartGap, fillTail, sideSec,
+    tracks: tracks.map(t=>({id:t.id,side:t.side,gapOverride:t.gapOverride,hasAudio:!!t.audioBuffer}))
+  }),[tracks,defaultGap,smartGap,fillTail,sideSec]);
 
   const sideA = useMemo(()=>tracks.filter(t=>t.side==="A"),[tracks]);
   const sideB = useMemo(()=>tracks.filter(t=>t.side==="B"),[tracks]);
@@ -285,12 +468,15 @@ export default function CassetteTool() {
     for(const f of files){
       setProcMsg(`${T("decoding")}: ${f.name}`);
       let ab = null;
+      let fileBuf = null;
+      let sourceMeta = null;
       try{
+        fileBuf=await f.arrayBuffer();
+        sourceMeta=detectSourceAudioMeta(f.name,fileBuf);
         if(likelyNeedsTranscode(f.name)){
           throw new Error("format likely unsupported natively, try ffmpeg");
         }
-        const buf=await f.arrayBuffer();
-        ab=await ctx.decodeAudioData(buf);
+        ab=await ctx.decodeAudioData(fileBuf.slice(0));
       }catch(nativeErr){
         try{
           setProcMsg(`ffmpeg: ${f.name}`);
@@ -310,9 +496,9 @@ export default function CassetteTool() {
       const sil=detectSilence(ab); const pk=getPeak(ab); const rms=getRMS(ab);
       const ext=(f.name.match(/\.([^.]+)$/)||[])[1]?.toUpperCase()||"?";
       const peaks=downsamplePeaks(ab,2048);
-      const audioMeta={audioBuffer:ab,duration:ab.duration,sampleRate:ab.sampleRate,
-        channels:ab.numberOfChannels,headSilence:sil.headSilence,tailSilence:sil.tailSilence,
-        peakDb:toDb(pk),rmsDb:toDb(rms),peak:pk,rms,format:ext,peaks};
+      const audioMeta={audioBuffer:ab,duration:ab.duration,sampleRate:sourceMeta?.sampleRate||ab.sampleRate,
+        channels:sourceMeta?.channels||ab.numberOfChannels,headSilence:sil.headSilence,tailSilence:sil.tailSilence,
+        peakDb:toDb(pk),rmsDb:toDb(rms),peak:pk,rms,format:ext,bitDepth:sourceMeta?.bitDepth??null,peaks};
       // Check for stub match: same fileName, no audioBuffer, not already matched this batch
       const stubMatch=tracks.find(t=>!t.audioBuffer && !hydratedIds.has(t.id) &&
         (t.fileName===f.name || t.name===f.name.replace(/\.[^.]+$/,"")));
@@ -370,7 +556,7 @@ export default function CassetteTool() {
     const pl={version:"0.3",generator:"SIDE",
       config:{tapePreset,tapeType,customMin,defaultGap,fillTail,tailMargin,smartGap,normalizeMode,targetDb,exportSr,exportBits},
       tracks:tracks.map(t=>({name:t.name,fileName:t.fileName,side:t.side,duration:t.duration,
-        sampleRate:t.sampleRate,channels:t.channels,peakDb:t.peakDb,rmsDb:t.rmsDb,
+        sampleRate:t.sampleRate,bitDepth:t.bitDepth,channels:t.channels,peakDb:t.peakDb,rmsDb:t.rmsDb,
         gapOverride:t.gapOverride,headSilence:t.headSilence,tailSilence:t.tailSilence,format:t.format||"?"}))};
     const b=new Blob([JSON.stringify(pl,null,2)],{type:"application/json"});
     const u=URL.createObjectURL(b),a=document.createElement("a");
@@ -390,7 +576,7 @@ export default function CassetteTool() {
       if(c.smartGap!=null)setSmartGap(c.smartGap);if(c.normalizeMode)setNormalizeMode(c.normalizeMode);
       if(c.targetDb!=null)setTargetDb(c.targetDb);if(c.exportSr)setExportSr(c.exportSr);if(c.exportBits)setExportBits(c.exportBits);
       setTracks(pl.tracks.map(t=>({id:uid(),name:t.name||"?",fileName:t.fileName||"",side:t.side||"A",
-        duration:t.duration||0,sampleRate:t.sampleRate||44100,channels:t.channels||2,audioBuffer:null,
+        duration:t.duration||0,sampleRate:t.sampleRate||44100,bitDepth:t.bitDepth??null,channels:t.channels||2,audioBuffer:null,
         headSilence:t.headSilence||0,tailSilence:t.tailSilence||0,
         peakDb:t.peakDb??-Infinity,rmsDb:t.rmsDb??-Infinity,
         peak:t.peakDb!=null?Math.pow(10,t.peakDb/20):0,rms:t.rmsDb!=null?Math.pow(10,t.rmsDb/20):0,
@@ -417,6 +603,12 @@ export default function CassetteTool() {
     if(downsampled.length>0){
       const names=downsampled.map(t=>`${t.name} (${t.sampleRate/1000}kHz→${sr/1000}kHz)`).join("\n");
       const ok=window.confirm(`${T("resampleWarn")}:\n${names}\n\nContinue?`);
+      if(!ok)return;
+    }
+    const bitDepthChanged=st.filter(t=>t.bitDepth!=null&&t.bitDepth!==bits);
+    if(bitDepthChanged.length>0){
+      const names=bitDepthChanged.map(t=>`${t.name} (${t.bitDepth}bit→${bits}bit)`).join("\n");
+      const ok=window.confirm(`${T("bitDepthWarn")}:\n${names}\n\nContinue?`);
       if(!ok)return;
     }
     setProcessing(true);setExpProg({side,step:0,total:st.length+2});
@@ -448,14 +640,29 @@ export default function CassetteTool() {
 
   // ── Playback Engine ───────────────────────────────────────
   const playGenRef = useRef(0); // generation counter to prevent stale callbacks
+  const appliedSimKeyRef = useRef(simMode);
+  const appliedPlaybackStructureRef = useRef(playbackStructureKey);
+  const getPlaybackCursor = useCallback((schedule, pos, contentDur, totalDur) => {
+    if (!schedule.length) return -1;
+    if (totalDur > contentDur && pos >= contentDur) return schedule.length;
+    const current = [...schedule].reverse().find((seg) => pos >= seg.start);
+    return current ? current.idx : schedule[0].idx;
+  }, []);
 
   const stopPlayback = useCallback(()=>{
     playGenRef.current++;
     const p=playRef.current;
     p.sources.forEach(s=>{s.onended=null;try{s.stop();}catch(e){}});
+    p.auxSources.forEach(s=>{try{s.stop();}catch(e){}});
+    p.nodes.forEach((node)=>{try{node.disconnect();}catch(e){}});
     p.sources=[];
+    p.auxSources=[];
+    p.nodes=[];
     if(p.raf) cancelAnimationFrame(p.raf);
     p.raf=null;p.pausedAt=null;
+    p.schedule=[];p.totalDur=0;
+    analyserRef.current={L:null,R:null};
+    setPlaybackView(v=>({token:v.token+1,schedule:[],totalDur:0}));
     setPlaying(false);setPaused(false);setPlayingSide(null);
     playingIdxRef.current=-1;playPosRef.current=0;
   },[]);
@@ -480,7 +687,7 @@ export default function CassetteTool() {
       return 1.0;
     });
     st.forEach((tr,i)=>{
-      schedule.push({name:tr.name,start:offset,dur:tr.duration,idx:i,buffer:tr.audioBuffer,gain:gains[i]});
+      schedule.push({id:tr.id,name:tr.name,start:offset,dur:tr.duration,idx:i,buffer:tr.audioBuffer,gain:gains[i]});
       offset+=tr.duration;
       if(i<st.length-1) offset+=getGap(tr,st[i+1]);
     });
@@ -494,65 +701,101 @@ export default function CassetteTool() {
     const p=playRef.current;
     p.sources.forEach(s=>{s.onended=null;});
     p.sources.forEach(s=>{try{s.stop();}catch(e){}});
+    p.auxSources.forEach(s=>{try{s.stop();}catch(e){}});
+    p.nodes.forEach((node)=>{try{node.disconnect();}catch(e){}});
     p.sources=[];
+    p.auxSources=[];
+    p.nodes=[];
     if(p.raf) cancelAnimationFrame(p.raf);
 
     const gen=++playGenRef.current;
     const ctx=getAC();
     // Resume if suspended (from pause)
     if(ctx.state==="suspended") ctx.resume();
-    const {schedule,totalDur}=buildSchedule(side);
+    const {schedule,totalDur,contentDur}=buildSchedule(side);
     if(!schedule.length){stopPlayback();return;}
+    const clampedPos=Math.max(0,Math.min(fromPos,totalDur));
 
     // Analyser chain: masterGain → [simulation] → outputNode → splitter → analysers + destination
     const masterGain=ctx.createGain();masterGain.gain.value=1.0;
     let outputNode=masterGain; // default: direct passthrough
-    const extraNodes=[]; // for cleanup
+    const extraNodes=[]; // disconnect on stop/seek
+    const auxSources=[]; // stop on stop/seek
 
     // Tape / Vinyl simulation
-    if(simMode==="tape"){
-      // Soft saturation
+    if(simMode.startsWith("TAPE_")){
+      const tapeProfile=TAPE_SIM_PROFILES[simMode];
       const shaper=ctx.createWaveShaper();
       const curve=new Float32Array(1024);
-      for(let i=0;i<1024;i++){const x=i/512-1;curve[i]=Math.tanh(x*1.5);}
+      for(let i=0;i<1024;i++){const x=i/512-1;curve[i]=Math.tanh(x*tapeProfile.drive);}
       shaper.curve=curve;shaper.oversample="4x";
-      // HF rolloff (tape head gap loss)
-      const lp=ctx.createBiquadFilter();lp.type="lowpass";lp.frequency.value=11000;lp.Q.value=0.5;
-      // Tape hiss
+      const headBump=ctx.createBiquadFilter();headBump.type="lowshelf";headBump.frequency.value=tapeProfile.headBumpFreq;headBump.gain.value=tapeProfile.headBumpGain;
+      const presence=ctx.createBiquadFilter();presence.type="peaking";presence.frequency.value=tapeProfile.presenceFreq;presence.Q.value=0.8;presence.gain.value=tapeProfile.presenceGain;
+      const highShelf=ctx.createBiquadFilter();highShelf.type="highshelf";highShelf.frequency.value=tapeProfile.highShelfFreq;highShelf.gain.value=tapeProfile.highShelfGain;
+      const lp=ctx.createBiquadFilter();lp.type="lowpass";lp.frequency.value=tapeProfile.lowpassFreq;lp.Q.value=tapeProfile.lowpassQ;
+      const comp=ctx.createDynamicsCompressor();
+      comp.threshold.value=tapeProfile.compThreshold;
+      comp.knee.value=tapeProfile.compKnee;
+      comp.ratio.value=tapeProfile.compRatio;
+      comp.attack.value=0.004;
+      comp.release.value=0.18;
       const noiseLen=ctx.sampleRate*2;
       const noiseBuf=ctx.createBuffer(1,noiseLen,ctx.sampleRate);
       const noiseData=noiseBuf.getChannelData(0);
-      for(let i=0;i<noiseLen;i++) noiseData[i]=(Math.random()*2-1)*0.008;
+      for(let i=0;i<noiseLen;i++) noiseData[i]=(Math.random()*2-1)*0.012;
       const noiseSrc=ctx.createBufferSource();noiseSrc.buffer=noiseBuf;noiseSrc.loop=true;
       const noiseBP=ctx.createBiquadFilter();noiseBP.type="bandpass";noiseBP.frequency.value=5000;noiseBP.Q.value=0.8;
-      noiseSrc.connect(noiseBP);noiseSrc.start();
-      // Chain: masterGain → shaper → lp → outputNode
-      masterGain.connect(shaper);shaper.connect(lp);
+      const noiseGain=ctx.createGain();noiseGain.gain.value=tapeProfile.hissLevel;
+      noiseSrc.connect(noiseBP);noiseBP.connect(noiseGain);noiseSrc.start();
+      masterGain.connect(headBump);headBump.connect(shaper);shaper.connect(comp);comp.connect(presence);presence.connect(highShelf);highShelf.connect(lp);
       outputNode=lp;
-      extraNodes.push(noiseSrc,noiseBP,shaper,lp);
-      // Noise connects to destination after outputNode setup
-      setTimeout(()=>{noiseBP.connect(ctx.destination);},0);
+      noiseGain.connect(ctx.destination);
+      auxSources.push(noiseSrc);
+      extraNodes.push(noiseBP,noiseGain,headBump,shaper,comp,presence,highShelf,lp);
     } else if(simMode==="vinyl"){
-      // Gentle bass warmth
-      const bass=ctx.createBiquadFilter();bass.type="lowshelf";bass.frequency.value=250;bass.gain.value=2;
-      // Slight HF rolloff
-      const lp=ctx.createBiquadFilter();lp.type="lowpass";lp.frequency.value=14000;lp.Q.value=0.3;
-      // Surface noise + crackle
+      // Vinyl: bandwidth limit + surface noise + crackle + rumble + wow/flutter
+      const bass=ctx.createBiquadFilter();bass.type="lowshelf";bass.frequency.value=180;bass.gain.value=1.1;
+      const presence=ctx.createBiquadFilter();presence.type="peaking";presence.frequency.value=2600;presence.Q.value=0.9;presence.gain.value=1.8;
+      const highShelf=ctx.createBiquadFilter();highShelf.type="highshelf";highShelf.frequency.value=6200;highShelf.gain.value=-3.8;
+      const lp=ctx.createBiquadFilter();lp.type="lowpass";lp.frequency.value=11800;lp.Q.value=0.55;
+      const delay=ctx.createDelay(0.03);delay.delayTime.value=0.005;
+      const wow=ctx.createOscillator();wow.type="sine";wow.frequency.value=0.6;
+      const wowDepth=ctx.createGain();wowDepth.gain.value=0.0009;
+      const flutter=ctx.createOscillator();flutter.type="sine";flutter.frequency.value=7.2;
+      const flutterDepth=ctx.createGain();flutterDepth.gain.value=0.00018;
       const noiseLen=ctx.sampleRate*4;
-      const noiseBuf=ctx.createBuffer(1,noiseLen,ctx.sampleRate);
-      const noiseData=noiseBuf.getChannelData(0);
+      const surfaceBuf=ctx.createBuffer(1,noiseLen,ctx.sampleRate);
+      const crackleBuf=ctx.createBuffer(1,noiseLen,ctx.sampleRate);
+      const rumbleBuf=ctx.createBuffer(1,noiseLen,ctx.sampleRate);
+      const surfaceData=surfaceBuf.getChannelData(0);
+      const crackleData=crackleBuf.getChannelData(0);
+      const rumbleData=rumbleBuf.getChannelData(0);
       for(let i=0;i<noiseLen;i++){
-        let v=(Math.random()*2-1)*0.004; // base surface noise
-        if(Math.random()<0.001) v+=((Math.random()>0.5?1:-1)*0.08); // crackle
-        noiseData[i]=v;
+        surfaceData[i]=(Math.random()*2-1)*0.012;
+        crackleData[i]=Math.random()<0.0015?((Math.random()>0.5?1:-1)*0.18):0;
+        rumbleData[i]=(Math.random()*2-1)*0.03;
       }
-      const noiseSrc=ctx.createBufferSource();noiseSrc.buffer=noiseBuf;noiseSrc.loop=true;
-      const noiseFilt=ctx.createBiquadFilter();noiseFilt.type="highpass";noiseFilt.frequency.value=800;noiseFilt.Q.value=0.5;
-      noiseSrc.connect(noiseFilt);noiseSrc.start();
-      masterGain.connect(bass);bass.connect(lp);
-      outputNode=lp;
-      extraNodes.push(noiseSrc,noiseFilt,bass,lp);
-      setTimeout(()=>{noiseFilt.connect(ctx.destination);},0);
+      const surfaceSrc=ctx.createBufferSource();surfaceSrc.buffer=surfaceBuf;surfaceSrc.loop=true;
+      const crackleSrc=ctx.createBufferSource();crackleSrc.buffer=crackleBuf;crackleSrc.loop=true;
+      const rumbleSrc=ctx.createBufferSource();rumbleSrc.buffer=rumbleBuf;rumbleSrc.loop=true;
+      const surfaceHP=ctx.createBiquadFilter();surfaceHP.type="highpass";surfaceHP.frequency.value=1600;surfaceHP.Q.value=0.7;
+      const crackleHP=ctx.createBiquadFilter();crackleHP.type="highpass";crackleHP.frequency.value=2200;crackleHP.Q.value=0.9;
+      const rumbleLP=ctx.createBiquadFilter();rumbleLP.type="lowpass";rumbleLP.frequency.value=90;rumbleLP.Q.value=0.8;
+      const surfaceGain=ctx.createGain();surfaceGain.gain.value=0.08;
+      const crackleGain=ctx.createGain();crackleGain.gain.value=0.12;
+      const rumbleGain=ctx.createGain();rumbleGain.gain.value=0.05;
+      surfaceSrc.connect(surfaceHP);surfaceHP.connect(surfaceGain);surfaceSrc.start();
+      crackleSrc.connect(crackleHP);crackleHP.connect(crackleGain);crackleSrc.start();
+      rumbleSrc.connect(rumbleLP);rumbleLP.connect(rumbleGain);rumbleSrc.start();
+      wow.connect(wowDepth);wowDepth.connect(delay.delayTime);wow.start();
+      flutter.connect(flutterDepth);flutterDepth.connect(delay.delayTime);flutter.start();
+      masterGain.connect(bass);bass.connect(presence);presence.connect(highShelf);highShelf.connect(lp);lp.connect(delay);
+      outputNode=delay;
+      surfaceGain.connect(ctx.destination);
+      crackleGain.connect(ctx.destination);
+      rumbleGain.connect(ctx.destination);
+      auxSources.push(surfaceSrc,crackleSrc,rumbleSrc,wow,flutter);
+      extraNodes.push(surfaceHP,crackleHP,rumbleLP,surfaceGain,crackleGain,rumbleGain,bass,presence,highShelf,lp,delay,wowDepth,flutterDepth);
     }
 
     outputNode.connect(ctx.destination);
@@ -567,44 +810,45 @@ export default function CassetteTool() {
 
     schedule.forEach(s=>{
       const trackEnd=s.start+s.dur;
-      if(trackEnd<=fromPos) return;
+      if(trackEnd<=clampedPos) return;
       const src=ctx.createBufferSource();
       src.buffer=s.buffer;
       const gn=ctx.createGain();gn.gain.value=s.gain;
       src.connect(gn);gn.connect(masterGain);
-      if(fromPos>s.start){
-        const skipSec=fromPos-s.start;
+      extraNodes.push(gn, src);
+      if(clampedPos>s.start){
+        const skipSec=clampedPos-s.start;
         src.start(now,skipSec,s.dur-skipSec);
       } else {
-        src.start(now+(s.start-fromPos));
+        src.start(now+(s.start-clampedPos));
       }
       sources.push(src);
     });
 
-    if(!sources.length){stopPlayback();return;}
-    sources[sources.length-1].onended=()=>{
-      if(playGenRef.current===gen) stopPlayback();
-    };
-
-    const startTime=now-fromPos;
+    const startTime=now-clampedPos;
+    const currentIdx=getPlaybackCursor(schedule, clampedPos, contentDur, totalDur);
     analyserRef.current={L:analyserL,R:analyserR};
-    playRef.current={sources,startTime,raf:null,ctx,schedule,totalDur,analyserL,analyserR,masterGain,splitter};
+    playRef.current={sources,auxSources,nodes:[masterGain,outputNode,splitter,analyserL,analyserR,...extraNodes],startTime,raf:null,ctx,schedule,totalDur,contentDur,analyserL,analyserR,masterGain,splitter};
+    setPlaybackView({token:gen,schedule,totalDur,contentDur});
     setPlaying(true);setPlayingSide(side);setPaused(false);
-    playingIdxRef.current=0;playPosRef.current=fromPos;
+    playingIdxRef.current=currentIdx;playPosRef.current=clampedPos;
 
     const tick=()=>{
       if(playGenRef.current!==gen) return;
       const elapsed=ctx.currentTime-startTime;
-      playPosRef.current=Math.max(0,Math.min(elapsed,totalDur));
-      const cur=[...schedule].reverse().find(s=>elapsed>=s.start);
-      if(cur) playingIdxRef.current=cur.idx;
-      if(elapsed<totalDur) playRef.current.raf=requestAnimationFrame(tick);
+      const nextPos=Math.max(0,Math.min(elapsed,totalDur));
+      playPosRef.current=nextPos;
+      playingIdxRef.current=getPlaybackCursor(schedule, nextPos, contentDur, totalDur);
+      if(nextPos>=totalDur){
+        stopPlayback();
+        return;
+      }
+      playRef.current.raf=requestAnimationFrame(tick);
     };
     playRef.current.raf=requestAnimationFrame(tick);
-  },[getAC,buildSchedule,stopPlayback]);
+  },[getAC,buildSchedule,getPlaybackCursor,simMode,stopPlayback]);
 
   const playSide = useCallback((side)=>{
-    setPlayingSide(side);playingIdxRef.current=0;playPosRef.current=0;
     playFromPos(side,0);
   },[playFromPos]);
 
@@ -616,10 +860,85 @@ export default function CassetteTool() {
   const skipTrack = useCallback((dir)=>{
     if(!playingSide) return;
     const schedule=playRef.current.schedule||[];
+    const contentDur=playRef.current.contentDur||0;
+    const totalDur=playRef.current.totalDur||0;
+    if(!schedule.length) return;
     const curIdx=playingIdxRef.current;
+    if(curIdx>=schedule.length){
+      if(dir<0){
+        playFromPos(playingSide,schedule[schedule.length-1].start);
+      }else if(totalDur>contentDur){
+        playFromPos(playingSide,contentDur);
+      }
+      return;
+    }
     const newIdx=Math.max(0,Math.min(schedule.length-1,curIdx+dir));
     playFromPos(playingSide,schedule[newIdx]?.start||0);
   },[playingSide,playFromPos]);
+
+  useEffect(() => {
+    if (appliedSimKeyRef.current === simMode) return;
+    appliedSimKeyRef.current = simMode;
+    if (!playing || !playingSide) return;
+
+    const pos = playPosRef.current;
+    const wasPaused = paused;
+    playFromPos(playingSide, pos);
+
+    if (wasPaused) {
+      const ctx = getAC();
+      ctx.suspend();
+      setPaused(true);
+    }
+  }, [simMode, playing, playingSide, paused, playFromPos, getAC]);
+
+  useEffect(() => {
+    if (appliedPlaybackStructureRef.current === playbackStructureKey) return;
+    appliedPlaybackStructureRef.current = playbackStructureKey;
+    if (!playing || !playingSide) return;
+
+    const schedule = playRef.current.schedule || [];
+    if (!schedule.length) {
+      stopPlayback();
+      return;
+    }
+
+    const curIdx = playingIdxRef.current;
+    const wasPaused = paused;
+
+    if (curIdx >= schedule.length) {
+      const prevContentDur = playRef.current.contentDur || 0;
+      const blankOffset = Math.max(0, playPosRef.current - prevContentDur);
+      const { contentDur, totalDur } = buildSchedule(playingSide);
+      if (totalDur <= 0) {
+        stopPlayback();
+        return;
+      }
+      playFromPos(playingSide, Math.min(totalDur, contentDur + blankOffset));
+    } else {
+      const currentSeg = schedule[curIdx];
+      const currentTrack = tracks.find((track) => track.id === currentSeg.id && track.audioBuffer);
+      if (!currentTrack) {
+        stopPlayback();
+        return;
+      }
+
+      const offsetInTrack = Math.max(0, Math.min(currentSeg.dur, playPosRef.current - currentSeg.start));
+      const { schedule: nextSchedule } = buildSchedule(currentTrack.side);
+      const nextSeg = nextSchedule.find((seg) => seg.id === currentTrack.id);
+      if (!nextSeg) {
+        stopPlayback();
+        return;
+      }
+      playFromPos(currentTrack.side, nextSeg.start + Math.min(offsetInTrack, nextSeg.dur));
+    }
+
+    if (wasPaused) {
+      const ctx = getAC();
+      ctx.suspend();
+      setPaused(true);
+    }
+  }, [playbackStructureKey, playing, playingSide, paused, tracks, buildSchedule, playFromPos, stopPlayback, getAC]);
 
   // Cleanup on unmount
   useEffect(()=>()=>stopPlayback(),[stopPlayback]);
@@ -682,6 +1001,8 @@ export default function CassetteTool() {
     // Resample indicator
     const willResample=tr.audioBuffer&&targetSr&&tr.sampleRate!==targetSr;
     const srDir=willResample?(tr.sampleRate>targetSr?"↓":"↑"):null;
+    const willChangeBits=tr.audioBuffer&&tr.bitDepth!=null&&targetBits&&tr.bitDepth!==targetBits;
+    const bitDir=willChangeBits?(tr.bitDepth>targetBits?"↓":"↑"):null;
     return(<div style={{marginBottom:last?0:3}}>
       <div draggable onDragStart={()=>setDragItem(tr.id)} onDragEnd={()=>setDragItem(null)}
         style={{display:"grid",gridTemplateColumns:"30px 1fr 70px 52px 32px 32px 42px 32px",
@@ -697,6 +1018,9 @@ export default function CassetteTool() {
           </div>
           <div style={{fontSize:11,color:"var(--text)",opacity:0.65,display:"flex",gap:8,marginTop:3,alignItems:"center"}}>
             <span title={T("tipSampleRate")} style={willResample?{color:srDir==="↓"?"var(--warning)":"var(--side-b)"}:{}}>{tr.sampleRate/1000}kHz{willResample&&<span style={{fontSize:9}}> {srDir}{targetSr/1000}k</span>}</span>
+            <span title={T("tipBitDepth")} style={willChangeBits?{color:bitDir==="↓"?"var(--warning)":"var(--side-b)"}:{}}>
+              {tr.bitDepth!=null?`${tr.bitDepth}bit`:"—bit"}{willChangeBits&&<span style={{fontSize:9}}> {bitDir}{targetBits}bit</span>}
+            </span>
             <span title={T("tipChannels")}>{tr.channels}ch</span>
             <span title={T("tipPeakLevel")} style={{color:lvlCol}}>{tr.peakDb>-Infinity?`${tr.peakDb.toFixed(1)}dB pk`:"—"}</span>
             {tr.headSilence>SILENCE_MIN_DUR&&<span title={T("tipHeadSilence")} style={{fontSize:10}}>head {tr.headSilence.toFixed(1)}s</span>}
@@ -773,8 +1097,9 @@ export default function CassetteTool() {
   return(
     <div style={{"--bg":th.bg,"--bg-card":th.bgCard,"--bg-deep":th.bgDeep,"--bg-hover":"#F0EDEA",
       "--text":"#2D2D38","--text-dim":"#706B78","--accent":th.accent,"--accent-dim":th.accentDim,
+      "--accent-contrast":accentContrast,"--accent-ink":accentInk,
       "--border":th.border,"--danger":"#C45C5C","--warning":"#B89840",
-      "--side-a":th.sideA,"--side-b":th.sideB,
+      "--side-a":sideColors.sideA,"--side-b":sideColors.sideB,
       "--font-mono":"'JetBrains Mono','SF Mono','Fira Code',monospace",
       "--font-body":"'Noto Sans SC','Noto Sans JP','Hiragino Sans','Microsoft YaHei',sans-serif",
       fontFamily:"var(--font-body)",color:"var(--text)",background:"var(--bg)",
@@ -801,15 +1126,12 @@ export default function CassetteTool() {
         <div style={{display:"flex",gap:2,alignItems:"center"}}>
           {Object.entries(LANGS).map(([k,l])=>(
             <button key={k} onClick={()=>setLang(k)} style={{...btnTab,fontSize:12,padding:"5px 10px",minWidth:36,textAlign:"center",
-              background:lang===k?"var(--accent)":"var(--bg-card)",color:lang===k?"var(--bg)":"var(--text-dim)"}}>{l.label}</button>
+              background:lang===k?"var(--accent)":"var(--bg-card)",color:lang===k?"var(--accent-contrast)":"var(--text-dim)"}}>{l.label}</button>
           ))}
-          <button onClick={()=>setShowHelp(true)} style={{...btnTab,fontSize:12,padding:"5px 10px",background:"var(--bg-card)",color:"var(--text-dim)"}} title="Help">
-            <IconHelp size={16}/>
-          </button>
           <div style={{position:"relative"}}>
             <button onClick={()=>setShowThemePicker(p=>!p)} style={{...btnTab,fontSize:12,padding:"5px 10px",
               background:showThemePicker?"var(--accent)":"var(--bg-card)",
-              color:showThemePicker?"#fff":"var(--text-dim)"}} title="Theme">
+              color:showThemePicker?"var(--accent-contrast)":"var(--text-dim)"}} title={T("theme")}>
               <IconPalette size={16}/>
             </button>
             {showThemePicker&&<div onClick={()=>setShowThemePicker(false)} style={{position:"fixed",inset:0,zIndex:50}}/>}
@@ -828,10 +1150,10 @@ export default function CassetteTool() {
                       style={{display:"flex",alignItems:"center",gap:8,width:"100%",padding:"6px 10px",
                         border:"none",borderRadius:6,cursor:"pointer",fontSize:13,
                         background:theme===k?"var(--accent-dim)":"transparent",
-                        color:theme===k?"var(--accent)":"var(--text)"}}>
+                        color:theme===k?"var(--accent-ink)":"var(--text)"}}>
                       <span style={{width:14,height:14,borderRadius:"50%",background:t.accent,flexShrink:0,
-                        border:theme===k?"2px solid var(--accent)":"2px solid transparent"}}/>
-                      <span style={{flex:1,textAlign:"left"}}>{t.name}</span>
+                        border:theme===k?"2px solid var(--accent-ink)":"2px solid transparent"}}/>
+                      <span style={{flex:1,textAlign:"left"}}>{themeName(k, lang)}</span>
                       {theme===k&&<span style={{fontSize:10}}>✓</span>}
                     </button>
                   </div>);
@@ -839,6 +1161,12 @@ export default function CassetteTool() {
               })()}
             </div>}
           </div>
+          <button onClick={()=>setShowHelp(true)} style={{...btnTab,fontSize:12,padding:"5px 10px",background:"var(--bg-card)",color:"var(--text-dim)"}} title={T("help")}>
+            <IconHelp size={16}/>
+          </button>
+          <button onClick={()=>setShowAbout(true)} style={{...btnTab,fontSize:12,padding:"5px 10px",background:"var(--bg-card)",color:"var(--text-dim)"}} title={T("about")}>
+            <IconInfo size={16}/>
+          </button>
         </div>
       </div>
 
@@ -851,10 +1179,10 @@ export default function CassetteTool() {
             <div style={{display:"flex",gap:3}}>
               {Object.entries(TAPE_PRESETS).map(([k,p])=>(
                 <button key={k} onClick={()=>setTapePreset(k)} style={{...btnTab,
-                  background:tapePreset===k?"var(--accent)":"var(--bg-deep)",color:tapePreset===k?"#fff":"var(--text)"}}>{p.label}</button>
+                  background:tapePreset===k?"var(--accent)":"var(--bg-deep)",color:tapePreset===k?"var(--accent-contrast)":"var(--text)"}}>{p.label}</button>
               ))}
               <button onClick={()=>setTapePreset("CUSTOM")} style={{...btnTab,
-                background:tapePreset==="CUSTOM"?"var(--accent)":"var(--bg-deep)",color:tapePreset==="CUSTOM"?"#fff":"var(--text)"}}>{T("tapeCustom")}</button>
+                background:tapePreset==="CUSTOM"?"var(--accent)":"var(--bg-deep)",color:tapePreset==="CUSTOM"?"var(--accent-contrast)":"var(--text)"}}>{T("tapeCustom")}</button>
             </div>
             {tapePreset==="CUSTOM"&&<div style={{display:"flex",alignItems:"center",gap:4,marginTop:2}}>
               <input type="number" value={customMin} onChange={e=>setCustomMin(Number(e.target.value))} min={1} max={120} style={{...inpSm,width:52}}/>
@@ -870,10 +1198,15 @@ export default function CassetteTool() {
               <span style={{fontSize:11,color:"var(--text-dim)"}}>{TAPE_TYPES[tapeType].desc} · {T("recLevel")} {TAPE_TYPES[tapeType].peakDb}dB · {T("tapeTypeNote")}</span>
             </div>
             <div style={{display:"flex",gap:3}}>
-              {Object.entries(TAPE_TYPES).map(([k,tp])=>(
+              {Object.entries(TAPE_TYPES).map(([k,tp])=>{
+                const tapeColor=tapeTypeColors[k];
+                return(
                 <button key={k} onClick={()=>{setTapeType(k);setTargetDb(tp.peakDb);}} style={{...btnTab,
-                  background:tapeType===k?tp.color:"var(--bg-deep)",color:tapeType===k?"#fff":"var(--text)"}}>{tp.label.split(" ")[0]} {tp.label.split(" ")[1]}</button>
-              ))}
+                  background:tapeType===k?tapeColor:"var(--bg-deep)",
+                  color:tapeType===k?getContrastColor(tapeColor):tapeColor,
+                  border:`1px solid ${tapeColor}`,
+                  boxShadow:tapeType===k?"inset 0 0 0 1px rgba(255,255,255,0.18)":"none"}}>{tp.label.split(" ")[0]} {tp.label.split(" ")[1]}</button>
+              );})}
             </div>
           </div>
         </div>
@@ -887,7 +1220,7 @@ export default function CassetteTool() {
             <span style={{fontSize:12,minWidth:32}}>{defaultGap.toFixed(1)}s</span>
           </div>
 
-          <span style={{color:"var(--border)"}}>·</span>
+          <div style={{width:1,height:24,background:"var(--border)",alignSelf:"center",flexShrink:0}}/>
 
           {/* Smart gap toggle */}
           <div style={{display:"flex",alignItems:"center",gap:6}}>
@@ -895,7 +1228,7 @@ export default function CassetteTool() {
             <button onClick={()=>setSmartGap(!smartGap)} style={toggleStyle(smartGap)}>{smartGap?"ON":"OFF"}</button>
           </div>
 
-          <span style={{color:"var(--border)"}}>·</span>
+          <div style={{width:1,height:24,background:"var(--border)",alignSelf:"center",flexShrink:0}}/>
 
           {/* Normalize */}
           <div style={{display:"flex",alignItems:"center",gap:6}}>
@@ -903,12 +1236,12 @@ export default function CassetteTool() {
             <div style={{display:"flex",gap:2}}>
               {[["off","normOff"],["peak","normPeak"],["rms","normRms"]].map(([v,k])=>(
                 <button key={v} onClick={()=>setNormalizeMode(v)} style={{...btnTab,fontSize:12,padding:"4px 10px",
-                  background:normalizeMode===v?"var(--accent-dim)":"var(--bg-deep)",color:normalizeMode===v?"var(--accent)":"var(--text)"}}>{T(k)}</button>
+                  background:normalizeMode===v?"var(--accent-dim)":"var(--bg-deep)",color:normalizeMode===v?"var(--accent-ink)":"var(--text)"}}>{T(k)}</button>
               ))}
             </div>
           </div>
 
-          <span style={{color:"var(--border)"}}>·</span>
+          <div style={{width:1,height:24,background:"var(--border)",alignSelf:"center",flexShrink:0}}/>
 
           {/* Tail fill */}
           <div style={{display:"flex",alignItems:"center",gap:6}}>
@@ -916,7 +1249,7 @@ export default function CassetteTool() {
             <button onClick={()=>setFillTail(!fillTail)} style={toggleStyle(fillTail)}>{fillTail?"ON":"OFF"}</button>
           </div>
 
-          <span style={{color:"var(--border)"}}>·</span>
+          <div style={{width:1,height:24,background:"var(--border)",alignSelf:"center",flexShrink:0}}/>
 
           {/* Tail margin */}
           <div style={{display:"flex",alignItems:"center",gap:6}}>
@@ -925,62 +1258,65 @@ export default function CassetteTool() {
             <span style={{fontSize:12,color:"var(--text-dim)"}}>min</span>
           </div>
 
-          <span style={{color:"var(--border)"}}>·</span>
+          <div style={{flexBasis:"100%",height:0}}/>
 
-          {/* Sample rate */}
-          <div style={{display:"flex",alignItems:"center",gap:6}}>
-            <label style={{...lb,margin:0}}>{T("sampleRate")}</label>
-            <div style={{display:"flex",gap:2}}>
-              {[["auto","Auto"],["44100","44.1k"],["48000","48k"]].map(([v,label])=>{
-                const val=v==="auto"?"auto":Number(v);
-                return <button key={v} onClick={()=>setExportSr(val)} style={{...btnTab,fontSize:12,padding:"5px 10px",
-                  background:exportSr===val?"var(--accent-dim)":"var(--bg-deep)",color:exportSr===val?"var(--accent)":"var(--text)"}}>{label}</button>;
-              })}
+          <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+            <div style={{display:"flex",alignItems:"center",gap:6}}>
+              <label style={{...lb,margin:0}}>{T("sampleRate")}</label>
+              <div style={{display:"flex",gap:2}}>
+                {[["auto","Auto"],["44100","44.1k"],["48000","48k"]].map(([v,label])=>{
+                  const val=v==="auto"?"auto":Number(v);
+                  return <button key={v} onClick={()=>setExportSr(val)} style={{...btnTab,fontSize:12,padding:"5px 10px",
+                    background:exportSr===val?"var(--accent-dim)":"var(--bg-deep)",color:exportSr===val?"var(--accent-ink)":"var(--text)"}}>{label}</button>;
+                })}
+              </div>
             </div>
-          </div>
-
-          {/* Bit depth */}
-          <div style={{display:"flex",alignItems:"center",gap:6}}>
-            <label style={{...lb,margin:0}}>{T("bitDepth")}</label>
-            <div style={{display:"flex",gap:2}}>
-              {[["auto","Auto"],["16","16bit"],["24","24bit"]].map(([v,label])=>{
-                const val=v==="auto"?"auto":Number(v);
-                return <button key={v} onClick={()=>setExportBits(val)} style={{...btnTab,fontSize:12,padding:"5px 10px",
-                  background:exportBits===val?"var(--accent-dim)":"var(--bg-deep)",color:exportBits===val?"var(--accent)":"var(--text)"}}>{label}</button>;
-              })}
+            <div style={{width:1,height:20,background:"var(--border)",alignSelf:"center",flexShrink:0}}/>
+            <div style={{display:"flex",alignItems:"center",gap:6}}>
+              <label style={{...lb,margin:0}}>{T("bitDepth")}</label>
+              <div style={{display:"flex",gap:2}}>
+                {[["auto","Auto"],["16","16bit"],["24","24bit"]].map(([v,label])=>{
+                  const val=v==="auto"?"auto":Number(v);
+                  return <button key={v} onClick={()=>setExportBits(val)} style={{...btnTab,fontSize:12,padding:"5px 10px",
+                    background:exportBits===val?"var(--accent-dim)":"var(--bg-deep)",color:exportBits===val?"var(--accent-ink)":"var(--text)"}}>{label}</button>;
+                })}
+              </div>
             </div>
           </div>
         </div>
       </div>
 
       {/* Action buttons */}
-      <div style={{display:"flex",gap:8,marginBottom:12,flexWrap:"wrap"}}>
+      <div className="actionBar" style={{marginBottom:12}}>
         <input ref={fileRef} type="file" multiple accept="audio/*" style={{display:"none"}}
           onChange={e=>{if(e.target.files.length>0)loadFiles(Array.from(e.target.files),activeTab);e.target.value="";}}/>
         <input ref={plRef} type="file" accept=".json" style={{display:"none"}} onChange={importPL}/>
-        <button onClick={()=>fileRef.current?.click()} style={btnP} disabled={processing}><IconAdd size={16} /> {T("addFiles")} → SIDE {activeTab}</button>
-        <button onClick={autoDistribute} style={btnS} disabled={processing||!tracks.length}><IconAutoAwesome size={16} /> {T("autoDistribute")}</button>
-        <button onClick={()=>plRef.current?.click()} style={btnS} disabled={processing}><IconFileOpen size={16} /> {T("importPlaylist")}</button>
-        <button onClick={exportPL} style={btnS} disabled={processing||!tracks.length}><IconSave size={16} /> {T("exportPlaylist")}</button>
-        <button onClick={()=>{if(tracks.some(t=>t.side===activeTab))setTracks(p=>p.filter(t=>t.side!==activeTab));}} style={{...btnS,display:"flex",alignItems:"center",gap:4}} disabled={processing||!tracks.some(t=>t.side===activeTab)}><IconClearSide size={14}/>{T("clearSide")}</button>
-        <button onClick={()=>{if(tracks.length>0&&window.confirm(T("clearAll")+"?"))setTracks([]);}} style={{...btnS,display:"flex",alignItems:"center",gap:4}} disabled={processing||!tracks.length}><IconClearAll size={14}/>{T("clearAll")}</button>
-        <div style={{flex:1}}/>
-        {/* Play / Export */}
-        {playing?
-          <button onClick={stopPlayback} style={{...btnE,borderColor:"var(--danger)",color:"var(--danger)"}}><IconStop size={16} /> {T("stop")}</button>
-        :<>
-          <button onClick={()=>playSide("A")} style={{...btnE,borderColor:"var(--side-a)"}} disabled={processing||!aHas}><IconPlay size={16} /> A {T("play")}</button>
-          <button onClick={()=>playSide("B")} style={{...btnE,borderColor:"var(--side-b)"}} disabled={processing||!bHas}><IconPlay size={16} /> B {T("play")}</button>
-        </>}
-        <button onClick={()=>expSide("A")} style={{...btnE,borderColor:"var(--side-a)"}} disabled={processing||playing||!aHas}><IconExport size={16} /> A {T("exportSide")}</button>
-        <button onClick={()=>expSide("B")} style={{...btnE,borderColor:"var(--side-b)"}} disabled={processing||playing||!bHas}><IconExport size={16} /> B {T("exportSide")}</button>
+        <div className="actionBarMain">
+          <button onClick={()=>fileRef.current?.click()} style={btnP} disabled={processing}><IconAdd size={16} /> {T("addFiles")} → SIDE {activeTab}</button>
+          <button onClick={autoDistribute} style={btnS} disabled={processing||!tracks.length}><IconAutoAwesome size={16} /> {T("autoDistribute")}</button>
+          <button onClick={()=>plRef.current?.click()} style={btnS} disabled={processing}><IconFileOpen size={16} /> {T("importPlaylist")}</button>
+          <button onClick={exportPL} style={btnS} disabled={processing||!tracks.length}><IconSave size={16} /> {T("exportPlaylist")}</button>
+          <button onClick={()=>{if(tracks.some(t=>t.side===activeTab))setTracks(p=>p.filter(t=>t.side!==activeTab));}} style={{...btnS,display:"flex",alignItems:"center",gap:4}} disabled={processing||!tracks.some(t=>t.side===activeTab)}><IconClearSide size={14}/>{T("clearSide")}</button>
+          <button onClick={()=>{if(tracks.length>0&&window.confirm(T("clearAll")+"?"))setTracks([]);}} style={{...btnS,display:"flex",alignItems:"center",gap:4}} disabled={processing||!tracks.length}><IconClearAll size={14}/>{T("clearAll")}</button>
+        </div>
+        <div className="actionBarPlayback">
+          {playing?
+            <button onClick={stopPlayback} style={{...btnE,borderColor:"var(--danger)",color:"var(--danger)"}}><IconStop size={16} /> {T("stop")}</button>
+          :<>
+            <button onClick={()=>playSide("A")} style={{...btnE,borderColor:"var(--side-a)"}} disabled={processing||!aHas}><IconPlay size={16} /> A {T("play")}</button>
+            <button onClick={()=>playSide("B")} style={{...btnE,borderColor:"var(--side-b)"}} disabled={processing||!bHas}><IconPlay size={16} /> B {T("play")}</button>
+          </>}
+          <button onClick={()=>expSide("A")} style={{...btnE,borderColor:"var(--side-a)"}} disabled={processing||playing||!aHas}><IconExport size={16} /> A {T("exportSide")}</button>
+          <button onClick={()=>expSide("B")} style={{...btnE,borderColor:"var(--side-b)"}} disabled={processing||playing||!bHas}><IconExport size={16} /> B {T("exportSide")}</button>
+        </div>
       </div>
 
       {/* Player */}
       {playing&&<Player
         playing={playing} paused={paused} playingSide={playingSide}
         playingIdxRef={playingIdxRef} playPosRef={playPosRef}
-        schedule={playRef.current.schedule} totalDur={playRef.current.totalDur||0}
+        playToken={playbackView.token}
+        schedule={playbackView.schedule} totalDur={playbackView.totalDur}
         meterMode={meterMode} setMeterMode={setMeterMode}
         simMode={simMode} setSimMode={setSimMode}
         togglePause={togglePause} stopPlayback={stopPlayback}
@@ -990,7 +1326,7 @@ export default function CassetteTool() {
       />}
 
       {processing&&<div style={{padding:"8px 12px",marginBottom:12,background:"var(--bg-deep)",borderRadius:6,
-        fontSize:13,color:"var(--accent)",display:"flex",alignItems:"center",gap:8}}>
+        fontSize:13,color:"var(--accent-ink)",display:"flex",alignItems:"center",gap:8}}>
         <span style={{animation:"spin 1s linear infinite",display:"inline-block"}}>◌</span>
         <span>{procMsg}</span>
       </div>}
@@ -1039,43 +1375,46 @@ export default function CassetteTool() {
       </div>}
 
       {/* Help Modal */}
-      {showHelp&&<div onClick={()=>setShowHelp(false)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.35)",zIndex:100,display:"flex",alignItems:"center",justifyContent:"center"}}>
-        <div onClick={e=>e.stopPropagation()} style={{background:"var(--bg)",borderRadius:12,padding:"24px 28px",maxWidth:560,maxHeight:"80vh",overflowY:"auto",
-          border:"1px solid var(--border)",boxShadow:"0 8px 32px rgba(0,0,0,0.12)",fontSize:14,lineHeight:1.8,color:"var(--text)"}}>
-          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
-            <span style={{fontSize:16,color:"var(--accent)"}}>
-              {lang==="ja"?"SIDE ヘルプ":lang==="en"?"SIDE Help":"SIDE 帮助"}
+      {showHelp&&<div onClick={()=>setShowHelp(false)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.35)",zIndex:100,display:"flex",alignItems:"center",justifyContent:"center",padding:"16px"}}>
+        <div onClick={e=>e.stopPropagation()} style={{background:"var(--bg)",borderRadius:12,maxWidth:560,width:"min(560px, calc(100vw - 32px))",maxHeight:"80vh",overflow:"hidden",
+          border:"1px solid var(--border)",boxShadow:"0 8px 32px rgba(0,0,0,0.12)",fontSize:14,lineHeight:1.8,color:"var(--text)",display:"flex",flexDirection:"column"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"20px 24px 14px",borderBottom:"1px solid var(--border)",flexShrink:0}}>
+            <span style={{fontSize:16,color:"var(--accent-ink)"}}>
+              {lang==="ja"?"S.I.D.E ヘルプ":lang==="en"?"S.I.D.E Help":"S.I.D.E 帮助"}
             </span>
             <button onClick={()=>setShowHelp(false)} style={{background:"none",border:"none",fontSize:18,cursor:"pointer",color:"var(--text-dim)"}}>✕</button>
           </div>
+          <div className="modalScroll" style={{padding:"18px 24px 22px",overflowY:"auto",overflowX:"hidden",minHeight:0}}>
           {lang==="zh-CN"?<div style={{display:"flex",flexDirection:"column",gap:14}}>
-            <p><b>SIDE</b> — Sequential Interleaved Dubbing Engine<br/>
+            <p><b>S</b>equential <b>I</b>nterleaved <b>D</b>ubbing <b>E</b>ngine<br/>
             将数字音频文件编排到磁带的 A/B 面，导出可直接录入卡座的 WAV 文件。</p>
             <div style={{fontSize:12,color:"var(--text-dim)",display:"flex",flexDirection:"column",gap:10}}>
             <p><b>{"// "}配置</b><br/>
             选择磁带规格（C-46 / C-60 / C-90 / C-120 / 自定义）和磁带类型（Type I / II / IV）。<br/>
             磁带类型影响录音电平参考值……用于响度归一化的目标。</p>
-            <p><b>{"// "}添加音频</b><br/>
-            点击「添加文件」或直接拖放音频到页面。<br/>
+            <p><b>{"// "}操作</b><br/>
+            先确认当前 SIDE，再点「添加文件」或直接把音频拖进来。这样就好。<br/>
             支持格式：MP3 / FLAC / WAV / OGG / AAC / AIFF / M4A。<br/>
-            FLAC 和 AIFF 解码需要 ffmpeg.wasm……首次使用时自动加载。<br/>
-            需要浏览器支持 SharedArrayBuffer（COOP/COEP 头）。</p>
-            <p><b>{"// "}曲目管理</b><br/>
-            拖动排序……上下箭头移动……→B / →A 跨面移动。<br/>
-            「自动分面」使用首次适应递减装箱算法……兼顾容量平衡。<br/>
-            曲间间隔：手动设定或开启「智能检测」（分析首尾静音自动计算）。</p>
+            FLAC / AIFF 原始参数会先从文件头读取；需要时再走 ffmpeg.wasm 转 WAV 供浏览器解码。<br/>
+            拖动可以重排顺序；↑↓ 微调；→A / →B 直接切到另一面。</p>
+            <p><b>{"// "}编排</b><br/>
+            「自动分面」会按时长重新分配，优先保持两面容量平衡。<br/>
+            曲间间隔可以手动写入；开启「智能检测」后，会扣除前后已有静音。<br/>
+            采样率 / 位深按每一面单独解析，轨道列表里会标出升降采样方向。</p>
             <p><b>{"// "}采样率 / 位深</b><br/>
             每面独立解析。Auto 采样率 = 该面音轨的最高采样率。<br/>
             Auto 位深 = 含无损格式（FLAC/WAV/AIFF）→ 24bit，否则 → 16bit。<br/>
-            升降采样在曲目详情里会标注方向和目标值。</p>
+            原始采样率 / 位深来自源文件头，不会被 ffmpeg 的解码中间文件覆盖。<br/>
+            升降采样与位深变化都会在曲目详情里标注方向和目标值。</p>
             <p><b>{"// "}试听</b><br/>
-            按整面顺序播放……含曲间间隔和归一化增益。<br/>
-            进度条可点击跳转。支持暂停 / 继续 / 上下曲。<br/>
-            电平表支持 VFD 段式 / VU 指针两种模式……点击右上角切换。<br/>
-            播放路径：AudioBuffer (32-bit float) → AudioContext (系统原生采样率)。</p>
+            试听按整面时间线播放，曲间间隔、归一化增益、尾部静音都会算进去。<br/>
+            进度条和曲目节点都能跳转；暂停 / 继续 / 上下曲在下方控制区。<br/>
+            模拟循环：OFF → TYPE I → TYPE II → TYPE IV → VINYL。仅作用于试听。<br/>
+            电平表支持 VFD / VU / FFT / WAVE 四种显示模式。<br/>
+            播放路径：AudioBuffer (32-bit float) → AudioContext（系统原生采样率）。</p>
             <p><b>{"// "}导出</b><br/>
             导出为 WAV 文件……直接连接卡座线路输入录制。<br/>
-            降采样音轨会在导出前弹出确认提示。<br/>
+            降采样或位深转换的音轨会在导出前弹出确认提示。<br/>
             尾部填充：自动补齐静音到磁带标称长度。</p>
             <p><b>{"// "}歌单</b><br/>
             支持 JSON 格式歌单的导出和导入。<br/>
@@ -1083,79 +1422,106 @@ export default function CassetteTool() {
             </div>
             <p style={{fontSize:11,color:"var(--text-dim)",textAlign:"right",marginTop:4}}>
               ……把声音编译进磁带里。 {RINA_SMILE}<br/>
-              <span style={{fontSize:10}}>ver 0.3 · by Tennoji Rina</span>
+              <span style={{fontSize:10}}>{T("appVersion")}</span>
             </p>
           </div>
           :lang==="ja"?<div style={{display:"flex",flexDirection:"column",gap:14}}>
-            <p><b>SIDE</b> — Sequential Interleaved Dubbing Engine<br/>
+            <p><b>S</b>equential <b>I</b>nterleaved <b>D</b>ubbing <b>E</b>ngine<br/>
             デジタル音源をカセットテープの A/B 面に配置し、デッキ入力用 WAV ファイルを書き出すツール。</p>
             <div style={{fontSize:12,color:"var(--text-dim)",display:"flex",flexDirection:"column",gap:10}}>
             <p><b>{"// "}設定</b><br/>
             テープ規格（C-46 / C-60 / C-90 / C-120 / カスタム）と種類（Type I / II / IV）を選択。<br/>
             テープ種類は録音レベル基準値に影響……ラウドネス正規化のターゲットとして使用。</p>
-            <p><b>{"// "}オーディオ追加</b><br/>
-            「ファイル追加」ボタンまたはドラッグ＆ドロップ。<br/>
+            <p><b>{"// "}操作</b><br/>
+            まず現在の SIDE を確認してから、「ファイル追加」かドラッグ＆ドロップ。これで大丈夫。<br/>
             対応：MP3 / FLAC / WAV / OGG / AAC / AIFF / M4A。<br/>
-            FLAC・AIFF は ffmpeg.wasm で変換……初回時に自動ロード。</p>
-            <p><b>{"// "}トラック管理</b><br/>
-            ドラッグ並替……矢印で移動……→B / →A で面切替。<br/>
-            「自動振り分け」はファーストフィット減少法で容量バランスを最適化。<br/>
-            曲間ギャップ：手動設定 or スマートギャップ検出（先頭/末尾の無音を解析）。</p>
+            FLAC / AIFF はまず元ファイルのパラメータを読み取り、必要時のみ ffmpeg.wasm で WAV 化してデコード。<br/>
+            ドラッグで並べ替え、↑↓で微調整、→A / →B で面を移動。</p>
+            <p><b>{"// "}配置</b><br/>
+            「自動振り分け」は長さを見て A/B 面を再配置し、容量バランスを揃える。<br/>
+            曲間ギャップは手動入力可能。スマートギャップ有効時は既存の無音を差し引く。<br/>
+            サンプルレート / ビット深度は面ごとに決まり、各トラックに変換方向を表示。</p>
             <p><b>{"// "}サンプルレート / ビット深度</b><br/>
             面ごとに個別解決。Auto SR = その面の最高サンプルレート。<br/>
-            Auto ビット深度 = ロスレス有り → 24bit、なし → 16bit。</p>
+            Auto ビット深度 = ロスレス有り → 24bit、なし → 16bit。<br/>
+            元の SR / ビット深度はソースファイルヘッダ基準で、ffmpeg の中間 WAV では上書きしない。</p>
             <p><b>{"// "}試聴</b><br/>
-            面ごとに全曲順序再生……ギャップ・正規化ゲイン反映。<br/>
-            シークバーでジャンプ。一時停止 / 再開 / 前後スキップ。<br/>
-            メーター：VFDセグメント / VUニードル切替。<br/>
+            試聴は面全体のタイムライン再生。ギャップ、正規化ゲイン、末尾無音も反映。<br/>
+            シークバーと曲境界ノードでジャンプ可能。一時停止 / 再開 / 前後スキップ対応。<br/>
+            シミュレーションは OFF → TYPE I → TYPE II → TYPE IV → VINYL の順で循環。試聴専用。<br/>
+            メーターは VFD / VU / FFT / WAVE の4モード。<br/>
             再生経路：AudioBuffer (32-bit float) → AudioContext (ネイティブSR)。</p>
             <p><b>{"// "}書出し</b><br/>
             WAV 出力……デッキのライン入力に直結して録音。<br/>
-            ダウンサンプルが必要なトラックは確認ダイアログ表示。</p>
+            ダウンサンプルやビット深度変換が必要なトラックは確認ダイアログ表示。</p>
             <p><b>{"// "}プレイリスト</b><br/>
             JSON 形式で書出し・読込。読込はプレースホルダモード……同名ファイル再追加で自動マッチ。</p>
             </div>
             <p style={{fontSize:11,color:"var(--text-dim)",textAlign:"right",marginTop:4}}>
               ……音をテープにコンパイルする。 {RINA_SMILE}<br/>
-              <span style={{fontSize:10}}>ver 0.3 · by Tennoji Rina</span>
+              <span style={{fontSize:10}}>{T("appVersion")}</span>
             </p>
           </div>
           :<div style={{display:"flex",flexDirection:"column",gap:14}}>
-            <p><b>SIDE</b> — Sequential Interleaved Dubbing Engine<br/>
+            <p><b>S</b>equential <b>I</b>nterleaved <b>D</b>ubbing <b>E</b>ngine<br/>
             Arrange digital audio files onto cassette tape sides A/B and export deck-ready WAV files.</p>
             <div style={{fontSize:12,color:"var(--text-dim)",display:"flex",flexDirection:"column",gap:10}}>
             <p><b>{"// "}Configuration</b><br/>
             Select tape spec (C-46 / C-60 / C-90 / C-120 / Custom) and type (Type I / II / IV).<br/>
             Tape type sets the recording level reference used as the normalization target.</p>
-            <p><b>{"// "}Adding Audio</b><br/>
-            Click "Add Files" or drag and drop onto the page.<br/>
+            <p><b>{"// "}Operation</b><br/>
+            Confirm the current SIDE first, then use "Add Files" or drag audio in. That is the whole flow.<br/>
             Supported: MP3 / FLAC / WAV / OGG / AAC / AIFF / M4A.<br/>
-            FLAC and AIFF require ffmpeg.wasm — auto-loaded on first use (needs SharedArrayBuffer).</p>
-            <p><b>{"// "}Track Management</b><br/>
-            Drag to reorder. Arrow buttons to move. →B / →A to switch sides.<br/>
-            "Auto Distribute" uses first-fit-decreasing bin packing for balanced allocation.<br/>
-            Track gaps: manual or smart detection (analyzes head/tail silence).</p>
+            FLAC / AIFF keep source metadata from the file header first, then use ffmpeg.wasm WAV transcode only when decode fallback is needed.<br/>
+            Drag to reorder, use ↑↓ for fine moves, and →A / →B to switch sides.</p>
+            <p><b>{"// "}Arrangement</b><br/>
+            "Auto Distribute" reallocates tracks by duration to keep side usage balanced.<br/>
+            Track gaps can be entered manually, or derived by subtracting existing head/tail silence.<br/>
+            Sample rate and bit depth are resolved per side, with conversion direction shown per track.</p>
             <p><b>{"// "}Sample Rate / Bit Depth</b><br/>
             Resolved independently per side. Auto SR = highest SR among the side's tracks.<br/>
             Auto bit depth = 24 if any lossless source, 16 otherwise.<br/>
-            Resampling direction shown per track when SR differs from target.</p>
+            Source SR / bit depth come from the original file header, not the ffmpeg intermediate WAV.<br/>
+            Resampling and bit-depth conversion direction are shown per track when they differ from target.</p>
             <p><b>{"// "}Preview</b><br/>
-            Plays the full side sequentially with gaps and normalization gain applied.<br/>
-            Click seekbar to jump. Pause / resume / skip prev-next.<br/>
-            Meter: toggle VFD segments / VU needle via the label in the top-right corner.<br/>
+            Preview follows the full side timeline, including gaps, normalization gain, and tail silence.<br/>
+            Use the seekbar or track markers to jump. Pause / resume / prev-next are in the transport row.<br/>
+            Simulation cycles OFF → TYPE I → TYPE II → TYPE IV → VINYL, and affects preview only.<br/>
+            Meter modes: VFD / VU / FFT / WAVE.<br/>
             Audio path: AudioBuffer (32-bit float) → AudioContext (system native SR).</p>
             <p><b>{"// "}Export</b><br/>
             Exports WAV — connect directly to your deck's line input.<br/>
-            Downsampled tracks trigger a confirmation dialog before export.<br/>
+            Downsampled or bit-depth-converted tracks trigger a confirmation dialog before export.<br/>
             Tail fill: pads silence to the tape's rated length.</p>
             <p><b>{"// "}Playlists</b><br/>
             Export/import as JSON. Imported playlists are placeholder-only — re-add audio files with matching filenames to auto-hydrate.</p>
             </div>
             <p style={{fontSize:11,color:"var(--text-dim)",textAlign:"right",marginTop:4}}>
               …compile your sound into tape. {RINA_SMILE}<br/>
-              <span style={{fontSize:10}}>ver 0.3 · by Tennoji Rina</span>
+              <span style={{fontSize:10}}>{T("appVersion")}</span>
             </p>
           </div>}
+          </div>
+        </div>
+      </div>}
+
+      {/* About Modal */}
+      {showAbout&&<div onClick={()=>setShowAbout(false)} style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.35)",zIndex:100,display:"flex",alignItems:"center",justifyContent:"center",padding:"16px"}}>
+        <div onClick={e=>e.stopPropagation()} style={{background:"var(--bg)",borderRadius:12,width:"fit-content",maxWidth:"calc(100vw - 32px)",maxHeight:"80vh",overflow:"hidden",
+          border:"1px solid var(--border)",boxShadow:"0 8px 32px rgba(0,0,0,0.12)",fontSize:14,lineHeight:1.9,color:"var(--text)",display:"flex",flexDirection:"column"}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"20px 24px 14px",borderBottom:"1px solid var(--border)",flexShrink:0}}>
+            <span style={{fontSize:16,color:"var(--accent-ink)"}}>About</span>
+            <button onClick={()=>setShowAbout(false)} style={{background:"none",border:"none",fontSize:18,cursor:"pointer",color:"var(--text-dim)"}}>✕</button>
+          </div>
+          <div className="modalScroll" style={{padding:"18px 24px 22px",overflowY:"auto",overflowX:"hidden",minHeight:0}}>
+            <div>Sequential Interleaved Dubbing Engine</div>
+            <div>Developed by 天使天才天王寺璃奈</div>
+            <div>With Claude Opus 4.6 Extended & GPT 5.4 (reasoning high, summaries auto)</div>
+            <div>{APP_VERSION}</div>
+            <a href={APP_GITHUB} target="_blank" rel="noreferrer" style={{color:"var(--accent-ink)",textDecoration:"none"}}>
+              {`Github: ${APP_GITHUB}`}
+            </a>
+          </div>
         </div>
       </div>}
 
@@ -1163,7 +1529,18 @@ export default function CassetteTool() {
         @keyframes spin{from{transform:rotate(0deg)}to{transform:rotate(360deg)}}
         @keyframes fadeIn{from{opacity:0;transform:translateX(-50%) translateY(-8px)}to{opacity:1;transform:translateX(-50%) translateY(0)}}
         *{box-sizing:border-box}
+        .actionBar{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:8px;align-items:start}
+        .actionBarMain,.actionBarPlayback{display:flex;gap:8px;flex-wrap:wrap}
+        .actionBarPlayback{justify-content:flex-end}
+        @media (max-width: 1220px){
+          .actionBar{grid-template-columns:1fr}
+          .actionBarPlayback{justify-content:flex-start}
+        }
         ::-webkit-scrollbar{width:6px}::-webkit-scrollbar-track{background:var(--bg-deep)}::-webkit-scrollbar-thumb{background:var(--border);border-radius:3px}
+        .modalScroll{scrollbar-width:thin;scrollbar-color:var(--border) transparent}
+        .modalScroll::-webkit-scrollbar{width:10px}
+        .modalScroll::-webkit-scrollbar-track{background:transparent;margin:10px 0}
+        .modalScroll::-webkit-scrollbar-thumb{background:var(--border);border-radius:999px;border:3px solid transparent;background-clip:content-box}
         input[type="number"]{-moz-appearance:textfield}input[type="number"]::-webkit-inner-spin-button{opacity:0.5}
         button:disabled{opacity:0.35;cursor:not-allowed}button:not(:disabled):hover{filter:brightness(0.95)}
       `}</style>
@@ -1172,14 +1549,13 @@ export default function CassetteTool() {
 }
 
 // ── Styles ───────────────────────────────────────────────────
-const fg={display:"flex",flexDirection:"column",gap:4};
 const lb={fontSize:13,color:"var(--text)",letterSpacing:"0.04em",textTransform:"uppercase",fontWeight:400};
 const btnTab={padding:"7px 14px",border:"1px solid var(--border)",borderRadius:5,cursor:"pointer",fontSize:14,fontFamily:"inherit",transition:"all 0.15s",fontWeight:400};
 const btnSm={background:"transparent",border:"1px solid var(--border)",borderRadius:3,color:"var(--text-dim)",cursor:"pointer",fontSize:12,padding:"3px 8px",transition:"all 0.15s"};
 const inpSm={background:"var(--bg-deep)",border:"1px solid var(--border)",borderRadius:4,color:"var(--text)",fontSize:14,padding:"5px 9px",outline:"none"};
-const btnP={padding:"10px 20px",background:"var(--accent)",color:"#fff",border:"none",borderRadius:6,cursor:"pointer",fontSize:14,fontWeight:400,fontFamily:"inherit",transition:"all 0.15s"};
+const btnP={padding:"10px 20px",background:"var(--accent)",color:"var(--accent-contrast)",border:"none",borderRadius:6,cursor:"pointer",fontSize:14,fontWeight:400,fontFamily:"inherit",transition:"all 0.15s"};
 const btnS={padding:"10px 20px",background:"var(--bg-card)",color:"var(--text)",border:"1px solid var(--border)",borderRadius:6,cursor:"pointer",fontSize:14,fontFamily:"inherit",transition:"all 0.15s"};
 const btnE={padding:"10px 20px",background:"var(--bg-deep)",color:"var(--text)",border:"1px solid var(--border)",borderRadius:6,cursor:"pointer",fontSize:14,transition:"all 0.15s"};
 const toggleStyle=(on)=>({padding:"5px 16px",borderRadius:12,border:"none",cursor:"pointer",
   fontSize:12,fontWeight:600,transition:"all 0.2s",letterSpacing:"0.05em",
-  background:on?"var(--accent)":"var(--bg-deep)",color:on?"#fff":"var(--text-dim)"});
+  background:on?"var(--accent)":"var(--bg-deep)",color:on?"var(--accent-contrast)":"var(--text-dim)"});

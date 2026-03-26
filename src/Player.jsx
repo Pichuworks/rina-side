@@ -18,12 +18,28 @@ const specRowColor = (r) => { if(r<6) return C_CYAN; if(r<9) return C_AMBER; if(
 
 const VU_DB = [[-20,0],[-10,0.25],[-7,0.35],[-5,0.45],[-3,0.55],[0,0.7],["+3",0.85]];
 const METER_MODES = ["vfd","vu","spectrum","waveform"];
+const SIM_MODES = ["off","TAPE_I","TAPE_II","TAPE_IV","vinyl"];
 const MODE_LABEL = {vfd:"VFD",vu:"VU",spectrum:"FFT",waveform:"WAVE"};
 const FONT = "'Noto Sans SC','Noto Sans JP','Hiragino Sans','Microsoft YaHei',system-ui,sans-serif";
+
+function prepareCanvas(canvas) {
+  const dpr = window.devicePixelRatio || 1;
+  const rect = canvas.getBoundingClientRect();
+  const width = Math.max(1, Math.round(rect.width * dpr));
+  const height = Math.max(1, Math.round(rect.height * dpr));
+  if (canvas.width !== width || canvas.height !== height) {
+    canvas.width = width;
+    canvas.height = height;
+  }
+  const ctx = canvas.getContext("2d");
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+  return { ctx, w: rect.width, h: rect.height };
+}
 
 
 export default function Player({
   playing, paused, playingSide, playingIdxRef, playPosRef, schedule, totalDur,
+  playToken,
   meterMode, setMeterMode, simMode, setSimMode,
   togglePause, stopPlayback, skipTrack, seekTo,
   analyserL, analyserR, T, fmtTime
@@ -47,15 +63,37 @@ export default function Player({
     p: ((s.start + s.dur) / totalDur) * 100,
     t: st[i+1]?.start || (s.start + s.dur)
   })) : [];
+  const contentEnd = st.length > 0 ? st[st.length - 1].start + st[st.length - 1].dur : 0;
+  const tailBoundary = contentEnd > 0 && contentEnd < totalDur ? {
+    p: (contentEnd / totalDur) * 100,
+    t: contentEnd,
+  } : null;
 
   const nextMode = useCallback(() => {
     setMeterMode(m => { const i = METER_MODES.indexOf(m); return METER_MODES[(i + 1) % METER_MODES.length]; });
   }, [setMeterMode]);
+  const simLabel = simMode === "off" ? "OFF" : simMode === "vinyl" ? "VINYL" : simMode.replace("TAPE_", "TYPE ").replace("_", " ");
+  const simTitle = `SIM: ${simLabel}`;
+  const getTrackCounter = useCallback((idx) => {
+    if (st.length === 0) return "0/0";
+    if (idx < 0) return `0/${st.length}`;
+    return `${Math.min(idx + 1, st.length)}/${st.length}`;
+  }, [st.length]);
 
   const handleSeek = useCallback((e) => {
     const rect = e.currentTarget.getBoundingClientRect();
     seekTo(Math.max(0, Math.min(1, (e.clientX - rect.left) / rect.width)) * totalDur);
   }, [seekTo, totalDur]);
+
+  useEffect(() => {
+    const pos = playPosRef.current;
+    const idx = playingIdxRef.current;
+    const pct = totalDur > 0 ? (pos / totalDur) * 100 : 0;
+    if (posRef.current) posRef.current.textContent = fmtTime(pos);
+    if (progRef.current) progRef.current.style.width = `${Math.min(pct, 100)}%`;
+    if (nameRef.current) nameRef.current.textContent = st[idx]?.name || "\u2014";
+    if (numRef.current) numRef.current.textContent = getTrackCounter(idx);
+  }, [fmtTime, getTrackCounter, playToken, st, totalDur, playPosRef, playingIdxRef]);
 
   // ── Animation loop ───────────────────────────────────────
   useEffect(() => {
@@ -95,7 +133,7 @@ export default function Player({
       const sc = specRef.current;
       if (sc) {
         analyserL.getFloatFrequencyData(freqL); analyserR.getFloatFrequencyData(freqR);
-        const ctx = sc.getContext("2d"), w = sc.width, h = sc.height;
+        const { ctx, w, h } = prepareCanvas(sc);
         ctx.clearRect(0, 0, w, h);
         const bW = Math.floor(w / SPEC_BANDS), cH = Math.floor(h / SPEC_ROWS), gap = 4;
         const bPer = Math.floor(freqL.length / SPEC_BANDS);
@@ -107,7 +145,12 @@ export default function Player({
             const rb = SPEC_ROWS - 1 - r;
             ctx.fillStyle = specRowColor(rb);
             ctx.globalAlpha = rb < litR ? 1.0 : 0.08;
-            ctx.fillRect(b * bW + gap, r * cH + 2, bW - gap * 2, cH - 4);
+            ctx.fillRect(
+              Math.round(b * bW + gap),
+              Math.round(r * cH + 2),
+              Math.max(1, Math.floor(bW - gap * 2)),
+              Math.max(1, Math.floor(cH - 4))
+            );
           }
         }
         ctx.globalAlpha = 1.0;
@@ -140,7 +183,7 @@ export default function Player({
       if (posRef.current) posRef.current.textContent = fmtTime(pos);
       if (progRef.current) progRef.current.style.width = `${Math.min(pct, 100)}%`;
       if (nameRef.current) nameRef.current.textContent = st[idx]?.name || "\u2014";
-      if (numRef.current) numRef.current.textContent = `${idx + 1}/${st.length}`;
+      if (numRef.current) numRef.current.textContent = getTrackCounter(idx);
       // Reels
       const deg = pos * 120;
       if (reelLRef.current) reelLRef.current.style.transform = `rotate(${deg}deg)`;
@@ -150,7 +193,7 @@ export default function Player({
     };
     rafRef.current = requestAnimationFrame(tick);
     return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current); };
-  }, [playing, paused, analyserL, analyserR, meterMode]);
+  }, [playing, paused, analyserL, analyserR, meterMode, playToken, getTrackCounter]);
 
   return (
     <div style={{marginBottom:12,background:"var(--bg-card)",borderRadius:12,padding:"14px 18px",
@@ -205,13 +248,13 @@ export default function Player({
             color:"var(--text-dim)",cursor:"pointer",fontSize:11}}>
           <IconEqualizer size={14}/>{MODE_LABEL[meterMode]}
         </button>
-        <button onClick={()=>setSimMode(m=>m==="off"?"tape":m==="tape"?"vinyl":"off")}
-          title={simMode==="off"?"SIM: OFF":simMode==="tape"?"SIM: TAPE":"SIM: VINYL"}
+        <button onClick={()=>setSimMode(m=>SIM_MODES[(SIM_MODES.indexOf(m)+1)%SIM_MODES.length])}
+          title={simTitle}
           style={{height:32,display:"flex",alignItems:"center",gap:4,padding:"0 12px",
             background:simMode==="off"?"var(--bg-deep)":"var(--accent-dim)",
             border:`1px solid ${simMode==="off"?"var(--border)":"var(--accent)"}`,borderRadius:5,
             color:simMode==="off"?"var(--text-dim)":"var(--accent)",cursor:"pointer",fontSize:11}}>
-          <IconTape size={14}/>{simMode==="off"?"OFF":simMode==="tape"?"TAPE":"VINYL"}
+          <IconTape size={14}/>{simLabel}
         </button>
       </div>
 
@@ -233,6 +276,16 @@ export default function Player({
               onMouseLeave={e=>{e.currentTarget.style.borderColor="var(--text-dim)";e.currentTarget.style.transform="translate(-50%,-50%) scale(1)";}}
             />
           ))}
+          {tailBoundary&&(
+            <div
+              onClick={(e)=>{e.stopPropagation();seekTo(tailBoundary.t);}}
+              style={{position:"absolute",left:`${tailBoundary.p}%`,top:"50%",transform:"translate(-50%,-50%)",
+                width:12,height:12,borderRadius:"50%",background:"var(--bg-card)",
+                border:`2px solid ${sideColor}`,cursor:"pointer",zIndex:2}}
+              onMouseEnter={e=>{e.currentTarget.style.borderColor="var(--accent)";e.currentTarget.style.transform="translate(-50%,-50%) scale(1.2)";}}
+              onMouseLeave={e=>{e.currentTarget.style.borderColor=sideColor;e.currentTarget.style.transform="translate(-50%,-50%) scale(1)";}}
+            />
+          )}
         </div>
       </div>
 

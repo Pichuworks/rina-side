@@ -5,7 +5,7 @@
 ```
 src/
 ├── main.jsx              # Entry
-├── App.jsx               # Main (~1190 lines) — config, tracks, audio, export, themes
+├── App.jsx               # Main (~1200 lines) — config, tracks, audio, export, themes
 ├── Player.jsx            # Playback deck (~310 lines) — transport, meters, sim toggle
 ├── SideWaveform.jsx      # Static waveform (memo, pre-downsampled peaks)
 ├── Icons.jsx             # Inline SVG icons
@@ -14,42 +14,44 @@ src/
 
 ## Performance model
 
-During playback: **zero React re-renders**. `playPos`/`playingIdx` are refs. Player.jsx updates DOM directly via RAF.
+During playback: **zero React re-renders**. `playPos`/`playingIdx` are refs. Player.jsx updates DOM directly.
 
-SideWaveform uses `downsamplePeaks(2048)` computed at load time → drawing cost ~0.1ms.
+SideWaveform uses `downsamplePeaks(2048)` at load time → drawing ~0.1ms.
+
+## Theme system
+
+12 character themes. Default = 天王寺璃奈 (no separate entry).
+SIDE A/B colors auto-derived from accent via hue rotation (150°) + desaturation.
+
+| Key     | Character  | Accent  | Source                                          |
+| ------- | ---------- | ------- | ----------------------------------------------- |
+| default | 天王寺璃奈 | #D4859A | Project pink, bg=#E8ECF2 (ペーパーホワイト基調) |
+| keke    | 唐可可     | #49BDF0 | Liella パステルブルー                           |
+| tomori  | 高松灯     | #77BBDD | MyGO公式                                        |
+| raana   | 要乐奈     | #77DD77 | MyGO公式                                        |
+| soyo    | 长崎爽世   | #FFDD88 | moegirl                                         |
+| anon    | 千早爱音   | #FF8899 | MyGO公式                                        |
+| taki    | 椎名立希   | #7777AA | MyGO公式                                        |
+| sakiko  | 丰川祥子   | #7799CC | Ave Mujica                                      |
+| mutsumi | 若叶睦     | #779977 | Ave Mujica                                      |
+| nyamu   | 祐天寺若麦 | #AA4477 | Ave Mujica                                      |
+| hatsuka | 三角初华   | #BB9955 | Ave Mujica                                      |
+| uika    | 八幡海铃   | #335566 | Ave Mujica                                      |
 
 ## Audio pipeline
 
 ```
-Load:  File → decode → AudioBuffer → peaks/analysis → track state
-Play:  AudioBuffer → GainNode → [tape/vinyl sim] → output + analysers
+Load:  File header parse (sampleRate / channels / bitDepth) → native decode or ffmpeg WAV transcode → AudioBuffer → peaks/analysis → track
+Play:  AudioBuffer → GainNode → [preview sim: TYPE I / TYPE II / TYPE IV / VINYL] → output + analysers
 Export: OfflineAudioContext → encodeWAV → download
 ```
 
-## Theme system
-
-13 character themes with verified official 応援色:
-
-| Key | Character | Accent | Source |
-|-----|-----------|--------|--------|
-| default | Default | #D4859A | Project Rina pink |
-| rina | 天王寺璃奈 | #D4859A | Niji ペーパーホワイト→project pink |
-| keke | 唐可可 | #49BDF0 | Liella パステルブルー |
-| tomori | 高松灯 | #77BBDD | MyGO official site |
-| raana | 要乐奈 | #77DD77 | MyGO official site |
-| soyo | 长崎爽世 | #DDAA11 | MyGO official site (#FFBB12 adjusted) |
-| anon | 千早爱音 | #FF8899 | MyGO official site |
-| taki | 椎名立希 | #7777AA | MyGO official site |
-| sakiko | 丰川祥子 | #7799CC | Ave Mujica palette |
-| mutsumi | 若叶睦 | #779977 | Ave Mujica palette |
-| nyamu | 祐天寺若麦 | #AA4477 | Ave Mujica palette (confirmed) |
-| hatsuka | 三角初华 | #BB9955 | Ave Mujica palette |
-| uika | 八幡海铃 | #335566 | Ave Mujica palette |
-
-Each theme defines: accent, bg, bgCard, bgDeep, border, accentDim, sideA, sideB.
+Notes:
+- ffmpeg is decode-only fallback; it must not overwrite source metadata used by UI/export decisions.
+- Preview simulation is never baked into export.
 
 ## Tape/Vinyl simulation
 
-Tape: WaveShaper(tanh) → Lowpass(11kHz) + BandpassNoise(hiss)
-Vinyl: LowShelf(+2dB) → Lowpass(14kHz) + HighpassNoise(crackle)
-Preview only — export is always clean.
+Tape: TYPE I / II / IV each use distinct EQ + saturation + hiss profiles.
+Vinyl: EQ + bandwidth limit + surface noise + crackle + rumble + wow/flutter.
+Preview only — export always clean.

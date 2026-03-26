@@ -9,23 +9,38 @@ let ffmpegInstance = null;
 let loadPromise = null;
 
 const BASE_URL = 'https://unpkg.com/@ffmpeg/core-mt@0.12.6/dist/esm';
+const IGNORED_LOGS = [/^aborted\(\)$/i];
+
+function shouldForwardLog(message) {
+  return typeof message === 'string' && !IGNORED_LOGS.some((pattern) => pattern.test(message.trim()));
+}
 
 async function getFFmpeg(onLog) {
   if (ffmpegInstance?.loaded) return ffmpegInstance;
   if (loadPromise) return loadPromise;
 
   loadPromise = (async () => {
-    const ff = new FFmpeg();
-    if (onLog) ff.on('log', ({ message }) => onLog(message));
+    try {
+      const ff = new FFmpeg();
+      if (onLog) {
+        ff.on('log', ({ message }) => {
+          if (shouldForwardLog(message)) onLog(message);
+        });
+      }
 
-    await ff.load({
-      coreURL: await toBlobURL(`${BASE_URL}/ffmpeg-core.js`, 'text/javascript'),
-      wasmURL: await toBlobURL(`${BASE_URL}/ffmpeg-core.wasm`, 'application/wasm'),
-      workerURL: await toBlobURL(`${BASE_URL}/ffmpeg-core.worker.js`, 'text/javascript'),
-    });
+      await ff.load({
+        coreURL: await toBlobURL(`${BASE_URL}/ffmpeg-core.js`, 'text/javascript'),
+        wasmURL: await toBlobURL(`${BASE_URL}/ffmpeg-core.wasm`, 'application/wasm'),
+        workerURL: await toBlobURL(`${BASE_URL}/ffmpeg-core.worker.js`, 'text/javascript'),
+      });
 
-    ffmpegInstance = ff;
-    return ff;
+      ffmpegInstance = ff;
+      return ff;
+    } catch (error) {
+      ffmpegInstance = null;
+      loadPromise = null;
+      throw error;
+    }
   })();
 
   return loadPromise;
@@ -43,14 +58,14 @@ export async function transcodeToWav(file, onLog) {
   const outputName = 'output.wav';
 
   await ff.writeFile(inputName, await fetchFile(file));
-  await ff.exec(['-i', inputName, '-ar', '44100', '-ac', '2', '-f', 'wav', outputName]);
-
-  const data = await ff.readFile(outputName);
-  // Cleanup
-  await ff.deleteFile(inputName).catch(() => {});
-  await ff.deleteFile(outputName).catch(() => {});
-
-  return data.buffer;
+  try {
+    await ff.exec(['-i', inputName, '-f', 'wav', outputName]);
+    const data = await ff.readFile(outputName);
+    return data.buffer.slice(data.byteOffset, data.byteOffset + data.byteLength);
+  } finally {
+    await ff.deleteFile(inputName).catch(() => {});
+    await ff.deleteFile(outputName).catch(() => {});
+  }
 }
 
 /**
