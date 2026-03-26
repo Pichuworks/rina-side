@@ -15,11 +15,14 @@ const SEG_COLORS = Array.from({length:SEGS},(_,i)=>{
 const SPEC_BANDS = 16;
 const SPEC_ROWS = 12;
 const specRowColor = (r) => { if(r<6) return C_CYAN; if(r<9) return C_AMBER; if(r<11) return C_PINK; return C_RED; };
+const SPECGRAM_MIN_HZ = 32;
+const SPECGRAM_MAX_HZ = 22050;
+const SPECGRAM_SCROLL_PX = 2;
 
 const VU_DB = [[-20,0],[-10,0.25],[-7,0.35],[-5,0.45],[-3,0.55],[0,0.7],["+3",0.85]];
-const METER_MODES = ["vfd","vu","spectrum","waveform"];
+const METER_MODES = ["vfd","vu","spectrum","waveform","waterfall"];
 const SIM_MODES = ["off","TAPE_I","TAPE_II","TAPE_IV","vinyl"];
-const MODE_LABEL = {vfd:"VFD",vu:"VU",spectrum:"FFT",waveform:"WAVE"};
+const MODE_LABEL = {vfd:"VFD",vu:"VU",spectrum:"FFT",waveform:"WAVE",waterfall:"SGRAM"};
 const FONT = "'Noto Sans SC','Noto Sans JP','Hiragino Sans','Microsoft YaHei',system-ui,sans-serif";
 
 function prepareCanvas(canvas) {
@@ -36,6 +39,61 @@ function prepareCanvas(canvas) {
   return { ctx, w: rect.width, h: rect.height };
 }
 
+function formatSpectrumLabel(freqHz) {
+  const khz = freqHz / 1000;
+  return `${khz >= 10 ? khz.toFixed(0) : khz.toFixed(1)}k`;
+}
+
+function lerp(a, b, t) {
+  return a + (b - a) * t;
+}
+
+function spectrogramColor(level) {
+  const stops = [
+    [0.0, [5, 6, 18]],
+    [0.18, [34, 16, 74]],
+    [0.38, [94, 33, 132]],
+    [0.58, [181, 54, 122]],
+    [0.76, [248, 101, 86]],
+    [0.9, [253, 190, 110]],
+    [1.0, [255, 244, 184]],
+  ];
+  const x = Math.max(0, Math.min(1, level));
+  for (let i = 1; i < stops.length; i++) {
+    if (x <= stops[i][0]) {
+      const [p0, c0] = stops[i - 1];
+      const [p1, c1] = stops[i];
+      const t = (x - p0) / (p1 - p0 || 1);
+      const r = Math.round(lerp(c0[0], c1[0], t));
+      const g = Math.round(lerp(c0[1], c1[1], t));
+      const b = Math.round(lerp(c0[2], c1[2], t));
+      return `rgb(${r},${g},${b})`;
+    }
+  }
+  return "rgb(255,244,184)";
+}
+
+function freqToY(freq, graphH) {
+  const min = Math.log10(SPECGRAM_MIN_HZ);
+  const max = Math.log10(SPECGRAM_MAX_HZ);
+  const v = (Math.log10(Math.max(SPECGRAM_MIN_HZ, Math.min(SPECGRAM_MAX_HZ, freq))) - min) / (max - min);
+  return Math.round(graphH - 1 - v * (graphH - 1));
+}
+
+function buildSpectrogramTicks(maxHz, graphH) {
+  const ticks = [64,128,256,512,1024,2048,4096,8192,16000,22050]
+    .filter((freq) => freq <= maxHz)
+    .map((freq) => ({
+      freq,
+      y: Math.round(graphH - 1 - ((Math.log10(freq) - Math.log10(SPECGRAM_MIN_HZ)) / (Math.log10(maxHz) - Math.log10(SPECGRAM_MIN_HZ))) * (graphH - 1)),
+    }));
+  const accepted = [];
+  [...ticks].sort((a, b) => b.freq - a.freq).forEach((tick) => {
+    if (accepted.every((prev) => Math.abs(prev.y - tick.y) >= 11)) accepted.push(tick);
+  });
+  return accepted.sort((a, b) => a.freq - b.freq);
+}
+
 
 export default function Player({
   playing, paused, playingSide, playingIdxRef, playPosRef, schedule, totalDur,
@@ -47,18 +105,22 @@ export default function Player({
   const meterElRef = useRef(null);
   const specRef = useRef(null);
   const waveRef = useRef(null);
+  const waterfallRef = useRef(null);
+  const waterfallHistoryRef = useRef(null);
   const rafRef = useRef(null);
   const decayRef = useRef({dL:0,dR:0,pL:0,pR:0});
+  const specPeakRef = useRef(Array.from({length: SPEC_BANDS}, () => ({ level: 0, hold: 0 })));
   // DOM refs for direct 60fps update — no React re-render
   const posRef = useRef(null);
   const progRef = useRef(null);
   const nameRef = useRef(null);
   const numRef = useRef(null);
+  const trackTimeRef = useRef(null);
   const reelLRef = useRef(null);
   const reelRRef = useRef(null);
 
   const st = schedule || [];
-  const sideColor = `var(--side-${playingSide?.toLowerCase()||"a"})`;
+  const sideColor = "var(--side-a)";
   const boundaries = st.length > 1 ? st.slice(0, -1).map((s,i) => ({
     p: ((s.start + s.dur) / totalDur) * 100,
     t: st[i+1]?.start || (s.start + s.dur)
@@ -79,6 +141,12 @@ export default function Player({
     if (idx < 0) return `0/${st.length}`;
     return `${Math.min(idx + 1, st.length)}/${st.length}`;
   }, [st.length]);
+  const getTrackTimeLabel = useCallback((pos, idx) => {
+    const seg = st[idx];
+    if (!seg) return "\u2014";
+    const localPos = Math.max(0, Math.min(seg.dur, pos - seg.start));
+    return `${fmtTime(localPos)} / ${fmtTime(seg.dur)}`;
+  }, [fmtTime, st]);
 
   const handleSeek = useCallback((e) => {
     const rect = e.currentTarget.getBoundingClientRect();
@@ -93,7 +161,16 @@ export default function Player({
     if (progRef.current) progRef.current.style.width = `${Math.min(pct, 100)}%`;
     if (nameRef.current) nameRef.current.textContent = st[idx]?.name || "\u2014";
     if (numRef.current) numRef.current.textContent = getTrackCounter(idx);
-  }, [fmtTime, getTrackCounter, playToken, st, totalDur, playPosRef, playingIdxRef]);
+    if (trackTimeRef.current) trackTimeRef.current.textContent = getTrackTimeLabel(pos, idx);
+  }, [fmtTime, getTrackCounter, getTrackTimeLabel, playToken, st, totalDur, playPosRef, playingIdxRef]);
+
+  useEffect(() => {
+    const canvas = waterfallRef.current;
+    if (!canvas) return;
+    waterfallHistoryRef.current = null;
+    const { ctx, w, h } = prepareCanvas(canvas);
+    ctx.clearRect(0, 0, w, h);
+  }, [playToken, meterMode]);
 
   // ── Animation loop ───────────────────────────────────────
   useEffect(() => {
@@ -131,16 +208,34 @@ export default function Player({
 
       // Segmented spectrum
       const sc = specRef.current;
-      if (sc) {
+      const wfc = waterfallRef.current;
+      if (sc || wfc) {
         analyserL.getFloatFrequencyData(freqL); analyserR.getFloatFrequencyData(freqR);
+      }
+      if (sc) {
         const { ctx, w, h } = prepareCanvas(sc);
         ctx.clearRect(0, 0, w, h);
-        const bW = Math.floor(w / SPEC_BANDS), cH = Math.floor(h / SPEC_ROWS), gap = 4;
+        const labelH = 16;
+        const meterH = Math.max(1, h - labelH);
+        const bW = Math.floor(w / SPEC_BANDS), cH = Math.floor(meterH / SPEC_ROWS), gap = 4;
         const bPer = Math.floor(freqL.length / SPEC_BANDS);
+        const sampleRate = analyserL.context.sampleRate || 48000;
+        const fftSize = analyserL.fftSize || 1024;
         for (let b = 0; b < SPEC_BANDS; b++) {
           let sum = 0;
-          for (let k = b * bPer; k < (b + 1) * bPer && k < freqL.length; k++) sum += Math.max(0, (freqL[k] + freqR[k]) / 2 + 100);
+          const startBin = b * bPer;
+          const endBin = Math.min((b + 1) * bPer, freqL.length);
+          for (let k = startBin; k < endBin; k++) sum += Math.max(0, (freqL[k] + freqR[k]) / 2 + 100);
           const lvl = Math.min(1, sum / bPer / 100), litR = Math.round(lvl * SPEC_ROWS);
+          const peak = specPeakRef.current[b];
+          if (litR >= peak.level) {
+            peak.level = litR;
+            peak.hold = 60;
+          } else if (peak.hold > 0) {
+            peak.hold -= 1;
+          } else {
+            peak.level = Math.max(litR, peak.level - 0.22);
+          }
           for (let r = 0; r < SPEC_ROWS; r++) {
             const rb = SPEC_ROWS - 1 - r;
             ctx.fillStyle = specRowColor(rb);
@@ -152,8 +247,117 @@ export default function Player({
               Math.max(1, Math.floor(cH - 4))
             );
           }
+          const peakMarkerCount = Math.min(SPEC_ROWS, Math.max(litR + 1, Math.ceil(peak.level)));
+          if (peak.level > 0.05 && litR < SPEC_ROWS && peakMarkerCount > litR) {
+            const markerVisualRow = SPEC_ROWS - peakMarkerCount;
+            const markerBandRow = peakMarkerCount - 1;
+            ctx.globalAlpha = 0.98;
+            ctx.fillStyle = specRowColor(markerBandRow);
+            ctx.fillRect(
+              Math.round(b * bW + gap),
+              Math.round(markerVisualRow * cH + 2),
+              Math.max(1, Math.floor(bW - gap * 2)),
+              Math.max(1, Math.floor(cH - 4))
+            );
+          }
+          const centerBin = startBin + Math.max(0, endBin - startBin - 1) / 2;
+          const centerFreq = centerBin * sampleRate / fftSize;
+          ctx.globalAlpha = 0.75;
+          ctx.fillStyle = "rgba(45,45,56,0.72)";
+          ctx.font = "8px " + FONT;
+          ctx.textAlign = "center";
+          ctx.textBaseline = "alphabetic";
+          ctx.fillText(formatSpectrumLabel(centerFreq), Math.round(b * bW + bW / 2), h - 3);
         }
         ctx.globalAlpha = 1.0;
+        ctx.textAlign = "start";
+        ctx.textBaseline = "alphabetic";
+      }
+
+      // Waterfall spectrogram
+      if (wfc) {
+        const { ctx, w, h } = prepareCanvas(wfc);
+        const dpr = window.devicePixelRatio || 1;
+        const axisW = 40;
+        const graphW = Math.max(1, w - axisW);
+        const graphH = h;
+        const sampleRate = analyserL.context.sampleRate || 48000;
+        const fftSize = analyserL.fftSize || 1024;
+        const nyquist = sampleRate / 2;
+        const visibleMaxHz = Math.min(SPECGRAM_MAX_HZ, nyquist);
+        const ticks = buildSpectrogramTicks(visibleMaxHz, graphH);
+        const x0 = axisW;
+        const scrollPx = Math.max(1, Math.round(SPECGRAM_SCROLL_PX * dpr));
+        const graphPxW = Math.max(1, Math.round(graphW * dpr));
+        const graphPxH = Math.max(1, Math.round(graphH * dpr));
+        let history = waterfallHistoryRef.current;
+        if (!history || history.width !== graphPxW || history.height !== graphPxH) {
+          history = document.createElement("canvas");
+          history.width = graphPxW;
+          history.height = graphPxH;
+          waterfallHistoryRef.current = history;
+        }
+        const hctx = history.getContext("2d");
+        hctx.imageSmoothingEnabled = false;
+        hctx.drawImage(history, scrollPx, 0, Math.max(0, graphPxW - scrollPx), graphPxH, 0, 0, Math.max(0, graphPxW - scrollPx), graphPxH);
+        hctx.clearRect(graphPxW - scrollPx, 0, scrollPx, graphPxH);
+
+        for (let y = 0; y < graphPxH; y++) {
+          const topRatio = 1 - y / graphPxH;
+          const bottomRatio = 1 - (y + 1) / graphPxH;
+          const topFreq = 10 ** (Math.log10(SPECGRAM_MIN_HZ) + topRatio * (Math.log10(visibleMaxHz) - Math.log10(SPECGRAM_MIN_HZ)));
+          const bottomFreq = 10 ** (Math.log10(SPECGRAM_MIN_HZ) + bottomRatio * (Math.log10(visibleMaxHz) - Math.log10(SPECGRAM_MIN_HZ)));
+          const fHi = Math.min(nyquist, Math.max(topFreq, bottomFreq));
+          const fLo = Math.max(SPECGRAM_MIN_HZ, Math.min(topFreq, bottomFreq));
+          const startBin = Math.max(1, Math.floor(fLo / nyquist * freqL.length));
+          const endBin = Math.max(startBin + 1, Math.min(freqL.length, Math.ceil(fHi / nyquist * freqL.length)));
+          let sum = 0;
+          for (let k = startBin; k < endBin; k++) {
+            const db = (freqL[k] + freqR[k]) * 0.5;
+            sum += db;
+          }
+          const avgDb = sum / Math.max(1, endBin - startBin);
+          const normalized = Math.max(0, Math.min(1, (avgDb + 92) / 72));
+          const shaped = normalized ** 0.78;
+          hctx.fillStyle = spectrogramColor(shaped);
+          hctx.fillRect(graphPxW - scrollPx, y, scrollPx, 1);
+        }
+
+        ctx.clearRect(0, 0, w, h);
+        ctx.fillStyle = "rgba(5,6,18,0.96)";
+        ctx.fillRect(0, 0, w, h);
+        ctx.imageSmoothingEnabled = false;
+        ctx.drawImage(history, x0, 0, graphW, graphH);
+
+        ctx.globalAlpha = 0.42;
+        ctx.strokeStyle = "rgba(255,255,255,0.16)";
+        ctx.lineWidth = 1;
+        ticks.forEach(({ y }) => {
+          ctx.beginPath();
+          ctx.moveTo(x0, y + 0.5);
+          ctx.lineTo(w, y + 0.5);
+          ctx.stroke();
+        });
+
+        ctx.globalAlpha = 1;
+        ctx.strokeStyle = "rgba(255,255,255,0.2)";
+        ctx.beginPath();
+        ctx.moveTo(x0 + 0.5, 0);
+        ctx.lineTo(x0 + 0.5, h);
+        ctx.stroke();
+
+        ctx.globalAlpha = 0.78;
+        ctx.fillStyle = "rgba(255,255,255,0.86)";
+        ctx.font = "9px " + FONT;
+        ctx.textAlign = "right";
+        ctx.textBaseline = "middle";
+        ticks.forEach(({ freq, y }) => {
+          const label = freq >= 1000 ? `${(freq/1000).toFixed(freq >= 10000 ? 0 : 1)}k` : `${freq}`;
+          ctx.fillText(label, axisW - 6, y);
+        });
+        ctx.globalAlpha = 1;
+        ctx.textAlign = "start";
+        ctx.textBaseline = "alphabetic";
       }
 
       // Waveform — L top, R bottom, filled
@@ -184,6 +388,7 @@ export default function Player({
       if (progRef.current) progRef.current.style.width = `${Math.min(pct, 100)}%`;
       if (nameRef.current) nameRef.current.textContent = st[idx]?.name || "\u2014";
       if (numRef.current) numRef.current.textContent = getTrackCounter(idx);
+      if (trackTimeRef.current) trackTimeRef.current.textContent = getTrackTimeLabel(pos, idx);
       // Reels
       const deg = pos * 120;
       if (reelLRef.current) reelLRef.current.style.transform = `rotate(${deg}deg)`;
@@ -193,7 +398,7 @@ export default function Player({
     };
     rafRef.current = requestAnimationFrame(tick);
     return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current); };
-  }, [playing, paused, analyserL, analyserR, meterMode, playToken, getTrackCounter]);
+  }, [playing, paused, analyserL, analyserR, meterMode, playToken, getTrackCounter, getTrackTimeLabel]);
 
   return (
     <div style={{marginBottom:12,background:"var(--bg-card)",borderRadius:12,padding:"14px 18px",
@@ -217,6 +422,9 @@ export default function Player({
           </div>
           <div ref={nameRef} style={{fontSize:15,color:"var(--text)",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
             {st[0]?.name||"\u2014"}
+          </div>
+          <div ref={trackTimeRef} style={{fontSize:11,color:"var(--text-dim)",marginTop:3}}>
+            {st[0]?`${fmtTime(0)} / ${fmtTime(st[0].dur)}`:"\u2014"}
           </div>
         </div>
         <div style={{width:36,height:36,display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0}}>
@@ -297,6 +505,8 @@ export default function Player({
           style={{width:"100%",height:150,borderRadius:4,display:"block"}}/>}
         {meterMode==="waveform" && <canvas ref={waveRef} width={2048} height={280}
           style={{width:"100%",height:140,borderRadius:4,display:"block"}}/>}
+        {meterMode==="waterfall" && <canvas ref={waterfallRef} width={1536} height={320}
+          style={{width:"100%",height:180,borderRadius:4,display:"block",background:"#050612"}}/>}
       </div>
     </div>
   );
@@ -333,7 +543,7 @@ function VUMeter() {
     <div style={{display:"flex",justifyContent:"center",gap:16}}>
       {["L","R"].map(ch=>(
         <div key={ch} style={{position:"relative",width:"48%",maxWidth:280,borderRadius:10,overflow:"hidden",
-          background:`linear-gradient(180deg,${C_PINK}10 0%,var(--bg-card) 100%)`,
+          background:"linear-gradient(180deg,var(--accent-dim) 0%,var(--bg-card) 100%)",
           border:"1px solid var(--border)"}}>
           <svg viewBox="0 0 140 82" style={{width:"100%",display:"block"}}>
             <path d="M16 70 A54 54 0 0 1 124 70" fill="none" stroke="var(--border)" strokeWidth="0.5"/>
@@ -341,7 +551,7 @@ function VUMeter() {
               const a=(-50+v*100)*Math.PI/180, r1=v>=0.7?38:40, r2=v*10%2===0?50:47;
               return <line key={i} x1={70+Math.sin(a)*r1} y1={70-Math.cos(a)*r1}
                 x2={70+Math.sin(a)*r2} y2={70-Math.cos(a)*r2}
-                stroke={v>=0.7?C_PINK:"var(--text-dim)"} strokeWidth={v*10%2===0?"0.7":"0.3"}/>;
+                stroke={v>=0.7?"var(--accent)":"var(--text-dim)"} strokeWidth={v*10%2===0?"0.7":"0.3"}/>;
             })}
             {VU_DB.map(([db,v])=>{
               const a=(-50+v*100)*Math.PI/180;
@@ -349,9 +559,9 @@ function VUMeter() {
                 textAnchor="middle" dominantBaseline="central" fill="var(--text-dim)" fontSize="5.5">{db}</text>;
             })}
             <text x="70" y="13" textAnchor="middle" fill="var(--text-dim)" fontSize="8">{ch}</text>
-            <line data-vu={ch} x1="70" y1="70" x2="70" y2="18" stroke={C_PINK} strokeWidth="0.8" strokeLinecap="round"
+            <line data-vu={ch} x1="70" y1="70" x2="70" y2="18" stroke="var(--accent)" strokeWidth="0.8" strokeLinecap="round"
               style={{transformOrigin:"70px 70px",transform:"rotate(-50deg)",transition:"transform 0.08s ease-out"}}/>
-            <circle cx="70" cy="70" r="3.5" fill={C_PINK}/>
+            <circle cx="70" cy="70" r="3.5" fill="var(--accent)"/>
             <text x="70" y="79" textAnchor="middle" fill="var(--text-dim)" fontSize="5">VU</text>
           </svg>
         </div>

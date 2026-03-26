@@ -3,6 +3,7 @@ import { transcodeToWav, likelyNeedsTranscode } from "./ffmpeg-helper.js";
 import { IconAdd, IconAutoAwesome, IconFileOpen, IconSave, IconPlay, IconStop, IconExport, IconHelp, IconClearSide, IconClearAll, IconPalette, IconInfo } from "./Icons.jsx";
 import Player from "./Player.jsx";
 import SideWaveform from "./SideWaveform.jsx";
+import SideSpectrogram from "./SideSpectrogram.jsx";
 
 // ═══════════════════════════════════════════════════════════════
 // SIDE — Sequential Interleaved Dubbing Engine
@@ -15,7 +16,7 @@ const APP_VERSION = "0.9 Release Candidate I";
 const APP_GITHUB = "https://github.com/Pichuworks/rina-side";
 
 // ── i18n ─────────────────────────────────────────────────────
-const LANGS = { "zh-CN": { label: "简中" }, ja: { label: "日本語" }, en: { label: "EN" } };
+const LANGS = { "zh-CN": { label: "简体中文" }, ja: { label: "日本語" }, en: { label: "EN" } };
 
 const I18N = {
   appTitle:        { "zh-CN": "SIDE — 磁带转录引擎", ja: "SIDE — 磁帯転写エンジン", en: "SIDE — Cassette Dubbing Engine" },
@@ -76,6 +77,8 @@ const I18N = {
   pause:                  { "zh-CN": "暂停", ja: "一時停止", en: "Pause" },
   resume:                 { "zh-CN": "继续", ja: "再開", en: "Resume" },
   nowPlaying:             { "zh-CN": "正在播放", ja: "再生中", en: "Now playing" },
+  previewWave:            { "zh-CN": "波形", ja: "波形", en: "Wave" },
+  previewSpectrogram:     { "zh-CN": "声谱图", ja: "スペクトログラム", en: "Spectrogram" },
   stubLabel:              { "zh-CN": "占位曲目", ja: "プレースホルダ", en: "placeholder" },
   clearSide:              { "zh-CN": "清空当前面", ja: "この面をクリア", en: "Clear this side" },
   clearAll:               { "zh-CN": "清空全部", ja: "全てクリア", en: "Clear all" },
@@ -154,6 +157,11 @@ function deriveSideColors(accent){const[h,s,l]=hexToHsl(accent);
   return{sideA:accent,sideB:hslToHex((h+150)%360,Math.max(s*0.6,20),Math.min(Math.max(l,40),60))};}
 function deriveAccentInk(accent){
   return mixHex(accent,"#1F2430",0.6);
+}
+function deriveWarningColor(accent){
+  const warmed=mixHex(accent,"#C97A5A",0.62);
+  const[h,s,l]=hexToHsl(warmed);
+  return hslToHex(h,Math.max(42,s*0.88),Math.min(Math.max(l,50),60));
 }
 function deriveTapeTypeColors(accent){
   return{
@@ -337,7 +345,7 @@ function detectSourceAudioMeta(filename, buf){
   return meta;
 }
 // Pre-downsample AudioBuffer to N min/max peak pairs per channel — O(samples) once at load
-function downsamplePeaks(ab, N=2048){
+function downsamplePeaks(ab, N=4096){
   const result=[];
   for(let c=0;c<Math.min(ab.numberOfChannels,2);c++){
     const data=ab.getChannelData(c);
@@ -354,6 +362,39 @@ function downsamplePeaks(ab, N=2048){
   }
   return result;
 }
+function computeSpectrogramPreview(ab, frames=Math.max(80,Math.min(256,Math.round(ab.duration*8))), bands=64){
+  const sampleRate=ab.sampleRate;
+  const maxHz=Math.min(22050,sampleRate/2);
+  const minHz=40;
+  const winSize=1536;
+  const half=Math.floor(winSize/2);
+  const data=ab.getChannelData(0);
+  const len=data.length;
+  const window=new Float32Array(winSize);
+  for(let i=0;i<winSize;i++) window[i]=0.5*(1-Math.cos((2*Math.PI*i)/(winSize-1)));
+  const freqs=Array.from({length:bands},(_,i)=>minHz*Math.pow(maxHz/minHz,i/Math.max(1,bands-1)));
+  const coeffs=freqs.map(f=>2*Math.cos((2*Math.PI*f)/sampleRate));
+  const valuesDb=new Float32Array(frames*bands);
+  for(let fi=0;fi<frames;fi++){
+    const center=Math.floor((fi/Math.max(1,frames-1))*Math.max(0,len-1));
+    let start=Math.max(0,center-half);
+    if(start+winSize>len) start=Math.max(0,len-winSize);
+    for(let bi=0;bi<bands;bi++){
+      const coeff=coeffs[bi];
+      let s0=0,s1=0,s2=0;
+      for(let n=0;n<winSize;n++){
+        const sample=(data[start+n]||0)*window[n];
+        s0=sample+coeff*s1-s2;
+        s2=s1;
+        s1=s0;
+      }
+      const power=s1*s1+s2*s2-coeff*s1*s2;
+      const db=10*Math.log10(power/winSize+1e-12);
+      valuesDb[fi*bands+bi]=db;
+    }
+  }
+  return{frames,bands,maxHz,valuesDb};
+}
 function fmtTime(s){if(!s||s<0)return"0:00";return`${Math.floor(s/60)}:${String(Math.floor(s%60)).padStart(2,"0")}`;}
 function fmtTimeMs(s){if(!s||s<0)return"0:00.0";return`${Math.floor(s/60)}:${(s%60).toFixed(1).padStart(4,"0")}`;}
 let _id=0; const uid=()=>`t_${++_id}_${Date.now()}`;
@@ -366,6 +407,7 @@ export default function CassetteTool() {
   const th = THEMES[theme] || THEMES.default;
   const sideColors = useMemo(()=>deriveSideColors(th.accent),[th.accent]);
   const accentInk = useMemo(()=>deriveAccentInk(th.accent),[th.accent]);
+  const warningColor = useMemo(()=>deriveWarningColor(th.accent),[th.accent]);
   const tapeTypeColors = useMemo(()=>deriveTapeTypeColors(th.accent),[th.accent]);
   const accentContrast = useMemo(()=>getContrastColor(th.accent),[th.accent]);
   const T = useCallback((k) => t(k, lang), [lang]);
@@ -400,6 +442,7 @@ export default function CassetteTool() {
   const [dragOverSide,setDragOverSide] = useState(null);
   const [dragItem,setDragItem] = useState(null);
   const [activeTab,setActiveTab] = useState("A");
+  const [sidePreviewMode,setSidePreviewMode] = useState("waveform");
   const [toast,setToast] = useState(null);
   const [showHelp,setShowHelp] = useState(false);
   const [showAbout,setShowAbout] = useState(false);
@@ -495,10 +538,11 @@ export default function CassetteTool() {
       if(!ab) continue;
       const sil=detectSilence(ab); const pk=getPeak(ab); const rms=getRMS(ab);
       const ext=(f.name.match(/\.([^.]+)$/)||[])[1]?.toUpperCase()||"?";
-      const peaks=downsamplePeaks(ab,2048);
+      const peaks=downsamplePeaks(ab,4096);
+      const spectrogram=computeSpectrogramPreview(ab);
       const audioMeta={audioBuffer:ab,duration:ab.duration,sampleRate:sourceMeta?.sampleRate||ab.sampleRate,
         channels:sourceMeta?.channels||ab.numberOfChannels,headSilence:sil.headSilence,tailSilence:sil.tailSilence,
-        peakDb:toDb(pk),rmsDb:toDb(rms),peak:pk,rms,format:ext,bitDepth:sourceMeta?.bitDepth??null,peaks};
+        peakDb:toDb(pk),rmsDb:toDb(rms),peak:pk,rms,format:ext,bitDepth:sourceMeta?.bitDepth??null,peaks,spectrogram};
       // Check for stub match: same fileName, no audioBuffer, not already matched this batch
       const stubMatch=tracks.find(t=>!t.audioBuffer && !hydratedIds.has(t.id) &&
         (t.fileName===f.name || t.name===f.name.replace(/\.[^.]+$/,"")));
@@ -801,8 +845,8 @@ export default function CassetteTool() {
     outputNode.connect(ctx.destination);
     const splitter=ctx.createChannelSplitter(2);
     outputNode.connect(splitter);
-    const analyserL=ctx.createAnalyser();analyserL.fftSize=1024;analyserL.smoothingTimeConstant=0.8;
-    const analyserR=ctx.createAnalyser();analyserR.fftSize=1024;analyserR.smoothingTimeConstant=0.8;
+    const analyserL=ctx.createAnalyser();analyserL.fftSize=4096;analyserL.smoothingTimeConstant=0.68;
+    const analyserR=ctx.createAnalyser();analyserR.fftSize=4096;analyserR.smoothingTimeConstant=0.68;
     splitter.connect(analyserL,0);splitter.connect(analyserR,1);
 
     const sources=[];
@@ -950,8 +994,11 @@ export default function CassetteTool() {
     const barBase=total; // bar always scaled to physical tape length
     const pct=Math.min((used/barBase)*100,100);
     const effPct=(eff/barBase)*100;
+    const okPct=Math.min((Math.min(used,eff)/barBase)*100,100);
+    const softPct=softOver?Math.min(((used-eff)/barBase)*100,100-okPct):0;
     const rem=eff-used;
-    const barColor=hardOver?"var(--danger)":softOver?"var(--warning)":pct>(effPct*0.9)?"var(--warning)":`var(--side-${side.toLowerCase()})`;
+    const barColor=hardOver?"var(--danger)":`var(--side-${side.toLowerCase()})`;
+    const sideColor=`var(--side-${side.toLowerCase()})`;
     const statusColor=hardOver?"var(--danger)":softOver?"var(--warning)":"var(--text-dim)";
     const statusText=hardOver?`${T("exceeded")} ${fmtTime(used-total)}`:softOver?`⚠ +${fmtTime(used-eff)} (${T("remaining")} ${fmtTime(total-used)})`:`${T("remaining")} ${fmtTime(rem)}`;
     return(<div style={{marginBottom:8}}>
@@ -960,13 +1007,16 @@ export default function CassetteTool() {
         <span style={{color:statusColor}}>{statusText}</span>
       </div>
       <div style={{height:6,background:"var(--bg-deep)",borderRadius:3,overflow:"hidden",position:"relative"}}>
-        <div style={{height:"100%",width:`${Math.min(pct,100)}%`,background:barColor,borderRadius:3,transition:"width 0.3s,background 0.3s"}}/>
+        {softOver&&!hardOver?<>
+          <div style={{height:"100%",width:`${okPct}%`,background:sideColor,borderRadius:3,transition:"width 0.3s,background 0.3s"}}/>
+          <div style={{position:"absolute",left:`${okPct}%`,top:0,bottom:0,width:`${softPct}%`,background:"var(--warning)",transition:"left 0.3s,width 0.3s"}}/>
+        </>:<div style={{height:"100%",width:`${Math.min(pct,100)}%`,background:barColor,borderRadius:3,transition:"width 0.3s,background 0.3s"}}/>}
         {tailMargin>0&&<div style={{position:"absolute",left:`${effPct}%`,top:0,bottom:0,width:1,background:"var(--warning)",opacity:0.6}}/>}
       </div>
     </div>);
   };
 
-  const TimeLine=({st,total,side})=>{
+  const TimeLine=({st,total,eff,side})=>{
     if(!st.length) return <div style={{height:40,background:"var(--bg-deep)",borderRadius:6,border:"1px solid var(--border)"}} />;
     const segs=[];let off=0;
     st.forEach((tr,i)=>{
@@ -974,6 +1024,8 @@ export default function CassetteTool() {
       if(i<st.length-1){const g=getGap(tr,st[i+1]);segs.push({type:"g",start:off,dur:g});off+=g;}
     });
     const dt=Math.max(off,total);
+    const softOver=off>eff;
+    const hardOver=off>total;
     return(<div style={{height:40,position:"relative",background:"var(--bg-deep)",borderRadius:6,overflow:"hidden",border:"1px solid var(--border)"}}>
       {segs.map((s,i)=>{
         const l=(s.start/dt)*100,w=(s.dur/dt)*100;
@@ -986,7 +1038,9 @@ export default function CassetteTool() {
           fontSize:9,color:"#fff",textShadow:"0 1px 2px rgba(0,0,0,0.5)",padding:"0 2px",whiteSpace:"nowrap",
         }}>{w>5?s.track.name:""}</div>;
       })}
-      {off>total&&<div style={{position:"absolute",left:`${(total/dt)*100}%`,top:0,bottom:0,width:2,background:"var(--danger)",zIndex:5}}/>}
+      {eff<total&&<div style={{position:"absolute",left:`${(eff/dt)*100}%`,top:0,bottom:0,width:2,
+        background:"var(--warning)",opacity:softOver?0.95:0.55,zIndex:5}}/>}
+      {hardOver&&<div style={{position:"absolute",left:`${(total/dt)*100}%`,top:0,bottom:0,width:2,background:"var(--danger)",zIndex:6}}/>}
     </div>);
   };
 
@@ -1066,18 +1120,35 @@ export default function CassetteTool() {
         peaks:t.peaks||[], channels:t.channels
       }));
     },[st,normalizeMode,targetDb,smartGap,defaultGap]);
+    const specSegments=useMemo(()=>{
+      const at=st.filter(t=>t.audioBuffer);
+      if(!at.length) return [];
+      const gains=at.map(()=>1.0);
+      if(normalizeMode==="peak"){const tl=Math.pow(10,targetDb/20);at.forEach((t,i)=>{gains[i]=t.peak>0?tl/t.peak:1.0;});}
+      else if(normalizeMode==="rms"){const avg=at.reduce((s,t)=>s+t.rms,0)/at.length;at.forEach((t,i)=>{gains[i]=t.rms>0?avg/t.rms:1.0;});}
+      return at.map((t,i)=>({
+        id:t.id,
+        dur:t.duration,
+        gain:gains[i],
+        gap:i<at.length-1?getGap(t,at[i+1]):0,
+        spectrogram:t.spectrogram||null,
+      }));
+    },[st,normalizeMode,targetDb,smartGap,defaultGap]);
     return(<div onDragOver={e=>{e.preventDefault();setDragOverSide(side);}} onDragLeave={()=>setDragOverSide(null)} onDrop={e=>handleDrop(e,side)}
       style={{flex:1,display:active?"flex":"none",flexDirection:"column",gap:8,minHeight:200,
         border:dragOverSide===side?`2px dashed var(--side-${side.toLowerCase()})`:"2px solid transparent",transition:"border-color 0.2s"}}>
       <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
         <div style={{flex:1}}><CapBar used={dur} total={sideSec} eff={effectiveSec} side={side}/></div>
-        {audioTracks.length>0&&<span style={{fontSize:11,color:"var(--text-dim)",flexShrink:0,marginLeft:12}}>
-          → {tSr/1000}kHz / {tBits}bit
-        </span>}
+        {audioTracks.length>0&&<div style={{display:"flex",alignItems:"center",gap:8,flexShrink:0,marginLeft:12}}>
+          <span style={{fontSize:11,color:"var(--text-dim)"}}>→ {tSr/1000}kHz / {tBits}bit</span>
+          <div style={{display:"flex",gap:4}}>
+            <button onClick={()=>setSidePreviewMode("waveform")} style={segBtn(sidePreviewMode==="waveform")}>{T("previewWave")}</button>
+            <button onClick={()=>setSidePreviewMode("spectrogram")} style={segBtn(sidePreviewMode==="spectrogram")}>{T("previewSpectrogram")}</button>
+          </div>
+        </div>}
       </div>
-      <TimeLine st={st} total={effectiveSec} side={side}/>
-      {/* Static waveform overview — memoized, only redraws on track/config change */}
-      <SideWaveform segments={wfSegments}/>
+      <TimeLine st={st} total={sideSec} eff={effectiveSec} side={side}/>
+      {sidePreviewMode==="waveform"?<SideWaveform segments={wfSegments}/>:<SideSpectrogram segments={specSegments}/>}
       <div style={{flex:1,overflowY:"auto",display:"flex",flexDirection:"column",gap:0}}>
         {st.length===0?(
           <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",
@@ -1098,7 +1169,7 @@ export default function CassetteTool() {
     <div style={{"--bg":th.bg,"--bg-card":th.bgCard,"--bg-deep":th.bgDeep,"--bg-hover":"#F0EDEA",
       "--text":"#2D2D38","--text-dim":"#706B78","--accent":th.accent,"--accent-dim":th.accentDim,
       "--accent-contrast":accentContrast,"--accent-ink":accentInk,
-      "--border":th.border,"--danger":"#C45C5C","--warning":"#B89840",
+      "--border":th.border,"--danger":"#C45C5C","--warning":warningColor,
       "--side-a":sideColors.sideA,"--side-b":sideColors.sideB,
       "--font-mono":"'JetBrains Mono','SF Mono','Fira Code',monospace",
       "--font-body":"'Noto Sans SC','Noto Sans JP','Hiragino Sans','Microsoft YaHei',sans-serif",
@@ -1556,6 +1627,7 @@ const inpSm={background:"var(--bg-deep)",border:"1px solid var(--border)",border
 const btnP={padding:"10px 20px",background:"var(--accent)",color:"var(--accent-contrast)",border:"none",borderRadius:6,cursor:"pointer",fontSize:14,fontWeight:400,fontFamily:"inherit",transition:"all 0.15s"};
 const btnS={padding:"10px 20px",background:"var(--bg-card)",color:"var(--text)",border:"1px solid var(--border)",borderRadius:6,cursor:"pointer",fontSize:14,fontFamily:"inherit",transition:"all 0.15s"};
 const btnE={padding:"10px 20px",background:"var(--bg-deep)",color:"var(--text)",border:"1px solid var(--border)",borderRadius:6,cursor:"pointer",fontSize:14,transition:"all 0.15s"};
+const segBtn=(on)=>({padding:"4px 10px",background:on?"var(--accent-dim)":"var(--bg-deep)",color:on?"var(--accent-ink)":"var(--text-dim)",border:"1px solid var(--border)",borderRadius:999,cursor:"pointer",fontSize:11,fontFamily:"inherit",transition:"all 0.15s"});
 const toggleStyle=(on)=>({padding:"5px 16px",borderRadius:12,border:"none",cursor:"pointer",
   fontSize:12,fontWeight:600,transition:"all 0.2s",letterSpacing:"0.05em",
   background:on?"var(--accent)":"var(--bg-deep)",color:on?"var(--accent-contrast)":"var(--text-dim)"});
