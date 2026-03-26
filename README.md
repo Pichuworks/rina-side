@@ -39,7 +39,11 @@ Open `http://localhost:5173`. Drop audio files onto the page.
 npm run build   # outputs to dist/
 ```
 
-Deploy `dist/` to any static host. For **Cloudflare Pages**: connect repo, build command `npm run build`, output dir `dist`. The `public/_headers` file provides required COOP/COEP headers for SharedArrayBuffer (needed by ffmpeg.wasm for FLAC/AIFF support).
+Deploy `dist/` to any static host. For **Cloudflare Pages**: connect repo, build command `npm run build`, output dir `dist`, and **leave Deploy command empty** (Pages will publish the build output automatically).
+
+> Do not run `npx wrangler deploy` in a Pages build. `wrangler deploy` is for **Workers**, and in non-interactive CI it may try to scaffold a Vite Worker project (`@cloudflare/vite-plugin`) and fail on peer deps (for example when the repo is pinned to Vite 5).
+
+The `public/_headers` file provides required COOP/COEP headers for SharedArrayBuffer (needed by ffmpeg.wasm for FLAC/AIFF support).
 
 ## Audio Quality
 
