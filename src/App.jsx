@@ -1,6 +1,6 @@
 import React, { useState, useRef, useCallback, useMemo, useEffect } from "react";
 import { transcodeToWav, likelyNeedsTranscode, isSharedArrayBufferAvailable } from "./ffmpeg-helper.js";
-import { IconAdd, IconAutoAwesome, IconFileOpen, IconSave, IconPlay, IconPause, IconStop, IconSkipPrev, IconSkipNext, IconDownload, IconHelp } from "./Icons.jsx";
+import { IconAdd, IconAutoAwesome, IconFileOpen, IconSave, IconPlay, IconPause, IconStop, IconSkipPrev, IconSkipNext, IconExport, IconHelp, IconTape, IconClearSide, IconClearAll, IconPalette } from "./Icons.jsx";
 import Player from "./Player.jsx";
 import SideWaveform from "./SideWaveform.jsx";
 
@@ -86,6 +86,25 @@ function t(key, lang) { const e = I18N[key]; return e ? (e[lang] || e["zh-CN"] |
 const RINA_SMILE = "[^_^]";
 
 // ── Constants ────────────────────────────────────────────────
+// ── Character Themes ────────────────────────────────────────
+// Colors based on official 応援色, adjusted for UI readability
+const THEMES = {
+  default:  {name:"Default",      accent:"#D4859A",bg:"#F5F3F0",bgCard:"#FFFFFF",bgDeep:"#EBE8E4",border:"#D5D0CA",accentDim:"#F2D6DE",sideA:"#7BA3C9",sideB:"#82B891",group:""},
+  rina:     {name:"天王寺璃奈",    accent:"#D4859A",bg:"#F8F4F5",bgCard:"#FFFFFF",bgDeep:"#F0E8EB",border:"#DDD2D6",accentDim:"#F2D6DE",sideA:"#7BA3C9",sideB:"#82B891",group:"niji"},
+  keke:     {name:"唐可可",        accent:"#49BDF0",bg:"#F2F7FA",bgCard:"#FAFCFF",bgDeep:"#E4EEF5",border:"#C8D8E4",accentDim:"#CCE8FA",sideA:"#49BDF0",sideB:"#82B891",group:"liella"},
+  tomori:   {name:"高松灯",        accent:"#77BBDD",bg:"#F2F6F9",bgCard:"#FAFCFF",bgDeep:"#E4EDF4",border:"#C8D5DF",accentDim:"#D0E5F3",sideA:"#77BBDD",sideB:"#82B891",group:"mygo"},
+  raana:    {name:"要乐奈",        accent:"#77DD77",bg:"#F2F8F2",bgCard:"#FAFFFA",bgDeep:"#E2EEE2",border:"#C5D8C5",accentDim:"#C8F0C8",sideA:"#7BA3C9",sideB:"#77DD77",group:"mygo"},
+  soyo:     {name:"长崎爽世",      accent:"#DDAA11",bg:"#F9F7F0",bgCard:"#FFFEF8",bgDeep:"#F0ECDD",border:"#DDD7C4",accentDim:"#F0E4C0",sideA:"#7BA3C9",sideB:"#DDAA11",group:"mygo"},
+  anon:     {name:"千早爱音",      accent:"#FF8899",bg:"#FAF3F4",bgCard:"#FFFAFB",bgDeep:"#F2E6E8",border:"#E0D0D4",accentDim:"#FFD8DF",sideA:"#7BA3C9",sideB:"#FF8899",group:"mygo"},
+  taki:     {name:"椎名立希",      accent:"#7777AA",bg:"#F4F3F8",bgCard:"#FBFAFF",bgDeep:"#E6E3F0",border:"#D0CDD9",accentDim:"#D4D0E8",sideA:"#7777AA",sideB:"#82B891",group:"mygo"},
+  sakiko:   {name:"丰川祥子",      accent:"#7799CC",bg:"#F2F5F9",bgCard:"#FAFBFF",bgDeep:"#E4ECF4",border:"#C8D2DF",accentDim:"#CCDCf0",sideA:"#7799CC",sideB:"#82B891",group:"mujica"},
+  mutsumi:  {name:"若叶睦",        accent:"#779977",bg:"#F3F7F3",bgCard:"#FAFFF9",bgDeep:"#E4EDE3",border:"#C8D5C6",accentDim:"#CCE0CC",sideA:"#7BA3C9",sideB:"#779977",group:"mujica"},
+  nyamu:    {name:"祐天寺若麦",    accent:"#AA4477",bg:"#F8F2F5",bgCard:"#FFFAFC",bgDeep:"#F0E4EA",border:"#DDD0D6",accentDim:"#E8C4D6",sideA:"#7BA3C9",sideB:"#AA4477",group:"mujica"},
+  hatsuka:  {name:"三角初华",      accent:"#BB9955",bg:"#F8F6F0",bgCard:"#FFFDF8",bgDeep:"#EFEBdf",border:"#D8D2C2",accentDim:"#E8DCC0",sideA:"#BB9955",sideB:"#82B891",group:"mujica"},
+  uika:     {name:"八幡海铃",      accent:"#335566",bg:"#F0F4F6",bgCard:"#F8FBFC",bgDeep:"#E0E8EC",border:"#C4D0D6",accentDim:"#BCCDD8",sideA:"#335566",sideB:"#82B891",group:"mujica"},
+};
+const THEME_ORDER = ["default","rina","keke","tomori","raana","soyo","anon","taki","sakiko","mutsumi","nyamu","hatsuka","uika"];
+
 const TAPE_PRESETS = {
   C46: { label: "C-46", sideMinutes: 23 }, C60: { label: "C-60", sideMinutes: 30 },
   C90: { label: "C-90", sideMinutes: 45 }, C120: { label: "C-120", sideMinutes: 60 },
@@ -169,6 +188,9 @@ let _id=0; const uid=()=>`t_${++_id}_${Date.now()}`;
 // ═══════════════════════════════════════════════════════════════
 export default function CassetteTool() {
   const [lang,setLang] = useState("zh-CN");
+  const [theme,setTheme] = useState("default");
+  const [showThemePicker,setShowThemePicker] = useState(false);
+  const th = THEMES[theme] || THEMES.default;
   const T = useCallback((k) => t(k, lang), [lang]);
 
   const [tapePreset,setTapePreset] = useState("C60");
@@ -193,6 +215,7 @@ export default function CassetteTool() {
   const meterRef = useRef({el:null,peakL:0,peakR:0,decayL:0,decayR:0});
   const analyserRef = useRef({L:null,R:null});
   const [meterMode,setMeterMode] = useState("vfd"); // vfd | vu | spectrum | waveform
+  const [simMode,setSimMode] = useState("off"); // off | tape | vinyl
   const [processing,setProcessing] = useState(false);
   const [procMsg,setProcMsg] = useState("");
   const [expProg,setExpProg] = useState(null);
@@ -461,8 +484,10 @@ export default function CassetteTool() {
       offset+=tr.duration;
       if(i<st.length-1) offset+=getGap(tr,st[i+1]);
     });
-    return {schedule,totalDur:offset,trackCount:st.length};
-  },[tracks,normalizeMode,targetDb,getGap]);
+    // If tail fill enabled, extend to tape side length
+    const dur=fillTail?Math.max(offset,sideSec):offset;
+    return {schedule,totalDur:dur,contentDur:offset,trackCount:st.length};
+  },[tracks,normalizeMode,targetDb,getGap,fillTail,sideSec]);
 
   // Start playback from a given position (seconds)
   const playFromPos = useCallback((side,fromPos)=>{
@@ -479,16 +504,63 @@ export default function CassetteTool() {
     const {schedule,totalDur}=buildSchedule(side);
     if(!schedule.length){stopPlayback();return;}
 
-    // Analyser chain for metering: masterGain → splitter → [analyserL, analyserR]
+    // Analyser chain: masterGain → [simulation] → outputNode → splitter → analysers + destination
     const masterGain=ctx.createGain();masterGain.gain.value=1.0;
-    masterGain.connect(ctx.destination);
+    let outputNode=masterGain; // default: direct passthrough
+    const extraNodes=[]; // for cleanup
+
+    // Tape / Vinyl simulation
+    if(simMode==="tape"){
+      // Soft saturation
+      const shaper=ctx.createWaveShaper();
+      const curve=new Float32Array(1024);
+      for(let i=0;i<1024;i++){const x=i/512-1;curve[i]=Math.tanh(x*1.5);}
+      shaper.curve=curve;shaper.oversample="4x";
+      // HF rolloff (tape head gap loss)
+      const lp=ctx.createBiquadFilter();lp.type="lowpass";lp.frequency.value=11000;lp.Q.value=0.5;
+      // Tape hiss
+      const noiseLen=ctx.sampleRate*2;
+      const noiseBuf=ctx.createBuffer(1,noiseLen,ctx.sampleRate);
+      const noiseData=noiseBuf.getChannelData(0);
+      for(let i=0;i<noiseLen;i++) noiseData[i]=(Math.random()*2-1)*0.008;
+      const noiseSrc=ctx.createBufferSource();noiseSrc.buffer=noiseBuf;noiseSrc.loop=true;
+      const noiseBP=ctx.createBiquadFilter();noiseBP.type="bandpass";noiseBP.frequency.value=5000;noiseBP.Q.value=0.8;
+      noiseSrc.connect(noiseBP);noiseSrc.start();
+      // Chain: masterGain → shaper → lp → outputNode
+      masterGain.connect(shaper);shaper.connect(lp);
+      outputNode=lp;
+      extraNodes.push(noiseSrc,noiseBP,shaper,lp);
+      // Noise connects to destination after outputNode setup
+      setTimeout(()=>{noiseBP.connect(ctx.destination);},0);
+    } else if(simMode==="vinyl"){
+      // Gentle bass warmth
+      const bass=ctx.createBiquadFilter();bass.type="lowshelf";bass.frequency.value=250;bass.gain.value=2;
+      // Slight HF rolloff
+      const lp=ctx.createBiquadFilter();lp.type="lowpass";lp.frequency.value=14000;lp.Q.value=0.3;
+      // Surface noise + crackle
+      const noiseLen=ctx.sampleRate*4;
+      const noiseBuf=ctx.createBuffer(1,noiseLen,ctx.sampleRate);
+      const noiseData=noiseBuf.getChannelData(0);
+      for(let i=0;i<noiseLen;i++){
+        let v=(Math.random()*2-1)*0.004; // base surface noise
+        if(Math.random()<0.001) v+=((Math.random()>0.5?1:-1)*0.08); // crackle
+        noiseData[i]=v;
+      }
+      const noiseSrc=ctx.createBufferSource();noiseSrc.buffer=noiseBuf;noiseSrc.loop=true;
+      const noiseFilt=ctx.createBiquadFilter();noiseFilt.type="highpass";noiseFilt.frequency.value=800;noiseFilt.Q.value=0.5;
+      noiseSrc.connect(noiseFilt);noiseSrc.start();
+      masterGain.connect(bass);bass.connect(lp);
+      outputNode=lp;
+      extraNodes.push(noiseSrc,noiseFilt,bass,lp);
+      setTimeout(()=>{noiseFilt.connect(ctx.destination);},0);
+    }
+
+    outputNode.connect(ctx.destination);
     const splitter=ctx.createChannelSplitter(2);
-    masterGain.connect(splitter);
+    outputNode.connect(splitter);
     const analyserL=ctx.createAnalyser();analyserL.fftSize=1024;analyserL.smoothingTimeConstant=0.8;
     const analyserR=ctx.createAnalyser();analyserR.fftSize=1024;analyserR.smoothingTimeConstant=0.8;
     splitter.connect(analyserL,0);splitter.connect(analyserR,1);
-    const bufL=new Float32Array(analyserL.fftSize);
-    const bufR=new Float32Array(analyserR.fftSize);
 
     const sources=[];
     const now=ctx.currentTime;
@@ -699,10 +771,10 @@ export default function CassetteTool() {
   const aHas=sideA.some(t=>t.audioBuffer), bHas=sideB.some(t=>t.audioBuffer);
 
   return(
-    <div style={{"--bg":"#F5F3F0","--bg-card":"#FFFFFF","--bg-deep":"#EBE8E4","--bg-hover":"#F0EDEA",
-      "--text":"#2D2D38","--text-dim":"#706B78","--accent":"#D4859A","--accent-dim":"#F2D6DE",
-      "--border":"#D5D0CA","--danger":"#C45C5C","--warning":"#B89840",
-      "--side-a":"#7BA3C9","--side-b":"#82B891",
+    <div style={{"--bg":th.bg,"--bg-card":th.bgCard,"--bg-deep":th.bgDeep,"--bg-hover":"#F0EDEA",
+      "--text":"#2D2D38","--text-dim":"#706B78","--accent":th.accent,"--accent-dim":th.accentDim,
+      "--border":th.border,"--danger":"#C45C5C","--warning":"#B89840",
+      "--side-a":th.sideA,"--side-b":th.sideB,
       "--font-mono":"'JetBrains Mono','SF Mono','Fira Code',monospace",
       "--font-body":"'Noto Sans SC','Noto Sans JP','Hiragino Sans','Microsoft YaHei',sans-serif",
       fontFamily:"var(--font-body)",color:"var(--text)",background:"var(--bg)",
@@ -734,6 +806,39 @@ export default function CassetteTool() {
           <button onClick={()=>setShowHelp(true)} style={{...btnTab,fontSize:12,padding:"5px 10px",background:"var(--bg-card)",color:"var(--text-dim)"}} title="Help">
             <IconHelp size={16}/>
           </button>
+          <div style={{position:"relative"}}>
+            <button onClick={()=>setShowThemePicker(p=>!p)} style={{...btnTab,fontSize:12,padding:"5px 10px",
+              background:showThemePicker?"var(--accent)":"var(--bg-card)",
+              color:showThemePicker?"#fff":"var(--text-dim)"}} title="Theme">
+              <IconPalette size={16}/>
+            </button>
+            {showThemePicker&&<div onClick={()=>setShowThemePicker(false)} style={{position:"fixed",inset:0,zIndex:50}}/>}
+            {showThemePicker&&<div style={{position:"absolute",right:0,top:"100%",marginTop:6,zIndex:51,
+              background:"var(--bg-card)",border:"1px solid var(--border)",borderRadius:10,padding:"10px 6px",
+              boxShadow:"0 8px 28px rgba(0,0,0,0.12)",width:220,maxHeight:"70vh",overflowY:"auto"}}>
+              {(()=>{
+                let lastGrp="";
+                return THEME_ORDER.map(k=>{
+                  const t=THEMES[k];
+                  const sep=t.group&&t.group!==lastGrp;
+                  lastGrp=t.group;
+                  return(<div key={k}>
+                    {sep&&<div style={{borderTop:"1px solid var(--border)",margin:"4px 6px"}}/>}
+                    <button onClick={()=>{setTheme(k);setShowThemePicker(false);}}
+                      style={{display:"flex",alignItems:"center",gap:8,width:"100%",padding:"6px 10px",
+                        border:"none",borderRadius:6,cursor:"pointer",fontSize:13,
+                        background:theme===k?"var(--accent-dim)":"transparent",
+                        color:theme===k?"var(--accent)":"var(--text)"}}>
+                      <span style={{width:14,height:14,borderRadius:"50%",background:t.accent,flexShrink:0,
+                        border:theme===k?"2px solid var(--accent)":"2px solid transparent"}}/>
+                      <span style={{flex:1,textAlign:"left"}}>{t.name}</span>
+                      {theme===k&&<span style={{fontSize:10}}>✓</span>}
+                    </button>
+                  </div>);
+                });
+              })()}
+            </div>}
+          </div>
         </div>
       </div>
 
@@ -857,8 +962,8 @@ export default function CassetteTool() {
         <button onClick={autoDistribute} style={btnS} disabled={processing||!tracks.length}><IconAutoAwesome size={16} /> {T("autoDistribute")}</button>
         <button onClick={()=>plRef.current?.click()} style={btnS} disabled={processing}><IconFileOpen size={16} /> {T("importPlaylist")}</button>
         <button onClick={exportPL} style={btnS} disabled={processing||!tracks.length}><IconSave size={16} /> {T("exportPlaylist")}</button>
-        <button onClick={()=>{if(tracks.some(t=>t.side===activeTab))setTracks(p=>p.filter(t=>t.side!==activeTab));}} style={btnS} disabled={processing||!tracks.some(t=>t.side===activeTab)}>{T("clearSide")}</button>
-        <button onClick={()=>{if(tracks.length>0&&window.confirm(T("clearAll")+"?"))setTracks([]);}} style={btnS} disabled={processing||!tracks.length}>{T("clearAll")}</button>
+        <button onClick={()=>{if(tracks.some(t=>t.side===activeTab))setTracks(p=>p.filter(t=>t.side!==activeTab));}} style={{...btnS,display:"flex",alignItems:"center",gap:4}} disabled={processing||!tracks.some(t=>t.side===activeTab)}><IconClearSide size={14}/>{T("clearSide")}</button>
+        <button onClick={()=>{if(tracks.length>0&&window.confirm(T("clearAll")+"?"))setTracks([]);}} style={{...btnS,display:"flex",alignItems:"center",gap:4}} disabled={processing||!tracks.length}><IconClearAll size={14}/>{T("clearAll")}</button>
         <div style={{flex:1}}/>
         {/* Play / Export */}
         {playing?
@@ -867,8 +972,8 @@ export default function CassetteTool() {
           <button onClick={()=>playSide("A")} style={{...btnE,borderColor:"var(--side-a)"}} disabled={processing||!aHas}><IconPlay size={16} /> A {T("play")}</button>
           <button onClick={()=>playSide("B")} style={{...btnE,borderColor:"var(--side-b)"}} disabled={processing||!bHas}><IconPlay size={16} /> B {T("play")}</button>
         </>}
-        <button onClick={()=>expSide("A")} style={{...btnE,borderColor:"var(--side-a)"}} disabled={processing||playing||!aHas}><IconDownload size={16} /> A {T("exportSide")}</button>
-        <button onClick={()=>expSide("B")} style={{...btnE,borderColor:"var(--side-b)"}} disabled={processing||playing||!bHas}><IconDownload size={16} /> B {T("exportSide")}</button>
+        <button onClick={()=>expSide("A")} style={{...btnE,borderColor:"var(--side-a)"}} disabled={processing||playing||!aHas}><IconExport size={16} /> A {T("exportSide")}</button>
+        <button onClick={()=>expSide("B")} style={{...btnE,borderColor:"var(--side-b)"}} disabled={processing||playing||!bHas}><IconExport size={16} /> B {T("exportSide")}</button>
       </div>
 
       {/* Player */}
@@ -877,6 +982,7 @@ export default function CassetteTool() {
         playingIdxRef={playingIdxRef} playPosRef={playPosRef}
         schedule={playRef.current.schedule} totalDur={playRef.current.totalDur||0}
         meterMode={meterMode} setMeterMode={setMeterMode}
+        simMode={simMode} setSimMode={setSimMode}
         togglePause={togglePause} stopPlayback={stopPlayback}
         skipTrack={skipTrack} seekTo={seekTo}
         analyserL={analyserRef.current.L} analyserR={analyserRef.current.R}

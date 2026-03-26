@@ -1,5 +1,5 @@
 import { useRef, useEffect, useCallback } from "react";
-import { IconSkipPrev, IconSkipNext, IconPlay, IconPause, IconStop, IconEqualizer } from "./Icons.jsx";
+import { IconSkipPrev, IconSkipNext, IconPlay, IconPause, IconStop, IconEqualizer, IconTape } from "./Icons.jsx";
 
 // ── Theme colors ───────────────────────────────────────────
 const C_CYAN = "#90C7D7";
@@ -24,7 +24,8 @@ const FONT = "'Noto Sans SC','Noto Sans JP','Hiragino Sans','Microsoft YaHei',sy
 
 export default function Player({
   playing, paused, playingSide, playingIdxRef, playPosRef, schedule, totalDur,
-  meterMode, setMeterMode, togglePause, stopPlayback, skipTrack, seekTo,
+  meterMode, setMeterMode, simMode, setSimMode,
+  togglePause, stopPlayback, skipTrack, seekTo,
   analyserL, analyserR, T, fmtTime
 }) {
   const meterElRef = useRef(null);
@@ -204,6 +205,14 @@ export default function Player({
             color:"var(--text-dim)",cursor:"pointer",fontSize:11}}>
           <IconEqualizer size={14}/>{MODE_LABEL[meterMode]}
         </button>
+        <button onClick={()=>setSimMode(m=>m==="off"?"tape":m==="tape"?"vinyl":"off")}
+          title={simMode==="off"?"SIM: OFF":simMode==="tape"?"SIM: TAPE":"SIM: VINYL"}
+          style={{height:32,display:"flex",alignItems:"center",gap:4,padding:"0 12px",
+            background:simMode==="off"?"var(--bg-deep)":"var(--accent-dim)",
+            border:`1px solid ${simMode==="off"?"var(--border)":"var(--accent)"}`,borderRadius:5,
+            color:simMode==="off"?"var(--text-dim)":"var(--accent)",cursor:"pointer",fontSize:11}}>
+          <IconTape size={14}/>{simMode==="off"?"OFF":simMode==="tape"?"TAPE":"VINYL"}
+        </button>
       </div>
 
       {/* Progress bar with dot markers */}
@@ -228,7 +237,7 @@ export default function Player({
       </div>
 
       {/* Visualization */}
-      <div ref={meterElRef} style={{background:"#FAFAF8",borderRadius:8,padding:"10px 12px",border:"1px solid var(--border)"}}>
+      <div ref={meterElRef} style={{background:"var(--bg-card)",borderRadius:8,padding:"10px 12px",border:"1px solid var(--border)"}}>
         {meterMode==="vfd" && <VFDMeter/>}
         {meterMode==="vu" && <VUMeter/>}
         {meterMode==="spectrum" && <canvas ref={specRef} width={SPEC_BANDS * 48} height={SPEC_ROWS * 24}
@@ -271,7 +280,7 @@ function VUMeter() {
     <div style={{display:"flex",justifyContent:"center",gap:16}}>
       {["L","R"].map(ch=>(
         <div key={ch} style={{position:"relative",width:"48%",maxWidth:280,borderRadius:10,overflow:"hidden",
-          background:`linear-gradient(180deg,${C_PINK}10 0%,#FAFAF8 100%)`,
+          background:`linear-gradient(180deg,${C_PINK}10 0%,var(--bg-card) 100%)`,
           border:"1px solid var(--border)"}}>
           <svg viewBox="0 0 140 82" style={{width:"100%",display:"block"}}>
             <path d="M16 70 A54 54 0 0 1 124 70" fill="none" stroke="var(--border)" strokeWidth="0.5"/>
