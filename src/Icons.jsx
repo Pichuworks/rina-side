@@ -26,6 +26,25 @@ export const IconInfo = ({ size = 18, color = "currentColor" }) => (
   </svg>
 );
 export const IconEqualizer = (p) => <I {...p} d="M10 20h4V4h-4v16zm-6 0h4v-8H4v8zM16 9v11h4V9h-4z" />;
+export const IconDeck = ({ size = 18, color = "currentColor" }) => (
+  <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={s}>
+    <rect x="3" y="6" width="18" height="12" rx="2"/>
+    <circle cx="8" cy="12" r="2.5"/>
+    <circle cx="16" cy="12" r="2.5"/>
+    <path d="M8 3v3M16 3v3M6 18v3M18 18v3"/>
+  </svg>
+);
+export const IconTone = ({ size = 18, color = "currentColor" }) => (
+  <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={s}>
+    <path d="M4 15c2.2 0 2.8-6 5-6s2.8 10 5 10 2.8-14 6-14"/>
+  </svg>
+);
+export const IconTube = ({ size = 18, color = "currentColor" }) => (
+  <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={s}>
+    <rect x="6" y="3" width="12" height="14" rx="5"/>
+    <path d="M9 17v4M15 17v4M9 8h6M12 8v5"/>
+  </svg>
+);
 
 // Export: cassette with down arrow
 export const IconExport = ({ size = 18, color = "currentColor" }) => (
