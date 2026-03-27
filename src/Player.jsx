@@ -1,5 +1,5 @@
 import { useRef, useEffect, useCallback } from "react";
-import { IconSkipPrev, IconSkipNext, IconPlay, IconPause, IconStop, IconEqualizer, IconTape } from "./Icons.jsx";
+import { IconSkipPrev, IconSkipNext, IconPlay, IconPause, IconStop, IconEqualizer, IconTape, IconDeck, IconTone, IconTube } from "./Icons.jsx";
 
 // ── Theme colors ───────────────────────────────────────────
 const C_CYAN = "#90C7D7";
@@ -22,6 +22,10 @@ const SPECGRAM_SCROLL_PX = 2;
 const VU_DB = [[-20,0],[-10,0.25],[-7,0.35],[-5,0.45],[-3,0.55],[0,0.7],["+3",0.85]];
 const METER_MODES = ["vfd","vu","spectrum","waveform","waterfall"];
 const SIM_MODES = ["off","TAPE_I","TAPE_II","TAPE_IV","vinyl"];
+const DECK_MODES = ["off","portable","deck_2","deck_3"];
+const TONE_MODES = ["default","cool","warm"];
+const VINYL_ERAS = ["modern","classic","vintage","effect"];
+const VINYL_CRACKLE = ["off","low","mid","high"];
 const MODE_LABEL = {vfd:"VFD",vu:"VU",spectrum:"FFT",waveform:"WAVE",waterfall:"SGRAM"};
 const FONT = "'Noto Sans SC','Noto Sans JP','Hiragino Sans','Microsoft YaHei',system-ui,sans-serif";
 
@@ -99,6 +103,8 @@ export default function Player({
   playing, paused, playingSide, playingIdxRef, playPosRef, schedule, totalDur,
   playToken,
   meterMode, setMeterMode, simMode, setSimMode,
+  deckProfile, setDeckProfile, toneProfile, setToneProfile, tubeEnabled, setTubeEnabled,
+  vinylEra, setVinylEra, vinylCrackle, setVinylCrackle, playerVolume, setPlayerVolume,
   togglePause, stopPlayback, skipTrack, seekTo,
   analyserL, analyserR, T, fmtTime
 }) {
@@ -134,8 +140,72 @@ export default function Player({
   const nextMode = useCallback(() => {
     setMeterMode(m => { const i = METER_MODES.indexOf(m); return METER_MODES[(i + 1) % METER_MODES.length]; });
   }, [setMeterMode]);
-  const simLabel = simMode === "off" ? "OFF" : simMode === "vinyl" ? "VINYL" : simMode.replace("TAPE_", "TYPE ").replace("_", " ");
-  const simTitle = `SIM: ${simLabel}`;
+  const tapeSimActive = simMode.startsWith("TAPE_");
+  const vinylSimActive = simMode === "vinyl";
+  const simLabelMap = {
+    off: T("simStateOffShort"),
+    TAPE_I: T("simStateTapeIShort"),
+    TAPE_II: T("simStateTapeIIShort"),
+    TAPE_IV: T("simStateTapeIVShort"),
+    vinyl: T("simStateVinylShort"),
+  };
+  const simTipMap = {
+    off: T("simStateOffTip"),
+    TAPE_I: T("simStateTapeITip"),
+    TAPE_II: T("simStateTapeIITip"),
+    TAPE_IV: T("simStateTapeIVTip"),
+    vinyl: T("simStateVinylTip"),
+  };
+  const deckLabelMap = {
+    off: T("deckStateOffShort"),
+    portable: T("deckStatePortableShort"),
+    deck_2: T("deckState2HeadShort"),
+    deck_3: T("deckState3HeadShort"),
+  };
+  const deckTipMap = {
+    off: T("deckStateOffTip"),
+    portable: T("deckStatePortableTip"),
+    deck_2: T("deckState2HeadTip"),
+    deck_3: T("deckState3HeadTip"),
+  };
+  const toneLabelMap = {
+    default: T("toneStateDefaultShort"),
+    cool: T("toneStateCoolShort"),
+    warm: T("toneStateWarmShort"),
+  };
+  const toneTipMap = {
+    default: T("toneStateDefaultTip"),
+    cool: T("toneStateCoolTip"),
+    warm: T("toneStateWarmTip"),
+  };
+  const vinylEraLabelMap = {
+    modern: T("vinylEraModernShort"),
+    classic: T("vinylEraClassicShort"),
+    vintage: T("vinylEraVintageShort"),
+    effect: T("vinylEraEffectShort"),
+  };
+  const vinylEraTipMap = {
+    modern: T("vinylEraModernTip"),
+    classic: T("vinylEraClassicTip"),
+    vintage: T("vinylEraVintageTip"),
+    effect: T("vinylEraEffectTip"),
+  };
+  const vinylCrackleLabelMap = {
+    off: T("crackleStateOffShort"),
+    low: T("crackleStateLowShort"),
+    mid: T("crackleStateMidShort"),
+    high: T("crackleStateHighShort"),
+  };
+  const vinylCrackleTipMap = {
+    off: T("crackleStateOffTip"),
+    low: T("crackleStateLowTip"),
+    mid: T("crackleStateMidTip"),
+    high: T("crackleStateHighTip"),
+  };
+  const tubeLabel = tubeEnabled ? T("tubeStateOnShort") : T("tubeStateOffShort");
+  const tubeTip = tubeEnabled ? T("tubeStateOnTip") : T("tubeStateOffTip");
+  const simLabel = simLabelMap[simMode] || simMode;
+  const simTitle = `${T("ctlSim")}: ${simTipMap[simMode] || simMode}`;
   const getTrackCounter = useCallback((idx) => {
     if (st.length === 0) return "0/0";
     if (idx < 0) return `0/${st.length}`;
@@ -189,8 +259,8 @@ export default function Player({
         const l = Math.abs(bufL[i]), r = Math.abs(bufR[i]);
         if (l > pkL) pkL = l; if (r > pkR) pkR = r;
       }
-      dr.dL = Math.max(pkL, dr.dL * 0.97); dr.dR = Math.max(pkR, dr.dR * 0.97);
-      dr.pL = Math.max(pkL, dr.pL * 0.993); dr.pR = Math.max(pkR, dr.pR * 0.993);
+      dr.dL = Math.max(pkL, dr.dL * 0.9); dr.dR = Math.max(pkR, dr.dR * 0.9);
+      dr.pL = Math.max(pkL, dr.pL * 0.96); dr.pR = Math.max(pkR, dr.pR * 0.96);
 
       const el = meterElRef.current;
       if (el) {
@@ -464,6 +534,61 @@ export default function Player({
             color:simMode==="off"?"var(--text-dim)":"var(--accent)",cursor:"pointer",fontSize:11}}>
           <IconTape size={14}/>{simLabel}
         </button>
+        {tapeSimActive&&(
+          <>
+            <button onClick={()=>setDeckProfile(m=>DECK_MODES[(DECK_MODES.indexOf(m)+1)%DECK_MODES.length])}
+              title={`${T("ctlDeck")}: ${deckTipMap[deckProfile]}`}
+              style={{height:32,display:"flex",alignItems:"center",gap:4,padding:"0 12px",
+                background:deckProfile==="off"?"var(--bg-deep)":"var(--accent-dim)",
+                border:`1px solid ${deckProfile==="off"?"var(--border)":"var(--accent)"}`,borderRadius:5,
+                color:deckProfile==="off"?"var(--text-dim)":"var(--accent)",cursor:"pointer",fontSize:11}}>
+              <IconDeck size={14}/>{deckLabelMap[deckProfile]}
+            </button>
+          </>
+        )}
+        {vinylSimActive&&(
+          <>
+            <button onClick={()=>setVinylEra(m=>VINYL_ERAS[(VINYL_ERAS.indexOf(m)+1)%VINYL_ERAS.length])}
+              title={`${T("ctlVinylEra")}: ${vinylEraTipMap[vinylEra]}`}
+              style={{height:32,display:"flex",alignItems:"center",gap:4,padding:"0 12px",
+                background:"var(--accent-dim)",border:"1px solid var(--accent)",borderRadius:5,
+                color:"var(--accent)",cursor:"pointer",fontSize:11}}>
+              {vinylEraLabelMap[vinylEra]}
+            </button>
+            <button onClick={()=>setVinylCrackle(m=>VINYL_CRACKLE[(VINYL_CRACKLE.indexOf(m)+1)%VINYL_CRACKLE.length])}
+              title={`${T("ctlCrackle")}: ${vinylCrackleTipMap[vinylCrackle]}`}
+              style={{height:32,display:"flex",alignItems:"center",gap:4,padding:"0 12px",
+                background:vinylCrackle==="off"?"var(--bg-deep)":"var(--accent-dim)",
+                border:`1px solid ${vinylCrackle==="off"?"var(--border)":"var(--accent)"}`,borderRadius:5,
+                color:vinylCrackle==="off"?"var(--text-dim)":"var(--accent)",cursor:"pointer",fontSize:11}}>
+              {vinylCrackleLabelMap[vinylCrackle]}
+            </button>
+          </>
+        )}
+        <button onClick={()=>setToneProfile(m=>TONE_MODES[(TONE_MODES.indexOf(m)+1)%TONE_MODES.length])}
+          title={`${T("ctlTone")}: ${toneTipMap[toneProfile]}`}
+          style={{height:32,display:"flex",alignItems:"center",gap:4,padding:"0 12px",
+            background:toneProfile==="default"?"var(--bg-deep)":"var(--accent-dim)",
+            border:`1px solid ${toneProfile==="default"?"var(--border)":"var(--accent)"}`,borderRadius:5,
+            color:toneProfile==="default"?"var(--text-dim)":"var(--accent)",cursor:"pointer",fontSize:11}}>
+          <IconTone size={14}/>{toneLabelMap[toneProfile]}
+        </button>
+        <button onClick={()=>setTubeEnabled(v=>!v)}
+          title={`${T("ctlTube")}: ${tubeTip}`}
+          style={{height:32,display:"flex",alignItems:"center",gap:4,padding:"0 12px",
+            background:tubeEnabled?"var(--accent-dim)":"var(--bg-deep)",
+            border:`1px solid ${tubeEnabled?"var(--accent)":"var(--border)"}`,borderRadius:5,
+            color:tubeEnabled?"var(--accent)":"var(--text-dim)",cursor:"pointer",fontSize:11}}>
+          <IconTube size={14}/>{tubeLabel}
+        </button>
+        <div style={{height:32,display:"flex",alignItems:"center",gap:8,padding:"0 10px",
+          background:"var(--bg-deep)",border:"1px solid var(--border)",borderRadius:5,color:"var(--text-dim)",fontSize:11}}>
+          <span>VOL</span>
+          <input type="range" min="0" max="100" step="1" value={Math.round(playerVolume*100)}
+            onChange={(e)=>setPlayerVolume(Number(e.target.value)/100)}
+            style={{width:84}}/>
+          <span style={{minWidth:28,textAlign:"right"}}>{Math.round(playerVolume*100)}%</span>
+        </div>
       </div>
 
       {/* Progress bar with dot markers */}
