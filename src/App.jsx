@@ -318,7 +318,7 @@ const THEMES = {
   uika: { accent: "#335566", bg: "#F0F4F6", bgCard: "#F8FBFC", bgDeep: "#E0E8EC", border: "#C4D0D6", accentDim: "#BCCDD8", group: "mujica" },
   mana: { accent: "#E8A68F", bg: "#FBF6F2", bgCard: "#FFFDFC", bgDeep: "#F2E8E1", border: "#E3D3C8", accentDim: "#F7DDD0", sideA: "#E8A68F", sideB: "#C7B48C", accentInk: "#9A5E4C", warning: "#D9B15E", group: "sumimi" },
   nozomu: { accent: "#D4600A", bg: "#F8F4EE", bgCard: "#FFFBF7", bgDeep: "#EDE5D8", border: "#D8CCBC", accentDim: "#F2DCC0", sideA: "#D4600A", sideB: "#6A7A8F", accentInk: "#8A3A08", warning: "#B89040", group: "crisiris" },
-  eri: { accent: "#DBA211", bg: "#FAF7F0", bgCard: "#FFFDF7", bgDeep: "#EDE8D8", border: "#D8D0BC", accentDim: "#F0E0A8", sideA: "#C8920A", sideB: "#800020", accentInk: "#7A5806", warning: "#9A4A30", group: "crisiris" },
+  eri: { accent: "#800020", bg: "#F6EFF1", bgCard: "#FFFDFB", bgDeep: "#ECDDE2", bgHover: "#F3E6EA", border: "#D6BEC6", accentDim: "#E8CDD5", sideA: "#800020", sideB: "#D9A11E", accentInk: "#5E1021", accentContrast: "#F7E8C1", warning: "#B06A1F", text: "#34292C", textDim: "#75656A", group: "crisiris" },
 };  
 
 const THEME_ORDER = [
@@ -1370,7 +1370,7 @@ const HeaderControls = React.memo(function HeaderControls({ lang, setLang, theme
           {showThemePicker && <div style={{
             position: "absolute", right: 0, top: "100%", marginTop: 6, zIndex: 51,
             background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 10, padding: "10px 6px",
-            boxShadow: "0 8px 28px rgba(0,0,0,0.12)", width: 220, maxHeight: "70vh", overflowY: "auto"
+            boxShadow: "0 8px 28px rgba(0,0,0,0.12)", width: "max-content", minWidth: 220, maxWidth: "min(320px, calc(100vw - 32px))", maxHeight: "70vh", overflowY: "auto"
           }}>
             {(() => {
               let lastGrp = "";
@@ -1391,7 +1391,7 @@ const HeaderControls = React.memo(function HeaderControls({ lang, setLang, theme
                       width: 14, height: 14, borderRadius: "50%", background: t.accent, flexShrink: 0,
                       border: theme === k ? "2px solid var(--accent-ink)" : "2px solid transparent"
                     }} />
-                    <span style={{ flex: 1, textAlign: "left" }}>{themeName(k, lang)}</span>
+                    <span style={{ flex: 1, textAlign: "left", whiteSpace: "nowrap" }}>{themeName(k, lang)}</span>
                     {theme === k && <span style={{ fontSize: 10 }}>✓</span>}
                   </button>
                 </div>);
