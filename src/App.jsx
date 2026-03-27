@@ -1172,11 +1172,229 @@ function fmtTime(s) { if (!s || s < 0) return "0:00"; return `${Math.floor(s / 6
 function fmtTimeMs(s) { if (!s || s < 0) return "0:00.0"; return `${Math.floor(s / 60)}:${(s % 60).toFixed(1).padStart(4, "0")}`; }
 let _id = 0; const uid = () => `t_${++_id}_${Date.now()}`;
 
+const HeaderControls = React.memo(function HeaderControls({ lang, setLang, theme, setTheme, T }) {
+  const [showThemePicker, setShowThemePicker] = useState(false);
+  const [showHelp, setShowHelp] = useState(false);
+  const [showAbout, setShowAbout] = useState(false);
+
+  return (
+    <>
+      <div style={{ display: "flex", gap: 2, alignItems: "center" }}>
+        {Object.entries(LANGS).map(([k, l]) => (
+          <button key={k} onClick={() => setLang(k)} style={{
+            ...btnTab, fontSize: 12, padding: "5px 10px", minWidth: 36, textAlign: "center",
+            background: lang === k ? "var(--accent)" : "var(--bg-card)", color: lang === k ? "var(--accent-contrast)" : "var(--text-dim)"
+          }}>{l.label}</button>
+        ))}
+        <div style={{ position: "relative" }}>
+          <button onClick={() => setShowThemePicker(p => !p)} style={{
+            ...btnTab, fontSize: 12, padding: "5px 10px",
+            background: showThemePicker ? "var(--accent)" : "var(--bg-card)",
+            color: showThemePicker ? "var(--accent-contrast)" : "var(--text-dim)"
+          }} title={T("theme")}>
+            <IconPalette size={16} />
+          </button>
+          {showThemePicker && <div onClick={() => setShowThemePicker(false)} style={{ position: "fixed", inset: 0, zIndex: 50 }} />}
+          {showThemePicker && <div style={{
+            position: "absolute", right: 0, top: "100%", marginTop: 6, zIndex: 51,
+            background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 10, padding: "10px 6px",
+            boxShadow: "0 8px 28px rgba(0,0,0,0.12)", width: 220, maxHeight: "70vh", overflowY: "auto"
+          }}>
+            {(() => {
+              let lastGrp = "";
+              return THEME_ORDER.map(k => {
+                const t = THEMES[k];
+                const sep = t.group && t.group !== lastGrp;
+                lastGrp = t.group;
+                return (<div key={k}>
+                  {sep && <div style={{ borderTop: "1px solid var(--border)", margin: "4px 6px" }} />}
+                  <button onClick={() => { setTheme(k); setShowThemePicker(false); }}
+                    style={{
+                      display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "6px 10px",
+                      border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13,
+                      background: theme === k ? "var(--accent-dim)" : "transparent",
+                      color: theme === k ? "var(--accent-ink)" : "var(--text)"
+                    }}>
+                    <span style={{
+                      width: 14, height: 14, borderRadius: "50%", background: t.accent, flexShrink: 0,
+                      border: theme === k ? "2px solid var(--accent-ink)" : "2px solid transparent"
+                    }} />
+                    <span style={{ flex: 1, textAlign: "left" }}>{themeName(k, lang)}</span>
+                    {theme === k && <span style={{ fontSize: 10 }}>✓</span>}
+                  </button>
+                </div>);
+              });
+            })()}
+          </div>}
+        </div>
+        <button onClick={() => setShowHelp(true)} style={{ ...btnTab, fontSize: 12, padding: "5px 10px", background: "var(--bg-card)", color: "var(--text-dim)" }} title={T("help")}>
+          <IconHelp size={16} />
+        </button>
+        <button onClick={() => setShowAbout(true)} style={{ ...btnTab, fontSize: 12, padding: "5px 10px", background: "var(--bg-card)", color: "var(--text-dim)" }} title={T("about")}>
+          <IconInfo size={16} />
+        </button>
+      </div>
+
+      {showHelp && <div onClick={() => setShowHelp(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.35)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}>
+        <div onClick={e => e.stopPropagation()} style={{
+          background: "var(--bg)", borderRadius: 12, maxWidth: 560, width: "min(560px, calc(100vw - 32px))", maxHeight: "80vh", overflow: "hidden",
+          border: "1px solid var(--border)", boxShadow: "0 8px 32px rgba(0,0,0,0.12)", fontSize: 14, lineHeight: 1.8, color: "var(--text)", display: "flex", flexDirection: "column"
+        }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "20px 24px 14px", borderBottom: "1px solid var(--border)", flexShrink: 0 }}>
+            <span style={{ fontSize: 16, color: "var(--accent-ink)" }}>
+              {lang === "ja" ? "S.I.D.E ヘルプ" : lang === "en" ? "S.I.D.E Help" : "S.I.D.E 帮助"}
+            </span>
+            <button onClick={() => setShowHelp(false)} style={{ background: "none", border: "none", fontSize: 18, cursor: "pointer", color: "var(--text-dim)" }}>✕</button>
+          </div>
+          <div className="modalScroll" style={{ padding: "18px 24px 22px", overflowY: "auto", overflowX: "hidden", minHeight: 0 }}>
+            {lang === "zh-CN" ? <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+              <p><b>S</b>equential <b>I</b>nterleaved <b>D</b>ubbing <b>E</b>ngine<br />
+                将数字音频文件编排到磁带的 A/B 面，导出可直接录入卡座的 WAV 文件。</p>
+              <div style={{ fontSize: 12, color: "var(--text-dim)", display: "flex", flexDirection: "column", gap: 10 }}>
+                <p><b>{"// "}配置</b><br />
+                  选择磁带规格（C-46 / C-60 / C-90 / C-120 / 自定义）和磁带类型（Type I / II / IV）。<br />
+                  磁带类型影响录音电平参考值……用于响度归一化的目标。</p>
+                <p><b>{"// "}操作</b><br />
+                  先确认当前 SIDE，再点「添加文件」或直接把音频拖进来。这样就好。<br />
+                  支持格式：MP3 / FLAC / WAV / OGG / AAC / AIFF / M4A。<br />
+                  FLAC / AIFF 原始参数会先从文件头读取；需要时再走 ffmpeg.wasm 转 WAV 供浏览器解码。<br />
+                  拖动可以重排顺序；↑↓ 微调；→A / →B 直接切到另一面。</p>
+                <p><b>{"// "}编排</b><br />
+                  「自动分面」会按时长重新分配，优先保持两面容量平衡。<br />
+                  曲间间隔可以手动写入；开启「智能检测」后，会扣除前后已有静音。<br />
+                  采样率 / 位深按每一面单独解析，轨道列表里会标出升降采样方向。</p>
+                <p><b>{"// "}采样率 / 位深</b><br />
+                  每面独立解析。Auto 采样率 = 该面音轨的最高采样率。<br />
+                  Auto 位深 = 含无损格式（FLAC/WAV/AIFF）→ 24bit，否则 → 16bit。<br />
+                  原始采样率 / 位深来自源文件头，不会被 ffmpeg 的解码中间文件覆盖。<br />
+                  升降采样与位深变化都会在曲目详情里标注方向和目标值。</p>
+                <p><b>{"// "}试听</b><br />
+                  试听按整面时间线播放，曲间间隔、归一化增益、尾部静音都会算进去。<br />
+                  进度条和曲目节点都能跳转；暂停 / 继续 / 上下曲在下方控制区。<br />
+                  模拟循环：OFF → TYPE I → TYPE II → TYPE IV → VINYL。仅作用于试听。<br />
+                  电平表支持 VFD / VU / FFT / WAVE 四种显示模式。<br />
+                  播放路径：AudioBuffer (32-bit float) → AudioContext（系统原生采样率）。</p>
+                <p><b>{"// "}导出</b><br />
+                  导出为 WAV 文件……直接连接卡座线路输入录制。<br />
+                  降采样或位深转换的音轨会在导出前弹出确认提示。<br />
+                  尾部填充：自动补齐静音到磁带标称长度。</p>
+                <p><b>{"// "}歌单</b><br />
+                  支持 JSON 格式歌单的导出和导入。<br />
+                  导入歌单为占位模式……重新添加同名音频文件时自动匹配。</p>
+              </div>
+              <p style={{ fontSize: 11, color: "var(--text-dim)", textAlign: "right", marginTop: 4 }}>
+                ……把声音编译进磁带里。 {RINA_SMILE}<br />
+                <span style={{ fontSize: 10 }}>{T("appVersion")}</span>
+              </p>
+            </div>
+              : lang === "ja" ? <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                <p><b>S</b>equential <b>I</b>nterleaved <b>D</b>ubbing <b>E</b>ngine<br />
+                  デジタル音源をカセットテープの A/B 面に配置し、デッキ入力用 WAV ファイルを書き出すツール。</p>
+                <div style={{ fontSize: 12, color: "var(--text-dim)", display: "flex", flexDirection: "column", gap: 10 }}>
+                  <p><b>{"// "}設定</b><br />
+                    テープ規格（C-46 / C-60 / C-90 / C-120 / カスタム）と種類（Type I / II / IV）を選択。<br />
+                    テープ種類は録音レベル基準値に影響……ラウドネス正規化のターゲットとして使用。</p>
+                  <p><b>{"// "}操作</b><br />
+                    まず現在の SIDE を確認してから、「ファイル追加」かドラッグ＆ドロップ。これで大丈夫。<br />
+                    対応：MP3 / FLAC / WAV / OGG / AAC / AIFF / M4A。<br />
+                    FLAC / AIFF はまず元ファイルのパラメータを読み取り、必要時のみ ffmpeg.wasm で WAV 化してデコード。<br />
+                    ドラッグで並べ替え、↑↓で微調整、→A / →B で面を移動。</p>
+                  <p><b>{"// "}配置</b><br />
+                    「自動振り分け」は長さを見て A/B 面を再配置し、容量バランスを揃える。<br />
+                    曲間ギャップは手動入力可能。スマートギャップ有効時は既存の無音を差し引く。<br />
+                    サンプルレート / ビット深度は面ごとに決まり、各トラックに変換方向を表示。</p>
+                  <p><b>{"// "}サンプルレート / ビット深度</b><br />
+                    面ごとに個別解決。Auto SR = その面の最高サンプルレート。<br />
+                    Auto ビット深度 = ロスレス有り → 24bit、なし → 16bit。<br />
+                    元の SR / ビット深度はソースファイルヘッダ基準で、ffmpeg の中間 WAV では上書きしない。</p>
+                  <p><b>{"// "}試聴</b><br />
+                    試聴は面全体のタイムライン再生。ギャップ、正規化ゲイン、末尾無音も反映。<br />
+                    シークバーと曲境界ノードでジャンプ可能。一時停止 / 再開 / 前後スキップ対応。<br />
+                    シミュレーションは OFF → TYPE I → TYPE II → TYPE IV → VINYL の順で循環。試聴専用。<br />
+                    メーターは VFD / VU / FFT / WAVE の4モード。<br />
+                    再生経路：AudioBuffer (32-bit float) → AudioContext (ネイティブSR)。</p>
+                  <p><b>{"// "}書出し</b><br />
+                    WAV 出力……デッキのライン入力に直結して録音。<br />
+                    ダウンサンプルやビット深度変換が必要なトラックは確認ダイアログ表示。</p>
+                  <p><b>{"// "}プレイリスト</b><br />
+                    JSON 形式で書出し・読込。読込はプレースホルダモード……同名ファイル再追加で自動マッチ。</p>
+                </div>
+                <p style={{ fontSize: 11, color: "var(--text-dim)", textAlign: "right", marginTop: 4 }}>
+                  ……音をテープにコンパイルする。 {RINA_SMILE}<br />
+                  <span style={{ fontSize: 10 }}>{T("appVersion")}</span>
+                </p>
+              </div>
+                : <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                  <p><b>S</b>equential <b>I</b>nterleaved <b>D</b>ubbing <b>E</b>ngine<br />
+                    Arrange digital audio files onto cassette tape sides A/B and export deck-ready WAV files.</p>
+                  <div style={{ fontSize: 12, color: "var(--text-dim)", display: "flex", flexDirection: "column", gap: 10 }}>
+                    <p><b>{"// "}Configuration</b><br />
+                      Select tape spec (C-46 / C-60 / C-90 / C-120 / Custom) and type (Type I / II / IV).<br />
+                      Tape type sets the recording level reference used as the normalization target.</p>
+                    <p><b>{"// "}Operation</b><br />
+                      Confirm the current SIDE first, then use "Add Files" or drag audio in. That is the whole flow.<br />
+                      Supported: MP3 / FLAC / WAV / OGG / AAC / AIFF / M4A.<br />
+                      FLAC / AIFF keep source metadata from the file header first, then use ffmpeg.wasm WAV transcode only when decode fallback is needed.<br />
+                      Drag to reorder, use ↑↓ for fine moves, and →A / →B to switch sides.</p>
+                    <p><b>{"// "}Arrangement</b><br />
+                      "Auto Distribute" reallocates tracks by duration to keep side usage balanced.<br />
+                      Track gaps can be entered manually, or derived by subtracting existing head/tail silence.<br />
+                      Sample rate and bit depth are resolved per side, with conversion direction shown per track.</p>
+                    <p><b>{"// "}Sample Rate / Bit Depth</b><br />
+                      Resolved independently per side. Auto SR = highest SR among the side's tracks.<br />
+                      Auto bit depth = 24 if any lossless source, 16 otherwise.<br />
+                      Source SR / bit depth come from the original file header, not the ffmpeg intermediate WAV.<br />
+                      Resampling and bit-depth conversion direction are shown per track when they differ from target.</p>
+                    <p><b>{"// "}Preview</b><br />
+                      Preview follows the full side timeline, including gaps, normalization gain, and tail silence.<br />
+                      Use the seekbar or track markers to jump. Pause / resume / prev-next are in the transport row.<br />
+                      Simulation cycles OFF → TYPE I → TYPE II → TYPE IV → VINYL, and affects preview only.<br />
+                      Meter modes: VFD / VU / FFT / WAVE.<br />
+                      Audio path: AudioBuffer (32-bit float) → AudioContext (system native SR).</p>
+                    <p><b>{"// "}Export</b><br />
+                      Exports WAV — connect directly to your deck's line input.<br />
+                      Downsampled or bit-depth-converted tracks trigger a confirmation dialog before export.<br />
+                      Tail fill: pads silence to the tape's rated length.</p>
+                    <p><b>{"// "}Playlists</b><br />
+                      Export/import as JSON. Imported playlists are placeholder-only — re-add audio files with matching filenames to auto-hydrate.</p>
+                  </div>
+                  <p style={{ fontSize: 11, color: "var(--text-dim)", textAlign: "right", marginTop: 4 }}>
+                    …compile your sound into tape. {RINA_SMILE}<br />
+                    <span style={{ fontSize: 10 }}>{T("appVersion")}</span>
+                  </p>
+                </div>}
+          </div>
+        </div>
+      </div>}
+
+      {showAbout && <div onClick={() => setShowAbout(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.35)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}>
+        <div onClick={e => e.stopPropagation()} style={{
+          background: "var(--bg)", borderRadius: 12, width: "fit-content", maxWidth: "calc(100vw - 32px)", maxHeight: "80vh", overflow: "hidden",
+          border: "1px solid var(--border)", boxShadow: "0 8px 32px rgba(0,0,0,0.12)", fontSize: 14, lineHeight: 1.9, color: "var(--text)", display: "flex", flexDirection: "column"
+        }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "20px 24px 14px", borderBottom: "1px solid var(--border)", flexShrink: 0 }}>
+            <span style={{ fontSize: 16, color: "var(--accent-ink)" }}>About</span>
+            <button onClick={() => setShowAbout(false)} style={{ background: "none", border: "none", fontSize: 18, cursor: "pointer", color: "var(--text-dim)" }}>✕</button>
+          </div>
+          <div className="modalScroll" style={{ padding: "18px 24px 22px", overflowY: "auto", overflowX: "hidden", minHeight: 0 }}>
+            <div>Sequential Interleaved Dubbing Engine</div>
+            <div>Developed by 天使天才天王寺璃奈</div>
+            <div>With Claude Opus 4.6 Extended & GPT 5.4 (reasoning high, summaries auto)</div>
+            <div>{APP_VERSION}</div>
+            <a href={APP_GITHUB} target="_blank" rel="noreferrer" style={{ color: "var(--accent-ink)", textDecoration: "none" }}>
+              {`Github: ${APP_GITHUB}`}
+            </a>
+          </div>
+        </div>
+      </div>}
+    </>
+  );
+});
+
 // ═══════════════════════════════════════════════════════════════
 export default function CassetteTool() {
   const [lang, setLang] = useState("zh-CN");
   const [theme, setTheme] = useState("default");
-  const [showThemePicker, setShowThemePicker] = useState(false);
   const th = THEMES[theme] || THEMES.default;
   const sideColors = useMemo(
     () => (th.sideA && th.sideB
@@ -1249,8 +1467,6 @@ export default function CassetteTool() {
   const [activeTab, setActiveTab] = useState("A");
   const [sidePreviewMode, setSidePreviewMode] = useState("waveform");
   const [toast, setToast] = useState(null);
-  const [showHelp, setShowHelp] = useState(false);
-  const [showAbout, setShowAbout] = useState(false);
   const [ffmpegStatus, setFfmpegStatus] = useState("idle"); // idle | loading | ready | unavailable
 
   const acRef = useRef(null);
@@ -2107,61 +2323,7 @@ export default function CassetteTool() {
           <div style={{ fontSize: 12, color: "var(--text-dim)", marginTop: 3, fontStyle: "italic", opacity: 0.75 }}>{T("appTagline")}</div>
         </div>
         <span style={{ fontSize: 10, color: "var(--text-dim)" }}>{T("appVersion")}</span>
-        <div style={{ display: "flex", gap: 2, alignItems: "center" }}>
-          {Object.entries(LANGS).map(([k, l]) => (
-            <button key={k} onClick={() => setLang(k)} style={{
-              ...btnTab, fontSize: 12, padding: "5px 10px", minWidth: 36, textAlign: "center",
-              background: lang === k ? "var(--accent)" : "var(--bg-card)", color: lang === k ? "var(--accent-contrast)" : "var(--text-dim)"
-            }}>{l.label}</button>
-          ))}
-          <div style={{ position: "relative" }}>
-            <button onClick={() => setShowThemePicker(p => !p)} style={{
-              ...btnTab, fontSize: 12, padding: "5px 10px",
-              background: showThemePicker ? "var(--accent)" : "var(--bg-card)",
-              color: showThemePicker ? "var(--accent-contrast)" : "var(--text-dim)"
-            }} title={T("theme")}>
-              <IconPalette size={16} />
-            </button>
-            {showThemePicker && <div onClick={() => setShowThemePicker(false)} style={{ position: "fixed", inset: 0, zIndex: 50 }} />}
-            {showThemePicker && <div style={{
-              position: "absolute", right: 0, top: "100%", marginTop: 6, zIndex: 51,
-              background: "var(--bg-card)", border: "1px solid var(--border)", borderRadius: 10, padding: "10px 6px",
-              boxShadow: "0 8px 28px rgba(0,0,0,0.12)", width: 220, maxHeight: "70vh", overflowY: "auto"
-            }}>
-              {(() => {
-                let lastGrp = "";
-                return THEME_ORDER.map(k => {
-                  const t = THEMES[k];
-                  const sep = t.group && t.group !== lastGrp;
-                  lastGrp = t.group;
-                  return (<div key={k}>
-                    {sep && <div style={{ borderTop: "1px solid var(--border)", margin: "4px 6px" }} />}
-                    <button onClick={() => { setTheme(k); setShowThemePicker(false); }}
-                      style={{
-                        display: "flex", alignItems: "center", gap: 8, width: "100%", padding: "6px 10px",
-                        border: "none", borderRadius: 6, cursor: "pointer", fontSize: 13,
-                        background: theme === k ? "var(--accent-dim)" : "transparent",
-                        color: theme === k ? "var(--accent-ink)" : "var(--text)"
-                      }}>
-                      <span style={{
-                        width: 14, height: 14, borderRadius: "50%", background: t.accent, flexShrink: 0,
-                        border: theme === k ? "2px solid var(--accent-ink)" : "2px solid transparent"
-                      }} />
-                      <span style={{ flex: 1, textAlign: "left" }}>{themeName(k, lang)}</span>
-                      {theme === k && <span style={{ fontSize: 10 }}>✓</span>}
-                    </button>
-                  </div>);
-                });
-              })()}
-            </div>}
-          </div>
-          <button onClick={() => setShowHelp(true)} style={{ ...btnTab, fontSize: 12, padding: "5px 10px", background: "var(--bg-card)", color: "var(--text-dim)" }} title={T("help")}>
-            <IconHelp size={16} />
-          </button>
-          <button onClick={() => setShowAbout(true)} style={{ ...btnTab, fontSize: 12, padding: "5px 10px", background: "var(--bg-card)", color: "var(--text-dim)" }} title={T("about")}>
-            <IconInfo size={16} />
-          </button>
-        </div>
+        <HeaderControls lang={lang} setLang={setLang} theme={theme} setTheme={setTheme} T={T} />
       </div>
 
       {/* Config */}
@@ -2393,161 +2555,6 @@ export default function CassetteTool() {
         <span style={{ color: ffmpegStatus === "ready" ? "#82B891" : ffmpegStatus === "unavailable" ? "var(--danger)" : "var(--text-dim)" }}>
           ffmpeg: {ffmpegStatus === "ready" ? "✓" : ffmpegStatus === "loading" ? "…" : ffmpegStatus === "unavailable" ? "✕" : "standby"}
         </span>
-      </div>}
-
-      {/* Help Modal */}
-      {showHelp && <div onClick={() => setShowHelp(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.35)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}>
-        <div onClick={e => e.stopPropagation()} style={{
-          background: "var(--bg)", borderRadius: 12, maxWidth: 560, width: "min(560px, calc(100vw - 32px))", maxHeight: "80vh", overflow: "hidden",
-          border: "1px solid var(--border)", boxShadow: "0 8px 32px rgba(0,0,0,0.12)", fontSize: 14, lineHeight: 1.8, color: "var(--text)", display: "flex", flexDirection: "column"
-        }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "20px 24px 14px", borderBottom: "1px solid var(--border)", flexShrink: 0 }}>
-            <span style={{ fontSize: 16, color: "var(--accent-ink)" }}>
-              {lang === "ja" ? "S.I.D.E ヘルプ" : lang === "en" ? "S.I.D.E Help" : "S.I.D.E 帮助"}
-            </span>
-            <button onClick={() => setShowHelp(false)} style={{ background: "none", border: "none", fontSize: 18, cursor: "pointer", color: "var(--text-dim)" }}>✕</button>
-          </div>
-          <div className="modalScroll" style={{ padding: "18px 24px 22px", overflowY: "auto", overflowX: "hidden", minHeight: 0 }}>
-            {lang === "zh-CN" ? <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-              <p><b>S</b>equential <b>I</b>nterleaved <b>D</b>ubbing <b>E</b>ngine<br />
-                将数字音频文件编排到磁带的 A/B 面，导出可直接录入卡座的 WAV 文件。</p>
-              <div style={{ fontSize: 12, color: "var(--text-dim)", display: "flex", flexDirection: "column", gap: 10 }}>
-                <p><b>{"// "}配置</b><br />
-                  选择磁带规格（C-46 / C-60 / C-90 / C-120 / 自定义）和磁带类型（Type I / II / IV）。<br />
-                  磁带类型影响录音电平参考值……用于响度归一化的目标。</p>
-                <p><b>{"// "}操作</b><br />
-                  先确认当前 SIDE，再点「添加文件」或直接把音频拖进来。这样就好。<br />
-                  支持格式：MP3 / FLAC / WAV / OGG / AAC / AIFF / M4A。<br />
-                  FLAC / AIFF 原始参数会先从文件头读取；需要时再走 ffmpeg.wasm 转 WAV 供浏览器解码。<br />
-                  拖动可以重排顺序；↑↓ 微调；→A / →B 直接切到另一面。</p>
-                <p><b>{"// "}编排</b><br />
-                  「自动分面」会按时长重新分配，优先保持两面容量平衡。<br />
-                  曲间间隔可以手动写入；开启「智能检测」后，会扣除前后已有静音。<br />
-                  采样率 / 位深按每一面单独解析，轨道列表里会标出升降采样方向。</p>
-                <p><b>{"// "}采样率 / 位深</b><br />
-                  每面独立解析。Auto 采样率 = 该面音轨的最高采样率。<br />
-                  Auto 位深 = 含无损格式（FLAC/WAV/AIFF）→ 24bit，否则 → 16bit。<br />
-                  原始采样率 / 位深来自源文件头，不会被 ffmpeg 的解码中间文件覆盖。<br />
-                  升降采样与位深变化都会在曲目详情里标注方向和目标值。</p>
-                <p><b>{"// "}试听</b><br />
-                  试听按整面时间线播放，曲间间隔、归一化增益、尾部静音都会算进去。<br />
-                  进度条和曲目节点都能跳转；暂停 / 继续 / 上下曲在下方控制区。<br />
-                  模拟循环：OFF → TYPE I → TYPE II → TYPE IV → VINYL。仅作用于试听。<br />
-                  电平表支持 VFD / VU / FFT / WAVE 四种显示模式。<br />
-                  播放路径：AudioBuffer (32-bit float) → AudioContext（系统原生采样率）。</p>
-                <p><b>{"// "}导出</b><br />
-                  导出为 WAV 文件……直接连接卡座线路输入录制。<br />
-                  降采样或位深转换的音轨会在导出前弹出确认提示。<br />
-                  尾部填充：自动补齐静音到磁带标称长度。</p>
-                <p><b>{"// "}歌单</b><br />
-                  支持 JSON 格式歌单的导出和导入。<br />
-                  导入歌单为占位模式……重新添加同名音频文件时自动匹配。</p>
-              </div>
-              <p style={{ fontSize: 11, color: "var(--text-dim)", textAlign: "right", marginTop: 4 }}>
-                ……把声音编译进磁带里。 {RINA_SMILE}<br />
-                <span style={{ fontSize: 10 }}>{T("appVersion")}</span>
-              </p>
-            </div>
-              : lang === "ja" ? <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-                <p><b>S</b>equential <b>I</b>nterleaved <b>D</b>ubbing <b>E</b>ngine<br />
-                  デジタル音源をカセットテープの A/B 面に配置し、デッキ入力用 WAV ファイルを書き出すツール。</p>
-                <div style={{ fontSize: 12, color: "var(--text-dim)", display: "flex", flexDirection: "column", gap: 10 }}>
-                  <p><b>{"// "}設定</b><br />
-                    テープ規格（C-46 / C-60 / C-90 / C-120 / カスタム）と種類（Type I / II / IV）を選択。<br />
-                    テープ種類は録音レベル基準値に影響……ラウドネス正規化のターゲットとして使用。</p>
-                  <p><b>{"// "}操作</b><br />
-                    まず現在の SIDE を確認してから、「ファイル追加」かドラッグ＆ドロップ。これで大丈夫。<br />
-                    対応：MP3 / FLAC / WAV / OGG / AAC / AIFF / M4A。<br />
-                    FLAC / AIFF はまず元ファイルのパラメータを読み取り、必要時のみ ffmpeg.wasm で WAV 化してデコード。<br />
-                    ドラッグで並べ替え、↑↓で微調整、→A / →B で面を移動。</p>
-                  <p><b>{"// "}配置</b><br />
-                    「自動振り分け」は長さを見て A/B 面を再配置し、容量バランスを揃える。<br />
-                    曲間ギャップは手動入力可能。スマートギャップ有効時は既存の無音を差し引く。<br />
-                    サンプルレート / ビット深度は面ごとに決まり、各トラックに変換方向を表示。</p>
-                  <p><b>{"// "}サンプルレート / ビット深度</b><br />
-                    面ごとに個別解決。Auto SR = その面の最高サンプルレート。<br />
-                    Auto ビット深度 = ロスレス有り → 24bit、なし → 16bit。<br />
-                    元の SR / ビット深度はソースファイルヘッダ基準で、ffmpeg の中間 WAV では上書きしない。</p>
-                  <p><b>{"// "}試聴</b><br />
-                    試聴は面全体のタイムライン再生。ギャップ、正規化ゲイン、末尾無音も反映。<br />
-                    シークバーと曲境界ノードでジャンプ可能。一時停止 / 再開 / 前後スキップ対応。<br />
-                    シミュレーションは OFF → TYPE I → TYPE II → TYPE IV → VINYL の順で循環。試聴専用。<br />
-                    メーターは VFD / VU / FFT / WAVE の4モード。<br />
-                    再生経路：AudioBuffer (32-bit float) → AudioContext (ネイティブSR)。</p>
-                  <p><b>{"// "}書出し</b><br />
-                    WAV 出力……デッキのライン入力に直結して録音。<br />
-                    ダウンサンプルやビット深度変換が必要なトラックは確認ダイアログ表示。</p>
-                  <p><b>{"// "}プレイリスト</b><br />
-                    JSON 形式で書出し・読込。読込はプレースホルダモード……同名ファイル再追加で自動マッチ。</p>
-                </div>
-                <p style={{ fontSize: 11, color: "var(--text-dim)", textAlign: "right", marginTop: 4 }}>
-                  ……音をテープにコンパイルする。 {RINA_SMILE}<br />
-                  <span style={{ fontSize: 10 }}>{T("appVersion")}</span>
-                </p>
-              </div>
-                : <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-                  <p><b>S</b>equential <b>I</b>nterleaved <b>D</b>ubbing <b>E</b>ngine<br />
-                    Arrange digital audio files onto cassette tape sides A/B and export deck-ready WAV files.</p>
-                  <div style={{ fontSize: 12, color: "var(--text-dim)", display: "flex", flexDirection: "column", gap: 10 }}>
-                    <p><b>{"// "}Configuration</b><br />
-                      Select tape spec (C-46 / C-60 / C-90 / C-120 / Custom) and type (Type I / II / IV).<br />
-                      Tape type sets the recording level reference used as the normalization target.</p>
-                    <p><b>{"// "}Operation</b><br />
-                      Confirm the current SIDE first, then use "Add Files" or drag audio in. That is the whole flow.<br />
-                      Supported: MP3 / FLAC / WAV / OGG / AAC / AIFF / M4A.<br />
-                      FLAC / AIFF keep source metadata from the file header first, then use ffmpeg.wasm WAV transcode only when decode fallback is needed.<br />
-                      Drag to reorder, use ↑↓ for fine moves, and →A / →B to switch sides.</p>
-                    <p><b>{"// "}Arrangement</b><br />
-                      "Auto Distribute" reallocates tracks by duration to keep side usage balanced.<br />
-                      Track gaps can be entered manually, or derived by subtracting existing head/tail silence.<br />
-                      Sample rate and bit depth are resolved per side, with conversion direction shown per track.</p>
-                    <p><b>{"// "}Sample Rate / Bit Depth</b><br />
-                      Resolved independently per side. Auto SR = highest SR among the side's tracks.<br />
-                      Auto bit depth = 24 if any lossless source, 16 otherwise.<br />
-                      Source SR / bit depth come from the original file header, not the ffmpeg intermediate WAV.<br />
-                      Resampling and bit-depth conversion direction are shown per track when they differ from target.</p>
-                    <p><b>{"// "}Preview</b><br />
-                      Preview follows the full side timeline, including gaps, normalization gain, and tail silence.<br />
-                      Use the seekbar or track markers to jump. Pause / resume / prev-next are in the transport row.<br />
-                      Simulation cycles OFF → TYPE I → TYPE II → TYPE IV → VINYL, and affects preview only.<br />
-                      Meter modes: VFD / VU / FFT / WAVE.<br />
-                      Audio path: AudioBuffer (32-bit float) → AudioContext (system native SR).</p>
-                    <p><b>{"// "}Export</b><br />
-                      Exports WAV — connect directly to your deck's line input.<br />
-                      Downsampled or bit-depth-converted tracks trigger a confirmation dialog before export.<br />
-                      Tail fill: pads silence to the tape's rated length.</p>
-                    <p><b>{"// "}Playlists</b><br />
-                      Export/import as JSON. Imported playlists are placeholder-only — re-add audio files with matching filenames to auto-hydrate.</p>
-                  </div>
-                  <p style={{ fontSize: 11, color: "var(--text-dim)", textAlign: "right", marginTop: 4 }}>
-                    …compile your sound into tape. {RINA_SMILE}<br />
-                    <span style={{ fontSize: 10 }}>{T("appVersion")}</span>
-                  </p>
-                </div>}
-          </div>
-        </div>
-      </div>}
-
-      {/* About Modal */}
-      {showAbout && <div onClick={() => setShowAbout(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.35)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}>
-        <div onClick={e => e.stopPropagation()} style={{
-          background: "var(--bg)", borderRadius: 12, width: "fit-content", maxWidth: "calc(100vw - 32px)", maxHeight: "80vh", overflow: "hidden",
-          border: "1px solid var(--border)", boxShadow: "0 8px 32px rgba(0,0,0,0.12)", fontSize: 14, lineHeight: 1.9, color: "var(--text)", display: "flex", flexDirection: "column"
-        }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "20px 24px 14px", borderBottom: "1px solid var(--border)", flexShrink: 0 }}>
-            <span style={{ fontSize: 16, color: "var(--accent-ink)" }}>About</span>
-            <button onClick={() => setShowAbout(false)} style={{ background: "none", border: "none", fontSize: 18, cursor: "pointer", color: "var(--text-dim)" }}>✕</button>
-          </div>
-          <div className="modalScroll" style={{ padding: "18px 24px 22px", overflowY: "auto", overflowX: "hidden", minHeight: 0 }}>
-            <div>Sequential Interleaved Dubbing Engine</div>
-            <div>Developed by 天使天才天王寺璃奈</div>
-            <div>With Claude Opus 4.6 Extended & GPT 5.4 (reasoning high, summaries auto)</div>
-            <div>{APP_VERSION}</div>
-            <a href={APP_GITHUB} target="_blank" rel="noreferrer" style={{ color: "var(--accent-ink)", textDecoration: "none" }}>
-              {`Github: ${APP_GITHUB}`}
-            </a>
-          </div>
-        </div>
       </div>}
 
       <style>{`

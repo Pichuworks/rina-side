@@ -1,4 +1,4 @@
-import { useRef, useEffect, useCallback } from "react";
+import { memo, useRef, useEffect, useCallback } from "react";
 import { IconSkipPrev, IconSkipNext, IconPlay, IconPause, IconStop, IconEqualizer, IconTape, IconDeck, IconTone, IconTube } from "./Icons.jsx";
 
 // ── Theme colors ───────────────────────────────────────────
@@ -99,7 +99,7 @@ function buildSpectrogramTicks(maxHz, graphH) {
 }
 
 
-export default function Player({
+function Player({
   playing, paused, playingSide, playingIdxRef, playPosRef, schedule, totalDur,
   playToken,
   meterMode, setMeterMode, simMode, setSimMode,
@@ -636,6 +636,8 @@ export default function Player({
     </div>
   );
 }
+
+export default memo(Player);
 
 // ── VFD Segment Meter ──────────────────────────────────────
 function VFDMeter() {
