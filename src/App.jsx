@@ -3055,6 +3055,12 @@ export default function CassetteTool() {
         .modalScroll::-webkit-scrollbar-track{background:transparent;margin:10px 0}
         .modalScroll::-webkit-scrollbar-thumb{background:var(--border);border-radius:999px;border:3px solid transparent;background-clip:content-box}
         input[type="number"]{-moz-appearance:textfield}input[type="number"]::-webkit-inner-spin-button{opacity:0.5}
+        .playerVolRange{-webkit-appearance:none;appearance:none;height:16px;background:transparent;outline:none}
+        .playerVolRange::-webkit-slider-runnable-track{height:4px;border-radius:999px;background:linear-gradient(to right,var(--accent) 0,var(--accent) var(--vol-pct),var(--accent-dim) var(--vol-pct),var(--accent-dim) 100%)}
+        .playerVolRange::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:12px;height:12px;border-radius:50%;background:var(--bg-card);border:2px solid var(--accent);margin-top:-4px;box-shadow:0 0 0 1px color-mix(in srgb,var(--accent) 18%, transparent)}
+        .playerVolRange::-moz-range-track{height:4px;border:none;border-radius:999px;background:var(--accent-dim)}
+        .playerVolRange::-moz-range-progress{height:4px;border:none;border-radius:999px;background:var(--accent)}
+        .playerVolRange::-moz-range-thumb{width:12px;height:12px;border-radius:50%;background:var(--bg-card);border:2px solid var(--accent)}
         button:disabled{opacity:0.35;cursor:not-allowed}button:not(:disabled):hover{filter:brightness(0.95)}
       `}</style>
     </div>

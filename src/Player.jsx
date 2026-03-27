@@ -630,12 +630,12 @@ function Player({
           <IconTube size={14}/>{tubeLabel}
         </button>
         <div style={{height:32,display:"flex",alignItems:"center",gap:8,padding:"0 10px",
-          background:"var(--bg-deep)",border:"1px solid var(--border)",borderRadius:5,color:"var(--text-dim)",fontSize:11}}>
-          <span>VOL</span>
-          <input type="range" min="0" max="100" step="1" value={Math.round(playerVolume*100)}
+          background:"var(--bg-card)",border:"1px solid var(--accent-dim)",borderRadius:5,color:"var(--text-dim)",fontSize:11}}>
+          <span style={{color:"var(--accent)",letterSpacing:"0.08em"}}>VOL</span>
+          <input className="playerVolRange" type="range" min="0" max="100" step="1" value={Math.round(playerVolume*100)}
             onChange={(e)=>setPlayerVolume(Number(e.target.value)/100)}
-            style={{width:84}}/>
-          <span style={{minWidth:28,textAlign:"right"}}>{Math.round(playerVolume*100)}%</span>
+            style={{width:84,"--vol-pct":`${Math.round(playerVolume * 100)}%`}}/>
+          <span style={{minWidth:28,textAlign:"right",color:"var(--accent-ink)"}}>{Math.round(playerVolume*100)}%</span>
         </div>
       </div>
 
