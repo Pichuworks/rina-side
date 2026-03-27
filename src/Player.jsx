@@ -12,12 +12,13 @@ const SEG_COLORS = Array.from({length:SEGS},(_,i)=>{
   if(i<12) return C_CYAN; if(i<18) return C_AMBER; if(i<21) return C_PINK; return C_RED;
 });
 
-const SPEC_BANDS = 16;
-const SPEC_ROWS = 12;
+const SPEC_BANDS = 24;
+const SPEC_ROWS = 16;
 const specRowColor = (r) => { if(r<6) return C_CYAN; if(r<9) return C_AMBER; if(r<11) return C_PINK; return C_RED; };
+const SPEC_MIN_HZ = 32;
 const SPECGRAM_MIN_HZ = 32;
 const SPECGRAM_MAX_HZ = 22050;
-const SPECGRAM_SCROLL_PX = 2;
+const SPECGRAM_SCROLL_PX = 1;
 
 const VU_DB = [[-20,0],[-10,0.25],[-7,0.35],[-5,0.45],[-3,0.55],[0,0.7],["+3",0.85]];
 const METER_MODES = ["vfd","vu","spectrum","waveform","waterfall"];
@@ -98,6 +99,40 @@ function buildSpectrogramTicks(maxHz, graphH) {
   return accepted.sort((a, b) => a.freq - b.freq);
 }
 
+function buildWaterfallBins(graphPxH, freqBinCount, nyquist, visibleMaxHz) {
+  const minLog = Math.log10(SPECGRAM_MIN_HZ);
+  const maxLog = Math.log10(visibleMaxHz);
+  return Array.from({ length: graphPxH }, (_, y) => {
+    const topRatio = 1 - y / graphPxH;
+    const bottomRatio = 1 - (y + 1) / graphPxH;
+    const topFreq = 10 ** (minLog + topRatio * (maxLog - minLog));
+    const bottomFreq = 10 ** (minLog + bottomRatio * (maxLog - minLog));
+    const fHi = Math.min(nyquist, Math.max(topFreq, bottomFreq));
+    const fLo = Math.max(SPECGRAM_MIN_HZ, Math.min(topFreq, bottomFreq));
+    const startBin = Math.max(1, Math.floor(fLo / nyquist * freqBinCount));
+    const endBin = Math.max(startBin + 1, Math.min(freqBinCount, Math.ceil(fHi / nyquist * freqBinCount)));
+    return { startBin, endBin };
+  });
+}
+
+function buildSpectrumBands(freqBinCount, sampleRate, bandCount) {
+  const nyquist = sampleRate / 2;
+  const minHz = Math.max(SPEC_MIN_HZ, sampleRate / Math.max(1, 4096));
+  const minLog = Math.log10(minHz);
+  const maxLog = Math.log10(nyquist);
+  return Array.from({ length: bandCount }, (_, i) => {
+    const startHz = 10 ** (minLog + (i / bandCount) * (maxLog - minLog));
+    const endHz = 10 ** (minLog + ((i + 1) / bandCount) * (maxLog - minLog));
+    const startBin = Math.max(1, Math.floor((startHz / nyquist) * freqBinCount));
+    const endBin = Math.max(startBin + 1, Math.min(freqBinCount, Math.ceil((endHz / nyquist) * freqBinCount)));
+    return {
+      startBin,
+      endBin,
+      centerFreq: Math.sqrt(startHz * endHz),
+    };
+  });
+}
+
 
 function Player({
   playing, paused, playingSide, playingIdxRef, playPosRef, schedule, totalDur,
@@ -110,9 +145,11 @@ function Player({
 }) {
   const meterElRef = useRef(null);
   const specRef = useRef(null);
+  const spectrumLayoutRef = useRef(null);
   const waveRef = useRef(null);
   const waterfallRef = useRef(null);
   const waterfallHistoryRef = useRef(null);
+  const waterfallLayoutRef = useRef(null);
   const rafRef = useRef(null);
   const decayRef = useRef({dL:0,dR:0,pL:0,pR:0});
   const specPeakRef = useRef(Array.from({length: SPEC_BANDS}, () => ({ level: 0, hold: 0 })));
@@ -238,6 +275,7 @@ function Player({
     const canvas = waterfallRef.current;
     if (!canvas) return;
     waterfallHistoryRef.current = null;
+    waterfallLayoutRef.current = null;
     const { ctx, w, h } = prepareCanvas(canvas);
     ctx.clearRect(0, 0, w, h);
   }, [playToken, meterMode]);
@@ -285,18 +323,25 @@ function Player({
       if (sc) {
         const { ctx, w, h } = prepareCanvas(sc);
         ctx.clearRect(0, 0, w, h);
-        const labelH = 16;
+        const labelH = 15;
         const meterH = Math.max(1, h - labelH);
-        const bW = Math.floor(w / SPEC_BANDS), cH = Math.floor(meterH / SPEC_ROWS), gap = 4;
-        const bPer = Math.floor(freqL.length / SPEC_BANDS);
+        const bW = Math.floor(w / SPEC_BANDS), cH = Math.floor(meterH / SPEC_ROWS), gap = 2;
         const sampleRate = analyserL.context.sampleRate || 48000;
         const fftSize = analyserL.fftSize || 1024;
+        let layout = spectrumLayoutRef.current;
+        if (!layout || layout.freqBinCount !== freqL.length || layout.sampleRate !== sampleRate) {
+          layout = {
+            freqBinCount: freqL.length,
+            sampleRate,
+            bands: buildSpectrumBands(freqL.length, sampleRate, SPEC_BANDS),
+          };
+          spectrumLayoutRef.current = layout;
+        }
         for (let b = 0; b < SPEC_BANDS; b++) {
+          const band = layout.bands[b];
           let sum = 0;
-          const startBin = b * bPer;
-          const endBin = Math.min((b + 1) * bPer, freqL.length);
-          for (let k = startBin; k < endBin; k++) sum += Math.max(0, (freqL[k] + freqR[k]) / 2 + 100);
-          const lvl = Math.min(1, sum / bPer / 100), litR = Math.round(lvl * SPEC_ROWS);
+          for (let k = band.startBin; k < band.endBin; k++) sum += Math.max(0, (freqL[k] + freqR[k]) / 2 + 100);
+          const lvl = Math.min(1, sum / Math.max(1, band.endBin - band.startBin) / 100), litR = Math.round(lvl * SPEC_ROWS);
           const peak = specPeakRef.current[b];
           if (litR >= peak.level) {
             peak.level = litR;
@@ -330,14 +375,14 @@ function Player({
               Math.max(1, Math.floor(cH - 4))
             );
           }
-          const centerBin = startBin + Math.max(0, endBin - startBin - 1) / 2;
-          const centerFreq = centerBin * sampleRate / fftSize;
-          ctx.globalAlpha = 0.75;
-          ctx.fillStyle = "rgba(45,45,56,0.72)";
-          ctx.font = "8px " + FONT;
-          ctx.textAlign = "center";
-          ctx.textBaseline = "alphabetic";
-          ctx.fillText(formatSpectrumLabel(centerFreq), Math.round(b * bW + bW / 2), h - 3);
+          if (bW >= 24 || b % 2 === 0) {
+            ctx.globalAlpha = 0.75;
+            ctx.fillStyle = "rgba(45,45,56,0.72)";
+            ctx.font = "8px " + FONT;
+            ctx.textAlign = "center";
+            ctx.textBaseline = "alphabetic";
+            ctx.fillText(formatSpectrumLabel(band.centerFreq), Math.round(b * bW + bW / 2), h - 3);
+          }
         }
         ctx.globalAlpha = 1.0;
         ctx.textAlign = "start";
@@ -367,20 +412,23 @@ function Player({
           history.height = graphPxH;
           waterfallHistoryRef.current = history;
         }
+        let layout = waterfallLayoutRef.current;
+        if (!layout || layout.graphPxH !== graphPxH || layout.freqBinCount !== freqL.length || layout.visibleMaxHz !== visibleMaxHz) {
+          layout = {
+            graphPxH,
+            freqBinCount: freqL.length,
+            visibleMaxHz,
+            rows: buildWaterfallBins(graphPxH, freqL.length, nyquist, visibleMaxHz),
+          };
+          waterfallLayoutRef.current = layout;
+        }
         const hctx = history.getContext("2d");
         hctx.imageSmoothingEnabled = false;
         hctx.drawImage(history, scrollPx, 0, Math.max(0, graphPxW - scrollPx), graphPxH, 0, 0, Math.max(0, graphPxW - scrollPx), graphPxH);
         hctx.clearRect(graphPxW - scrollPx, 0, scrollPx, graphPxH);
 
         for (let y = 0; y < graphPxH; y++) {
-          const topRatio = 1 - y / graphPxH;
-          const bottomRatio = 1 - (y + 1) / graphPxH;
-          const topFreq = 10 ** (Math.log10(SPECGRAM_MIN_HZ) + topRatio * (Math.log10(visibleMaxHz) - Math.log10(SPECGRAM_MIN_HZ)));
-          const bottomFreq = 10 ** (Math.log10(SPECGRAM_MIN_HZ) + bottomRatio * (Math.log10(visibleMaxHz) - Math.log10(SPECGRAM_MIN_HZ)));
-          const fHi = Math.min(nyquist, Math.max(topFreq, bottomFreq));
-          const fLo = Math.max(SPECGRAM_MIN_HZ, Math.min(topFreq, bottomFreq));
-          const startBin = Math.max(1, Math.floor(fLo / nyquist * freqL.length));
-          const endBin = Math.max(startBin + 1, Math.min(freqL.length, Math.ceil(fHi / nyquist * freqL.length)));
+          const { startBin, endBin } = layout.rows[y];
           let sum = 0;
           for (let k = startBin; k < endBin; k++) {
             const db = (freqL[k] + freqR[k]) * 0.5;
@@ -627,11 +675,11 @@ function Player({
         {meterMode==="vfd" && <VFDMeter/>}
         {meterMode==="vu" && <VUMeter/>}
         {meterMode==="spectrum" && <canvas ref={specRef} width={SPEC_BANDS * 48} height={SPEC_ROWS * 24}
-          style={{width:"100%",height:150,borderRadius:4,display:"block"}}/>}
+          style={{width:"100%",height:168,borderRadius:4,display:"block"}}/>}
         {meterMode==="waveform" && <canvas ref={waveRef} width={2048} height={280}
           style={{width:"100%",height:140,borderRadius:4,display:"block"}}/>}
-        {meterMode==="waterfall" && <canvas ref={waterfallRef} width={1536} height={320}
-          style={{width:"100%",height:180,borderRadius:4,display:"block",background:"#050612"}}/>}
+        {meterMode==="waterfall" && <canvas ref={waterfallRef} width={1536} height={384}
+          style={{width:"100%",height:200,borderRadius:4,display:"block",background:"#050612"}}/>}
       </div>
     </div>
   );

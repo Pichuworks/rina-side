@@ -1247,7 +1247,7 @@ function downsamplePeaks(ab, N = 4096) {
   }
   return result;
 }
-function computeSpectrogramPreview(ab, frames = Math.max(80, Math.min(256, Math.round(ab.duration * 8))), bands = 64) {
+function computeSpectrogramPreview(ab, frames = Math.max(96, Math.min(320, Math.round(ab.duration * 10))), bands = 80) {
   const sampleRate = ab.sampleRate;
   const maxHz = Math.min(22050, sampleRate / 2);
   const minHz = 40;
@@ -1594,8 +1594,9 @@ export default function CassetteTool() {
   const playRef = useRef({
     sources: [],
     sourceNodes: [],
-    auxSources: [],
-    simNodes: [],
+    simGraphs: [],
+    outputNodes: [],
+    simCleanupTimers: [],
     startTime: 0,
     raf: null,
     ctx: null,
@@ -1903,34 +1904,79 @@ export default function CassetteTool() {
     });
   }, []);
 
-  const clearSimulationGraph = useCallback((playback) => {
-    stopAuxSources(playback.auxSources || []);
-    playback.auxSources = [];
+  const SIM_SWITCH_FADE_SEC = 0.045;
+
+  const clearSimCleanupTimers = useCallback((playback) => {
+    (playback.simCleanupTimers || []).forEach((id) => window.clearTimeout(id));
+    playback.simCleanupTimers = [];
+  }, []);
+
+  const disposePlaybackSimGraph = useCallback((graph) => {
+    if (!graph) return;
+    stopAuxSources(graph.auxSources || []);
+    disconnectNodes(graph.nodes || []);
+  }, [disconnectNodes, stopAuxSources]);
+
+  const clearSimulationGraphs = useCallback((playback) => {
+    clearSimCleanupTimers(playback);
+    (playback.simGraphs || []).forEach((graph) => disposePlaybackSimGraph(graph));
+    playback.simGraphs = [];
+  }, [clearSimCleanupTimers, disposePlaybackSimGraph]);
+
+  const clearPlaybackOutputChain = useCallback((playback) => {
     if (playback.masterGain) {
       try { playback.masterGain.disconnect(); } catch { }
     }
-    disconnectNodes(playback.simNodes || []);
-    playback.simNodes = [];
+    disconnectNodes(playback.outputNodes || []);
+    playback.outputNodes = [];
+    playback.masterGain = null;
+    playback.simOutput = null;
     playback.volumeGain = null;
     playback.splitter = null;
     playback.analyserL = null;
     playback.analyserR = null;
-  }, [disconnectNodes, stopAuxSources]);
+  }, [disconnectNodes]);
 
-  const buildPlaybackSimulationGraph = useCallback((ctx, masterGain, playPos, totalDur) => {
-    let outputNode = masterGain;
-    const simNodes = [];
+  const buildPlaybackOutputChain = useCallback((ctx) => {
+    const simOutput = ctx.createGain();
+    simOutput.gain.value = 1.0;
+
+    const volumeGain = ctx.createGain();
+    volumeGain.gain.value = playerVolume;
+    simOutput.connect(volumeGain);
+    volumeGain.connect(ctx.destination);
+
+    const splitter = ctx.createChannelSplitter(2);
+    volumeGain.connect(splitter);
+    const analyserL = ctx.createAnalyser(); analyserL.fftSize = 4096; analyserL.smoothingTimeConstant = 0.18;
+    const analyserR = ctx.createAnalyser(); analyserR.fftSize = 4096; analyserR.smoothingTimeConstant = 0.18;
+    splitter.connect(analyserL, 0);
+    splitter.connect(analyserR, 1);
+
+    return {
+      simOutput,
+      volumeGain,
+      splitter,
+      analyserL,
+      analyserR,
+      outputNodes: [simOutput, volumeGain, splitter, analyserL, analyserR],
+    };
+  }, [playerVolume]);
+
+  const buildPlaybackSimulationGraph = useCallback((ctx, inputNode, simOutput, playPos, totalDur, initialGain = 1) => {
+    let outputNode = inputNode;
+    const nodes = [];
     const auxSources = [];
 
-    const toneTubeStage = buildToneTubeStage(ctx, masterGain, toneProfile, tubeEnabled);
+    const toneTubeStage = buildToneTubeStage(ctx, inputNode, toneProfile, tubeEnabled);
     outputNode = toneTubeStage.output;
-    simNodes.push(...toneTubeStage.nodes);
+    nodes.push(...toneTubeStage.nodes);
 
     if (simMode.startsWith("TAPE_")) {
       const sim = buildTapeSimulation(ctx, outputNode, simMode, activeDeckProfile);
       outputNode = sim.output;
       auxSources.push(...sim.auxSources);
-      simNodes.push(...sim.nodes);
+      nodes.push(...sim.nodes);
     } else if (simMode === "vinyl") {
       const sim = buildVinylSimulation(
         ctx,
@@ -1942,42 +1988,51 @@ export default function CassetteTool() {
       );
       outputNode = sim.output;
       auxSources.push(...sim.auxSources);
-      simNodes.push(...sim.nodes);
+      nodes.push(...sim.nodes);
     }
 
-    const volumeGain = ctx.createGain();
-    volumeGain.gain.value = playerVolume;
-    outputNode.connect(volumeGain);
-    volumeGain.connect(ctx.destination);
+    const outputGain = ctx.createGain();
+    outputGain.gain.value = initialGain;
+    outputNode.connect(outputGain);
+    outputGain.connect(simOutput);
+    nodes.push(outputGain);
 
-    const splitter = ctx.createChannelSplitter(2);
-    volumeGain.connect(splitter);
-    const analyserL = ctx.createAnalyser(); analyserL.fftSize = 4096; analyserL.smoothingTimeConstant = 0.18;
-    const analyserR = ctx.createAnalyser(); analyserR.fftSize = 4096; analyserR.smoothingTimeConstant = 0.18;
-    splitter.connect(analyserL, 0);
-    splitter.connect(analyserR, 1);
-
-    simNodes.push(volumeGain, splitter, analyserL, analyserR);
-
-    return { auxSources, simNodes, volumeGain, splitter, analyserL, analyserR };
-  }, [simMode, activeDeckProfile, toneProfile, tubeEnabled, vinylEra, vinylCrackle, playerVolume]);
+    return { auxSources, nodes, outputGain };
+  }, [simMode, activeDeckProfile, toneProfile, tubeEnabled, vinylEra, vinylCrackle]);
 
   const rebuildPlaybackSimulationGraph = useCallback(() => {
     const playback = playRef.current;
-    if (!playback.ctx || !playback.masterGain) return;
+    if (!playback.ctx || !playback.masterGain || !playback.simOutput) return;
+    clearSimCleanupTimers(playback);
     const playPos = Math.max(0, Math.min(playPosRef.current, playback.totalDur || 0));
-    clearSimulationGraph(playback);
-    const simGraph = buildPlaybackSimulationGraph(playback.ctx, playback.masterGain, playPos, playback.totalDur || 0);
-    playback.auxSources = simGraph.auxSources;
-    playback.simNodes = simGraph.simNodes;
-    playback.volumeGain = simGraph.volumeGain;
-    playback.splitter = simGraph.splitter;
-    playback.analyserL = simGraph.analyserL;
-    playback.analyserR = simGraph.analyserR;
-    analyserRef.current = { L: simGraph.analyserL, R: simGraph.analyserR };
+    const nextGraph = buildPlaybackSimulationGraph(
+      playback.ctx,
+      playback.masterGain,
+      playback.simOutput,
+      playPos,
+      playback.totalDur || 0,
+      0.0001
+    );
+    const now = playback.ctx.currentTime;
+    nextGraph.outputGain.gain.setValueAtTime(0.0001, now);
+    nextGraph.outputGain.gain.linearRampToValueAtTime(1.0, now + SIM_SWITCH_FADE_SEC);
+
+    const retiringGraphs = playback.simGraphs || [];
+    retiringGraphs.forEach((graph) => {
+      graph.outputGain?.gain.cancelScheduledValues(now);
+      graph.outputGain?.gain.setValueAtTime(Math.max(0.0001, graph.outputGain.gain.value || 1), now);
+      graph.outputGain?.gain.linearRampToValueAtTime(0.0001, now + SIM_SWITCH_FADE_SEC);
+      const timer = window.setTimeout(() => {
+        disposePlaybackSimGraph(graph);
+        playback.simGraphs = (playback.simGraphs || []).filter((item) => item !== graph);
+        playback.simCleanupTimers = (playback.simCleanupTimers || []).filter((id) => id !== timer);
+      }, Math.ceil((SIM_SWITCH_FADE_SEC + 0.03) * 1000));
+      playback.simCleanupTimers = [...(playback.simCleanupTimers || []), timer];
+    });
+
+    playback.simGraphs = [...retiringGraphs, nextGraph];
     displayDelayRef.current = getPlaybackDisplayDelay(playback.ctx);
-    setPlaybackView((view) => ({ ...view, token: view.token + 1 }));
-  }, [buildPlaybackSimulationGraph, clearSimulationGraph, getPlaybackDisplayDelay]);
+  }, [buildPlaybackSimulationGraph, clearSimCleanupTimers, disposePlaybackSimGraph, getPlaybackDisplayDelay]);
 
   const stopPlayback = useCallback(() => {
     const cleanup = () => {
@@ -1985,18 +2040,11 @@ export default function CassetteTool() {
       const p = playRef.current;
       p.stopping = false;
       p.sources.forEach(s => { s.onended = null; try { s.stop(); } catch (e) { } });
-      stopAuxSources(p.auxSources || []);
       disconnectNodes(p.sourceNodes || []);
-      clearSimulationGraph(p);
+      clearSimulationGraphs(p);
+      clearPlaybackOutputChain(p);
       p.sources = [];
       p.sourceNodes = [];
-      p.auxSources = [];
-      p.simNodes = [];
-      p.masterGain = null;
-      p.volumeGain = null;
-      p.splitter = null;
-      p.analyserL = null;
-      p.analyserR = null;
       if (p.raf) cancelAnimationFrame(p.raf);
       p.raf = null; p.pausedAt = null;
       p.schedule = []; p.totalDur = 0;
@@ -2028,7 +2076,7 @@ export default function CassetteTool() {
     }
 
     cleanup();
-  }, [simMode, clearSimulationGraph, disconnectNodes, stopAuxSources]);
+  }, [simMode, clearPlaybackOutputChain, clearSimulationGraphs, disconnectNodes]);
 
   useEffect(() => {
     stopPlaybackRef.current = stopPlayback;
@@ -2068,13 +2116,11 @@ export default function CassetteTool() {
     const p = playRef.current;
     p.sources.forEach(s => { s.onended = null; });
     p.sources.forEach(s => { try { s.stop(); } catch (e) { } });
-    stopAuxSources(p.auxSources || []);
     disconnectNodes(p.sourceNodes || []);
-    clearSimulationGraph(p);
+    clearSimulationGraphs(p);
+    clearPlaybackOutputChain(p);
     p.sources = [];
     p.sourceNodes = [];
-    p.auxSources = [];
-    p.simNodes = [];
     if (p.raf) cancelAnimationFrame(p.raf);
 
     const gen = ++playGenRef.current;
@@ -2086,8 +2132,9 @@ export default function CassetteTool() {
     const clampedPos = Math.max(0, Math.min(fromPos, totalDur));
 
     const masterGain = ctx.createGain(); masterGain.gain.value = 1.0;
+    const outputChain = buildPlaybackOutputChain(ctx);
     const sourceNodes = [];
-    const simGraph = buildPlaybackSimulationGraph(ctx, masterGain, clampedPos, totalDur);
+    const simGraph = buildPlaybackSimulationGraph(ctx, masterGain, outputChain.simOutput, clampedPos, totalDur);
 
     const sources = [];
     const now = ctx.currentTime;
@@ -2114,24 +2161,26 @@ export default function CassetteTool() {
     const displayDelay = getPlaybackDisplayDelay(ctx);
     const currentDisplayPos = Math.max(0, Math.min(totalDur, clampedPos - displayDelay));
     const currentDisplayIdx = getPlaybackCursor(schedule, currentDisplayPos, contentDur, totalDur);
-    analyserRef.current = { L: simGraph.analyserL, R: simGraph.analyserR };
+    analyserRef.current = { L: outputChain.analyserL, R: outputChain.analyserR };
     playRef.current = {
       ...playRef.current,
       sources,
       sourceNodes,
-      auxSources: simGraph.auxSources,
-      simNodes: simGraph.simNodes,
+      simGraphs: [simGraph],
+      outputNodes: outputChain.outputNodes,
+      simCleanupTimers: [],
       startTime,
       raf: null,
       ctx,
       schedule,
       totalDur,
       contentDur,
-      analyserL: simGraph.analyserL,
-      analyserR: simGraph.analyserR,
+      analyserL: outputChain.analyserL,
+      analyserR: outputChain.analyserR,
       masterGain,
-      splitter: simGraph.splitter,
-      volumeGain: simGraph.volumeGain,
+      simOutput: outputChain.simOutput,
+      splitter: outputChain.splitter,
+      volumeGain: outputChain.volumeGain,
     };
     setPlaybackView({ token: gen, schedule, totalDur, contentDur });
     setPlaying(true); setPlayingSide(side); setPaused(false);
@@ -2156,7 +2205,7 @@ export default function CassetteTool() {
       playRef.current.raf = requestAnimationFrame(tick);
     };
     playRef.current.raf = requestAnimationFrame(tick);
-  }, [getAC, buildSchedule, getPlaybackCursor, buildPlaybackSimulationGraph, clearSimulationGraph, disconnectNodes, getPlaybackDisplayDelay, stopAuxSources, stopPlayback]);
+  }, [getAC, buildPlaybackOutputChain, buildSchedule, getPlaybackCursor, buildPlaybackSimulationGraph, clearPlaybackOutputChain, clearSimulationGraphs, disconnectNodes, getPlaybackDisplayDelay, stopPlayback]);
 
   const playSide = useCallback((side) => {
     playFromPos(side, 0);
@@ -2260,10 +2309,21 @@ export default function CassetteTool() {
   }, []);
 
   // ── Sub-components ───────────────────────────────────────
-  const CapBar = ({ used, total, eff, side }) => {
-    // Three zones: <=eff (ok), eff<x<=total (soft warning), >total (hard exceeded)
+  const buildPreviewGains = (audioTracks) => {
+    const gains = audioTracks.map(() => 1.0);
+    if (normalizeMode === "peak") {
+      const tl = Math.pow(10, targetDb / 20);
+      audioTracks.forEach((t, i) => { gains[i] = t.peak > 0 ? tl / t.peak : 1.0; });
+    } else if (normalizeMode === "rms") {
+      const avg = audioTracks.reduce((s, t) => s + t.rms, 0) / audioTracks.length;
+      audioTracks.forEach((t, i) => { gains[i] = t.rms > 0 ? avg / t.rms : 1.0; });
+    }
+    return gains;
+  };
+
+  const renderCapBar = (used, total, eff, side) => {
     const hardOver = used > total, softOver = !hardOver && used > eff;
-    const barBase = total; // bar always scaled to physical tape length
+    const barBase = total;
     const pct = Math.min((used / barBase) * 100, 100);
     const effPct = (eff / barBase) * 100;
     const okPct = Math.min((Math.min(used, eff) / barBase) * 100, 100);
@@ -2288,7 +2348,7 @@ export default function CassetteTool() {
     </div>);
   };
 
-  const TimeLine = ({ st, total, eff, side }) => {
+  const renderTimeLine = (st, total, eff, side) => {
     if (!st.length) return <div style={{ height: 40, background: "var(--bg-deep)", borderRadius: 6, border: "1px solid var(--border)" }} />;
     const segs = []; let off = 0;
     st.forEach((tr, i) => {
@@ -2318,7 +2378,7 @@ export default function CassetteTool() {
     </div>);
   };
 
-  const TRow = ({ track: tr, index: idx, st, targetSr, targetBits }) => {
+  const renderTrackRow = (tr, idx, st, targetSr, targetBits) => {
     const last = idx === st.length - 1;
     const first = idx === 0;
     const lvlPct = Math.min(100, Math.max(0, (tr.peakDb + 40) / 40 * 100));
@@ -2326,12 +2386,11 @@ export default function CassetteTool() {
     const noA = !tr.audioBuffer;
     const effGap = last ? null : getGap(tr, st[idx + 1]);
     const fc = fmtColor(tr.format);
-    // Resample indicator
     const willResample = tr.audioBuffer && targetSr && tr.sampleRate !== targetSr;
     const srDir = willResample ? (tr.sampleRate > targetSr ? "↓" : "↑") : null;
     const willChangeBits = tr.audioBuffer && tr.bitDepth != null && targetBits && tr.bitDepth !== targetBits;
     const bitDir = willChangeBits ? (tr.bitDepth > targetBits ? "↓" : "↑") : null;
-    return (<div style={{ marginBottom: last ? 0 : 3 }}>
+    return (<div key={tr.id} style={{ marginBottom: last ? 0 : 3 }}>
       <div draggable onDragStart={() => setDragItem(tr.id)} onDragEnd={() => setDragItem(null)}
         style={{
           display: "grid", gridTemplateColumns: "30px 1fr 70px 52px 32px 32px 42px 32px",
@@ -2378,45 +2437,34 @@ export default function CassetteTool() {
     </div>);
   };
 
-  const SPanel = ({ side, st, dur }) => {
+  const renderSidePanel = (side, st, dur) => {
     const active = activeTab === side;
     const audioTracks = st.filter(t => t.audioBuffer);
     const tSr = resolveExportSr(audioTracks);
     const tBits = resolveExportBits(audioTracks);
-    // Pre-compute waveform segments (stable between renders unless tracks/config change)
-    const wfSegments = useMemo(() => {
-      const at = st.filter(t => t.audioBuffer);
-      if (!at.length) return [];
-      const gains = at.map(() => 1.0);
-      if (normalizeMode === "peak") { const tl = Math.pow(10, targetDb / 20); at.forEach((t, i) => { gains[i] = t.peak > 0 ? tl / t.peak : 1.0; }); }
-      else if (normalizeMode === "rms") { const avg = at.reduce((s, t) => s + t.rms, 0) / at.length; at.forEach((t, i) => { gains[i] = t.rms > 0 ? avg / t.rms : 1.0; }); }
-      return at.map((t, i) => ({
-        id: t.id, dur: t.duration, gain: gains[i],
-        gap: i < at.length - 1 ? getGap(t, at[i + 1]) : 0,
-        peaks: t.peaks || [], channels: t.channels
-      }));
-    }, [st, normalizeMode, targetDb, smartGap, defaultGap]);
-    const specSegments = useMemo(() => {
-      const at = st.filter(t => t.audioBuffer);
-      if (!at.length) return [];
-      const gains = at.map(() => 1.0);
-      if (normalizeMode === "peak") { const tl = Math.pow(10, targetDb / 20); at.forEach((t, i) => { gains[i] = t.peak > 0 ? tl / t.peak : 1.0; }); }
-      else if (normalizeMode === "rms") { const avg = at.reduce((s, t) => s + t.rms, 0) / at.length; at.forEach((t, i) => { gains[i] = t.rms > 0 ? avg / t.rms : 1.0; }); }
-      return at.map((t, i) => ({
-        id: t.id,
-        dur: t.duration,
-        gain: gains[i],
-        gap: i < at.length - 1 ? getGap(t, at[i + 1]) : 0,
-        spectrogram: t.spectrogram || null,
-      }));
-    }, [st, normalizeMode, targetDb, smartGap, defaultGap]);
+    const gains = buildPreviewGains(audioTracks);
+    const wfSegments = audioTracks.map((t, i) => ({
+      id: t.id,
+      dur: t.duration,
+      gain: gains[i],
+      gap: i < audioTracks.length - 1 ? getGap(t, audioTracks[i + 1]) : 0,
+      peaks: t.peaks || [],
+      channels: t.channels,
+    }));
+    const specSegments = audioTracks.map((t, i) => ({
+      id: t.id,
+      dur: t.duration,
+      gain: gains[i],
+      gap: i < audioTracks.length - 1 ? getGap(t, audioTracks[i + 1]) : 0,
+      spectrogram: t.spectrogram || null,
+    }));
     return (<div onDragOver={e => { e.preventDefault(); setDragOverSide(side); }} onDragLeave={() => setDragOverSide(null)} onDrop={e => handleDrop(e, side)}
       style={{
         flex: 1, display: active ? "flex" : "none", flexDirection: "column", gap: 8, minHeight: 200,
         border: dragOverSide === side ? `2px dashed var(--side-${side.toLowerCase()})` : "2px solid transparent", transition: "border-color 0.2s"
       }}>
       <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-        <div style={{ flex: 1 }}><CapBar used={dur} total={sideSec} eff={effectiveSec} side={side} /></div>
+        <div style={{ flex: 1 }}>{renderCapBar(dur, sideSec, effectiveSec, side)}</div>
         {audioTracks.length > 0 && <div style={{ display: "flex", alignItems: "center", gap: 8, flexShrink: 0, marginLeft: 12 }}>
           <span style={{ fontSize: 11, color: "var(--text-dim)" }}>→ {tSr / 1000}kHz / {tBits}bit</span>
           <div style={{ display: "flex", gap: 4 }}>
@@ -2425,8 +2473,25 @@ export default function CassetteTool() {
           </div>
         </div>}
       </div>
-      <TimeLine st={st} total={sideSec} eff={effectiveSec} side={side} />
-      {sidePreviewMode === "waveform" ? <SideWaveform segments={wfSegments} /> : <SideSpectrogram segments={specSegments} />}
+      {renderTimeLine(st, sideSec, effectiveSec, side)}
+      {(wfSegments.length > 0 || specSegments.length > 0) && (
+        <div style={{ position: "relative", height: 128 }}>
+          <div style={{
+            position: "absolute", inset: 0,
+            opacity: sidePreviewMode === "waveform" ? 1 : 0,
+            pointerEvents: sidePreviewMode === "waveform" ? "auto" : "none"
+          }}>
+            <SideWaveform segments={wfSegments} />
+          </div>
+          <div style={{
+            position: "absolute", inset: 0,
+            opacity: sidePreviewMode === "spectrogram" ? 1 : 0,
+            pointerEvents: sidePreviewMode === "spectrogram" ? "auto" : "none"
+          }}>
+            <SideSpectrogram segments={specSegments} />
+          </div>
+        </div>
+      )}
       <div style={{ flex: 1, overflowY: "auto", display: "flex", flexDirection: "column", gap: 0 }}>
         {st.length === 0 ? (
           <div style={{
@@ -2438,7 +2503,7 @@ export default function CassetteTool() {
             <span>{T("dropHere")}</span>
             <span style={{ fontSize: 10, opacity: 0.6 }}>{T("dropHint")}</span>
           </div>
-        ) : st.map((tr, i) => <TRow key={tr.id} track={tr} index={i} st={st} targetSr={tSr} targetBits={tBits} />)}
+        ) : st.map((tr, i) => renderTrackRow(tr, i, st, tSr, tBits))}
       </div>
     </div>);
   };
@@ -2689,8 +2754,8 @@ export default function CassetteTool() {
       </div>
 
       <div style={{ minHeight: 300 }}>
-        <SPanel side="A" st={sideA} dur={durA} />
-        <SPanel side="B" st={sideB} dur={durB} />
+        {renderSidePanel("A", sideA, durA)}
+        {renderSidePanel("B", sideB, durB)}
       </div>
 
       {tracks.length > 0 && <div style={{

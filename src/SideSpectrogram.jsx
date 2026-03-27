@@ -143,10 +143,10 @@ const SideSpectrogram = memo(function SideSpectrogram({ segments }) {
     const ro = new ResizeObserver(draw);
     ro.observe(cvs);
     return () => ro.disconnect();
-  }, [depKey, segments]);
+  }, [depKey]);
 
   if (!segments.length) return null;
-  return <canvas ref={cvsRef} style={{ width: "100%", height: 112, borderRadius: 6, background: "#050612", border: "1px solid var(--border)" }} />;
+  return <canvas ref={cvsRef} style={{ width: "100%", height: 128, borderRadius: 6, background: "#050612", border: "1px solid var(--border)" }} />;
 });
 
 export default SideSpectrogram;

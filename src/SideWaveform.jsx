@@ -115,7 +115,7 @@ const SideWaveform = memo(function SideWaveform({ segments }) {
 
   if (!segments.length) return null;
   return <canvas ref={cvsRef}
-    style={{ width: "100%", height: 100, borderRadius: 6, background: "var(--bg-card)", border: "1px solid var(--border)" }} />;
+    style={{ width: "100%", height: 128, borderRadius: 6, background: "var(--bg-card)", border: "1px solid var(--border)" }} />;
 });
 
 export default SideWaveform;
