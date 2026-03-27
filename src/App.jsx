@@ -8,11 +8,11 @@ import SideSpectrogram from "./SideSpectrogram.jsx";
 // ═══════════════════════════════════════════════════════════════
 // SIDE — Sequential Interleaved Dubbing Engine
 // 阿佐谷202室 磁带転写ツール
-// ver 0.9 Release Candidate I
+// Ver 0.9 Release Candidate II
 // by 天使天才天王寺璃奈 (Angel, Genius, Tennoji Rina)
 // ═══════════════════════════════════════════════════════════════
 
-const APP_VERSION = "0.9 Release Candidate I";
+const APP_VERSION = "0.9 Release Candidate II";
 const APP_GITHUB = "https://github.com/Pichuworks/rina-side";
 
 // ── i18n ─────────────────────────────────────────────────────
@@ -56,8 +56,8 @@ const I18N = {
   tipBitDepth: { "zh-CN": "位深", ja: "ビット深度", en: "Bit depth" },
   tipChannels: { "zh-CN": "声道数", ja: "チャンネル数", en: "Channels" },
   tipPeakLevel: { "zh-CN": "峰值电平", ja: "ピークレベル", en: "Peak level" },
-  tipHeadSilence: { "zh-CN": "音轨头部静音长度", ja: "トラック先頭の無音", en: "Head silence duration" },
-  tipTailSilence: { "zh-CN": "音轨尾部静音长度", ja: "トラック末尾の無音", en: "Tail silence duration" },
+  tipHeadSilence: { "zh-CN": "音轨头部静音", ja: "トラック先頭の無音", en: "Head silence" },
+  tipTailSilence: { "zh-CN": "音轨尾部静音", ja: "トラック末尾の無音", en: "Tail silence" },
   tapeTypeNote: { "zh-CN": "影响归一化目标电平", ja: "正規化ターゲットレベルに影響", en: "Affects normalization target level" },
   appTagline: { "zh-CN": "……把声音编译进磁带里。", ja: "……音をテープにコンパイルする。", en: "…compile your sound into tape." },
   decoding: { "zh-CN": "解码中", ja: "デコード中", en: "Decoding" },
@@ -97,50 +97,150 @@ const I18N = {
   ctlTube: { "zh-CN": "管级", ja: "真空管", en: "Tube" },
   ctlVinylEra: { "zh-CN": "年代", ja: "年代", en: "Era" },
   ctlCrackle: { "zh-CN": "爆豆", ja: "ポップ", en: "Crackle" },
+  // ── 介质模拟 short labels ──────────────────────────────────
   simStateOffShort: { "zh-CN": "关闭", ja: "OFF", en: "OFF" },
   simStateTapeIShort: { "zh-CN": "一类带", ja: "TYPE I", en: "Type I" },
   simStateTapeIIShort: { "zh-CN": "二类带", ja: "TYPE II", en: "Type II" },
   simStateTapeIVShort: { "zh-CN": "四类带", ja: "TYPE IV", en: "Type IV" },
   simStateVinylShort: { "zh-CN": "黑胶", ja: "VINYL", en: "Vinyl" },
-  simStateOffTip: { "zh-CN": "关闭介质模拟。", ja: "媒体モデリングを無効にします。", en: "Disable medium simulation." },
-  simStateTapeITip: { "zh-CN": "启用 Type I normal bias 磁带回放模型。", ja: "Type I normal bias テープの再生モデルを有効にします。", en: "Enable the Type I normal-bias cassette playback model." },
-  simStateTapeIITip: { "zh-CN": "启用 Type II chrome/high-bias 磁带回放模型。", ja: "Type II chrome/high-bias テープの再生モデルを有効にします。", en: "Enable the Type II chrome/high-bias cassette playback model." },
-  simStateTapeIVTip: { "zh-CN": "启用 Type IV metal 磁带回放模型。", ja: "Type IV metal テープの再生モデルを有効にします。", en: "Enable the Type IV metal cassette playback model." },
-  simStateVinylTip: { "zh-CN": "启用黑胶唱盘回放模型。", ja: "レコード再生系のモデルを有効にします。", en: "Enable the vinyl playback model." },
+  // ── 介质模拟 tooltips ─────────────────────────────────────
+  simStateOffTip: {
+    "zh-CN": "关闭介质模拟，输出干净的数字信号。",
+    ja: "媒体シミュレーションを無効にします。クリーンなデジタル出力になります。",
+    en: "No medium simulation. Output is clean digital.",
+  },
+  simStateTapeITip: {
+    "zh-CN": "模拟 Type I 普通偏磁磁带的频响特性——高频自然滚降、轻微饱和感。",
+    ja: "Type I ノーマルバイアスの周波数特性を再現します。高域の自然なロールオフと軽い飽和感。",
+    en: "Simulates Type I normal-bias tape — gentle high-frequency roll-off and light saturation.",
+  },
+  simStateTapeIITip: {
+    "zh-CN": "模拟 Type II 铬带的频响特性——高频延伸更好，噪底更低，质感更亮。",
+    ja: "Type II クロームバイアスの特性。高域の伸びが良く、ノイズフロアが低め。",
+    en: "Simulates Type II chrome-bias tape — extended highs, lower noise floor, slightly brighter character.",
+  },
+  simStateTapeIVTip: {
+    "zh-CN": "模拟 Type IV 金属带的频响特性——动态更宽，高频清晰度最佳，录音电平更高。",
+    ja: "Type IV メタルテープの特性。ダイナミクスが広く、高域の鮮明さと高い録音レベルが特徴。",
+    en: "Simulates Type IV metal tape — widest dynamic range, clearest highs, highest recording level.",
+  },
+  simStateVinylTip: {
+    "zh-CN": "模拟黑胶唱片的回放特性——RIAA 均衡曲线、内圈失真与轻微的机械质感。",
+    ja: "レコード再生の特性を再現。RIAA EQ カーブ、内周歪み、軽微な機械感。",
+    en: "Simulates vinyl playback — RIAA EQ curve, inner-groove distortion, and subtle mechanical character.",
+  },
+  // ── 卡座 short labels ──────────────────────────────────────
   deckStateOffShort: { "zh-CN": "关闭", ja: "OFF", en: "OFF" },
   deckStatePortableShort: { "zh-CN": "随身", ja: "携帯", en: "PORT" },
   deckState2HeadShort: { "zh-CN": "2磁头", ja: "2ヘッド", en: "2HD" },
   deckState3HeadShort: { "zh-CN": "3磁头", ja: "3ヘッド", en: "3HD" },
-  deckStateOffTip: { "zh-CN": "关闭磁带播放设备模拟。", ja: "テープ再生デッキのモデリングを無効にします。", en: "Disable tape playback deck simulation." },
-  deckStatePortableTip: { "zh-CN": "使用随身听级 transport 稳定性、带宽与串音模型。", ja: "ポータブル機相当の transport 安定性・帯域・クロストークを適用します。", en: "Apply portable-player transport stability, bandwidth, and crosstalk." },
-  deckState2HeadTip: { "zh-CN": "使用高端二磁头卡座级回放 transport 模型。", ja: "上級 2 ヘッドデッキ相当の transport モデルを適用します。", en: "Apply a high-end 2-head deck transport model." },
-  deckState3HeadTip: { "zh-CN": "使用高端三磁头卡座级回放 transport 模型。", ja: "上級 3 ヘッドデッキ相当の transport モデルを適用します。", en: "Apply a high-end 3-head deck transport model." },
+  // ── 卡座 tooltips ──────────────────────────────────────────
+  deckStateOffTip: {
+    "zh-CN": "关闭卡座模拟，不附加 transport 特性。",
+    ja: "デッキシミュレーションを無効にします。",
+    en: "No deck simulation applied.",
+  },
+  deckStatePortableTip: {
+    "zh-CN": "随身听级别的 transport——轻微的速度波动（wow/flutter）、较窄的频率响应和左右串音。",
+    ja: "ポータブルプレイヤー相当の transport。速度変動（wow/flutter）、帯域の狭さ、チャンネル間クロストークが出ます。",
+    en: "Portable player transport — subtle wow/flutter, narrower bandwidth, and channel crosstalk.",
+  },
+  deckState2HeadTip: {
+    "zh-CN": "高端二磁头卡座的 transport——速度稳定性好，频率响应宽，整体更干净。",
+    ja: "高級 2 ヘッドデッキの transport。速度安定性が高く、帯域が広い。",
+    en: "High-end 2-head deck transport — stable speed, wide bandwidth, cleaner overall.",
+  },
+  deckState3HeadTip: {
+    "zh-CN": "高端三磁头卡座的 transport——最佳速度稳定性与分离度，接近开盘机的精度。",
+    ja: "高級 3 ヘッドデッキの transport。最高の速度安定性とチャンネルセパレーション。オープンリールに近い精度。",
+    en: "High-end 3-head deck transport — best speed stability and separation, approaching open-reel precision.",
+  },
+  // ── 音色 short labels ──────────────────────────────────────
   toneStateDefaultShort: { "zh-CN": "中性", ja: "中立", en: "Neutral" },
   toneStateCoolShort: { "zh-CN": "冷色", ja: "クール", en: "Cool" },
   toneStateWarmShort: { "zh-CN": "暖色", ja: "ウォーム", en: "Warm" },
-  toneStateDefaultTip: { "zh-CN": "中性 spectral voicing，不额外偏置频谱与动态。", ja: "中立的な spectral voicing。周波数傾斜やダイナミクスの追加バイアスはありません。", en: "Neutral spectral voicing with no extra spectral or dynamic bias." },
-  toneStateCoolTip: { "zh-CN": "偏冷 spectral voicing：更亮的高频与更轻的 glue。", ja: "クール寄りの spectral voicing。高域をやや開き、glue を軽くします。", en: "Cool spectral voicing with a brighter top end and lighter glue compression." },
-  toneStateWarmTip: { "zh-CN": "偏暖 spectral voicing：更厚的低中频与更重的 glue。", ja: "ウォーム寄りの spectral voicing。低中域を厚くし、glue を少し強めます。", en: "Warm spectral voicing with denser low-mids and heavier glue compression." },
+  // ── 音色 tooltips ──────────────────────────────────────────
+  toneStateDefaultTip: {
+    "zh-CN": "中性频谱，不对高低频做额外的倾向性处理。",
+    ja: "中立的な周波数特性。高域・低域への追加の色付けはありません。",
+    en: "Neutral frequency response. No additional spectral coloring.",
+  },
+  toneStateCoolTip: {
+    "zh-CN": "偏冷——高频稍亮，低中频收紧，整体通透感更强。",
+    ja: "クール寄り。高域が少し開き、低中域が引き締まります。",
+    en: "Cool tilt — slightly brighter highs, tighter low-mids, more open overall.",
+  },
+  toneStateWarmTip: {
+    "zh-CN": "偏暖——低中频更厚实，高频收敛，听感更柔和沉稳。",
+    ja: "ウォーム寄り。低中域が厚くなり、高域がなだらかになります。",
+    en: "Warm tilt — fuller low-mids, softer highs, rounder and more settled sound.",
+  },
+  // ── 电子管 short labels ────────────────────────────────────
   tubeStateOffShort: { "zh-CN": "关闭", ja: "OFF", en: "OFF" },
   tubeStateOnShort: { "zh-CN": "电子管", ja: "真空管", en: "Tube" },
-  tubeStateOffTip: { "zh-CN": "关闭真空管前级非线性级。", ja: "真空管プリアンプ非線形段を無効にします。", en: "Disable the tube preamp nonlinear stage." },
-  tubeStateOnTip: { "zh-CN": "启用轻微真空管前级饱和与高频圆整。", ja: "軽い真空管プリアンプ飽和と高域の丸めを有効にします。", en: "Enable light tube preamp saturation and high-frequency rounding." },
+  // ── 电子管 tooltips ────────────────────────────────────────
+  tubeStateOffTip: {
+    "zh-CN": "关闭电子管前级模拟。",
+    ja: "真空管プリアンプのシミュレーションを無効にします。",
+    en: "No tube preamp stage applied.",
+  },
+  tubeStateOnTip: {
+    "zh-CN": "加入轻微的电子管饱和——极轻的谐波着色与高频圆润感，是那种听不出来但去掉就会少点什么的效果。",
+    ja: "軽微な真空管飽和を加えます。わずかな倍音の色付けと高域の丸み。消すとなぜか物足りなくなる、あの感じ。",
+    en: "Adds subtle tube saturation — light harmonic coloring and high-frequency rounding. You might not notice it, but you'd miss it if it were gone.",
+  },
+  // ── 黑胶年代 short labels ──────────────────────────────────
   vinylEraModernShort: { "zh-CN": "现代", ja: "現代", en: "Modern" },
   vinylEraClassicShort: { "zh-CN": "经典", ja: "定番", en: "Classic" },
   vinylEraVintageShort: { "zh-CN": "复古", ja: "旧式", en: "Vintage" },
   vinylEraEffectShort: { "zh-CN": "效果", ja: "効果", en: "Effect" },
-  vinylEraModernTip: { "zh-CN": "现代黑胶回放：较宽带宽、较轻 wear 与较小内圈失真。", ja: "現代的なレコード再生。帯域が広く、wear と内周歪みは軽めです。", en: "Modern vinyl playback with wider bandwidth, lighter wear, and lower inner-groove distortion." },
-  vinylEraClassicTip: { "zh-CN": "经典黑胶回放：适中的带宽滚降与 wear。", ja: "標準的なレコード再生。適度な帯域減衰と wear を持ちます。", en: "Classic vinyl playback with moderate roll-off and wear." },
-  vinylEraVintageTip: { "zh-CN": "复古黑胶回放：更早的高频衰减、更强的 wear 与更窄的分离度。", ja: "古いレコード再生。高域減衰が早く、wear と分離低下が強めです。", en: "Vintage vinyl playback with earlier high-frequency roll-off, stronger wear, and narrower separation." },
-  vinylEraEffectTip: { "zh-CN": "重效果黑胶档：显著的带宽限制、wear 与机械伪迹。", ja: "重めのエフェクト用レコード档。帯域制限、wear、機械アーティファクトが強めです。", en: "Heavy-effect vinyl profile with pronounced bandwidth loss, wear, and mechanical artifacts." },
+  // ── 黑胶年代 tooltips ──────────────────────────────────────
+  vinylEraModernTip: {
+    "zh-CN": "现代黑胶：宽频响、低噪底，内圈失真轻微，听感干净。",
+    ja: "現代盤の再生特性。広い帯域、低ノイズ、内周歪みは控えめ。",
+    en: "Modern vinyl — wide bandwidth, low noise, minimal inner-groove distortion.",
+  },
+  vinylEraClassicTip: {
+    "zh-CN": "经典黑胶：适度的高频滚降与唱片磨损感，是大多数人印象里的黑胶声。",
+    ja: "定番のレコード再生。適度な高域減衰と盤面の経年感。多くの人が思い浮かべるレコードサウンド。",
+    en: "Classic vinyl — moderate high-frequency roll-off and record wear. The sound most people picture when they think 'vinyl'.",
+  },
+  vinylEraVintageTip: {
+    "zh-CN": "复古黑胶：更早的高频衰减、更明显的磨损颗粒感、更窄的立体声分离度。",
+    ja: "古いレコードの再生特性。高域の早い減衰、強めの経年劣化感、狭いステレオ分離。",
+    en: "Vintage vinyl — earlier high-frequency roll-off, stronger surface wear character, narrower stereo separation.",
+  },
+  vinylEraEffectTip: {
+    "zh-CN": "重度效果档：夸张的带宽限制、磨损噪声与机械伪声，适合刻意追求老旧质感的场合。",
+    ja: "エフェクト用途の強め設定。帯域制限・磨耗ノイズ・機械的なアーティファクトが強調されます。意図的なレトロ感が欲しいときに。",
+    en: "Heavy effect mode — exaggerated bandwidth loss, surface noise, and mechanical artifacts. For when you want it to sound deliberately old.",
+  },
+  // ── 爆豆 short labels ──────────────────────────────────────
   crackleStateOffShort: { "zh-CN": "爆豆关", ja: "POP OFF", en: "CRK OFF" },
   crackleStateLowShort: { "zh-CN": "爆豆低", ja: "POP LOW", en: "CRK LOW" },
   crackleStateMidShort: { "zh-CN": "爆豆中", ja: "POP MID", en: "CRK MID" },
   crackleStateHighShort: { "zh-CN": "爆豆高", ja: "POP HI", en: "CRK HI" },
-  crackleStateOffTip: { "zh-CN": "关闭 click/pop 脉冲噪声层。", ja: "click/pop のインパルスノイズ層を無効にします。", en: "Disable click/pop impulse-noise layers." },
-  crackleStateLowTip: { "zh-CN": "较低密度的 dust、scratch 与 click/pop。", ja: "低密度の dust、scratch、click/pop を適用します。", en: "Apply low-density dust, scratch, and click/pop artifacts." },
-  crackleStateMidTip: { "zh-CN": "中等密度的 dust、scratch 与 click/pop。", ja: "中密度の dust、scratch、click/pop を適用します。", en: "Apply medium-density dust, scratch, and click/pop artifacts." },
-  crackleStateHighTip: { "zh-CN": "高密度的 dust、scratch 与 click/pop。", ja: "高密度の dust、scratch、click/pop を適用します。", en: "Apply high-density dust, scratch, and click/pop artifacts." },
+  // ── 爆豆 tooltips ──────────────────────────────────────────
+  crackleStateOffTip: {
+    "zh-CN": "关闭 click/pop 噪声层。",
+    ja: "クリック/ポップノイズ層を無効にします。",
+    en: "No click/pop noise layer.",
+  },
+  crackleStateLowTip: {
+    "zh-CN": "低密度的唱针爆豆声——偶尔的轻微 click，听起来像保养良好的老唱片。",
+    ja: "低密度のスクラッチ/クリックノイズ。たまに軽いクリックが入る程度。手入れされた古盤の雰囲気。",
+    en: "Low-density crackle — occasional light clicks, like a well-kept old record.",
+  },
+  crackleStateMidTip: {
+    "zh-CN": "中等密度的爆豆声——明显但不刺耳，日常播放老唱片的质感。",
+    ja: "中密度のスクラッチ/クリック。気にはなるが耳障りではない、普段使いの古盤感。",
+    en: "Medium-density crackle — present but not distracting. Sounds like an everyday old record.",
+  },
+  crackleStateHighTip: {
+    "zh-CN": "高密度的爆豆声——持续的噪声与 pop，像一张从二手店买来、没有好好保管过的黑胶。",
+    ja: "高密度のスクラッチ/クリック。持続的なノイズとポップ音。中古店で状態の悪い盤を買ってきたような感じ。",
+    en: "High-density crackle — continuous noise and pops, like a second-hand record that's had a rough life.",
+  },
 };
 
 function t(key, lang) { const e = I18N[key]; return e ? (e[lang] || e["zh-CN"] || key) : key; }
@@ -152,7 +252,6 @@ const RINA_SMILE = "[^_^]";
 
 // ── Constants ────────────────────────────────────────────────
 // ── Character Themes ────────────────────────────────────────
-// Colors based on official 応援色, adjusted for UI readability
 const THEMES = {
   default: { accent: "#D4859A", bg: "#E8ECF2", bgCard: "#F4F6FA", bgDeep: "#DCE2EA", border: "#C8CED8", accentDim: "#F2D6DE", group: "" },
   keke: { accent: "#49BDF0", bg: "#F2F7FA", bgCard: "#FAFCFF", bgDeep: "#E4EEF5", border: "#C8D8E4", accentDim: "#CCE8FA", group: "liella" },
@@ -169,8 +268,20 @@ const THEMES = {
   hatsuka: { accent: "#BB9955", bg: "#F8F6F0", bgCard: "#FFFDF8", bgDeep: "#EFEBDF", border: "#D8D2C2", accentDim: "#E8DCC0", group: "mujica" },
   uika: { accent: "#335566", bg: "#F0F4F6", bgCard: "#F8FBFC", bgDeep: "#E0E8EC", border: "#C4D0D6", accentDim: "#BCCDD8", group: "mujica" },
   mana: { accent: "#E8A68F", bg: "#FBF6F2", bgCard: "#FFFDFC", bgDeep: "#F2E8E1", border: "#E3D3C8", accentDim: "#F7DDD0", sideA: "#E8A68F", sideB: "#C7B48C", accentInk: "#9A5E4C", warning: "#D9B15E", group: "sumimi" },
+  nozomu: { accent: "#D4600A", bg: "#F8F4EE", bgCard: "#FFFBF7", bgDeep: "#EDE5D8", border: "#D8CCBC", accentDim: "#F2DCC0", sideA: "#D4600A", sideB: "#6A7A8F", accentInk: "#8A3A08", warning: "#B89040", group: "crisiris" },
+  eri: { accent: "#C8920A", bg: "#FAF7F0", bgCard: "#FFFDF7", bgDeep: "#EDE8D8", border: "#D8D0BC", accentDim: "#F0E0A8", sideA: "#C8920A", sideB: "#800020", accentInk: "#7A5806", warning: "#9A4A30", group: "crisiris" },
 };
-const THEME_ORDER = ["default", "keke", "omgkawaiiangel", "amechan", "tomori", "raana", "soyo", "anon", "taki", "sakiko", "mutsumi", "nyamu", "hatsuka", "uika", "mana"];
+
+const THEME_ORDER = [
+  "default",
+  "keke",
+  "omgkawaiiangel", "amechan",
+  "tomori", "raana", "soyo", "anon", "taki",
+  "sakiko", "mutsumi", "nyamu", "hatsuka", "uika",
+  "mana",
+  "nozomu", "eri",
+];
+
 const THEME_NAMES = {
   default: { "zh-CN": "天王寺璃奈", ja: "天王寺 璃奈", en: "Rina Tennoji" },
   keke: { "zh-CN": "唐可可", ja: "唐 可可", en: "Keke Tang" },
@@ -187,6 +298,8 @@ const THEME_NAMES = {
   hatsuka: { "zh-CN": "三角初华", ja: "三角 初華", en: "Uika Misumi" },
   uika: { "zh-CN": "八幡海铃", ja: "八幡 海鈴", en: "Umiri Yahata" },
   mana: { "zh-CN": "纯田真奈", ja: "純田 まな", en: "Mana Sumita" },
+  nozomu: { "zh-CN": "星街望", ja: "星街 望", en: "Nozomu Hoshimachi" },
+  eri: { "zh-CN": "高桥绘理", ja: "高橋 絵理", en: "Eri Takahashi" },
 };
 
 // Derive SIDE A/B colors from accent: A = accent, B = accent hue-rotated ~150° + desaturated
@@ -234,7 +347,6 @@ function deriveTapeTypeColors(accent) {
     TYPE_IV: mixHex("#585E74", accent, 0.34),
   };
 }
-
 
 const TAPE_PRESETS = {
   C46: { label: "C-46", sideMinutes: 23 }, C60: { label: "C-60", sideMinutes: 30 },
@@ -1235,137 +1347,180 @@ const HeaderControls = React.memo(function HeaderControls({ lang, setLang, theme
         </button>
       </div>
 
-      {showHelp && <div onClick={() => setShowHelp(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.35)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}>
-        <div onClick={e => e.stopPropagation()} style={{
-          background: "var(--bg)", borderRadius: 12, maxWidth: 560, width: "min(560px, calc(100vw - 32px))", maxHeight: "80vh", overflow: "hidden",
-          border: "1px solid var(--border)", boxShadow: "0 8px 32px rgba(0,0,0,0.12)", fontSize: 14, lineHeight: 1.8, color: "var(--text)", display: "flex", flexDirection: "column"
-        }}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "20px 24px 14px", borderBottom: "1px solid var(--border)", flexShrink: 0 }}>
-            <span style={{ fontSize: 16, color: "var(--accent-ink)" }}>
-              {lang === "ja" ? "S.I.D.E ヘルプ" : lang === "en" ? "S.I.D.E Help" : "S.I.D.E 帮助"}
-            </span>
-            <button onClick={() => setShowHelp(false)} style={{ background: "none", border: "none", fontSize: 18, cursor: "pointer", color: "var(--text-dim)" }}>✕</button>
-          </div>
-          <div className="modalScroll" style={{ padding: "18px 24px 22px", overflowY: "auto", overflowX: "hidden", minHeight: 0 }}>
-            {lang === "zh-CN" ? <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-              <p><b>S</b>equential <b>I</b>nterleaved <b>D</b>ubbing <b>E</b>ngine<br />
-                将数字音频文件编排到磁带的 A/B 面，导出可直接录入卡座的 WAV 文件。</p>
-              <div style={{ fontSize: 12, color: "var(--text-dim)", display: "flex", flexDirection: "column", gap: 10 }}>
-                <p><b>{"// "}配置</b><br />
-                  选择磁带规格（C-46 / C-60 / C-90 / C-120 / 自定义）和磁带类型（Type I / II / IV）。<br />
-                  磁带类型影响录音电平参考值……用于响度归一化的目标。</p>
-                <p><b>{"// "}操作</b><br />
-                  先确认当前 SIDE，再点「添加文件」或直接把音频拖进来。这样就好。<br />
-                  支持格式：MP3 / FLAC / WAV / OGG / AAC / AIFF / M4A。<br />
-                  FLAC / AIFF 原始参数会先从文件头读取；需要时再走 ffmpeg.wasm 转 WAV 供浏览器解码。<br />
-                  拖动可以重排顺序；↑↓ 微调；→A / →B 直接切到另一面。</p>
-                <p><b>{"// "}编排</b><br />
-                  「自动分面」会按时长重新分配，优先保持两面容量平衡。<br />
-                  曲间间隔可以手动写入；开启「智能检测」后，会扣除前后已有静音。<br />
-                  采样率 / 位深按每一面单独解析，轨道列表里会标出升降采样方向。</p>
-                <p><b>{"// "}采样率 / 位深</b><br />
-                  每面独立解析。Auto 采样率 = 该面音轨的最高采样率。<br />
-                  Auto 位深 = 含无损格式（FLAC/WAV/AIFF）→ 24bit，否则 → 16bit。<br />
-                  原始采样率 / 位深来自源文件头，不会被 ffmpeg 的解码中间文件覆盖。<br />
-                  升降采样与位深变化都会在曲目详情里标注方向和目标值。</p>
-                <p><b>{"// "}试听</b><br />
-                  试听按整面时间线播放，曲间间隔、归一化增益、尾部静音都会算进去。<br />
-                  进度条和曲目节点都能跳转；暂停 / 继续 / 上下曲在下方控制区。<br />
-                  模拟循环：OFF → TYPE I → TYPE II → TYPE IV → VINYL。仅作用于试听。<br />
-                  电平表支持 VFD / VU / FFT / WAVE 四种显示模式。<br />
-                  播放路径：AudioBuffer (32-bit float) → AudioContext（系统原生采样率）。</p>
-                <p><b>{"// "}导出</b><br />
-                  导出为 WAV 文件……直接连接卡座线路输入录制。<br />
-                  降采样或位深转换的音轨会在导出前弹出确认提示。<br />
-                  尾部填充：自动补齐静音到磁带标称长度。</p>
-                <p><b>{"// "}歌单</b><br />
-                  支持 JSON 格式歌单的导出和导入。<br />
-                  导入歌单为占位模式……重新添加同名音频文件时自动匹配。</p>
-              </div>
-              <p style={{ fontSize: 11, color: "var(--text-dim)", textAlign: "right", marginTop: 4 }}>
-                ……把声音编译进磁带里。 {RINA_SMILE}<br />
-                <span style={{ fontSize: 10 }}>{T("appVersion")}</span>
-              </p>
+      {showHelp && (
+        <div
+          onClick={() => setShowHelp(false)}
+          style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.35)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}
+        >
+          <div
+            onClick={e => e.stopPropagation()}
+            style={{
+              background: "var(--bg)", borderRadius: 12, maxWidth: 560, width: "min(560px, calc(100vw - 32px))", maxHeight: "80vh", overflow: "hidden",
+              border: "1px solid var(--border)", boxShadow: "0 8px 32px rgba(0,0,0,0.12)", fontSize: 14, lineHeight: 1.8, color: "var(--text)", display: "flex", flexDirection: "column",
+            }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "20px 24px 14px", borderBottom: "1px solid var(--border)", flexShrink: 0 }}>
+              <span style={{ fontSize: 16, color: "var(--accent-ink)" }}>
+                {lang === "ja" ? "S.I.D.E ヘルプ" : lang === "en" ? "S.I.D.E Help" : "S.I.D.E 帮助"}
+              </span>
+              <button onClick={() => setShowHelp(false)} style={{ background: "none", border: "none", fontSize: 18, cursor: "pointer", color: "var(--text-dim)" }}>✕</button>
             </div>
-              : lang === "ja" ? <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-                <p><b>S</b>equential <b>I</b>nterleaved <b>D</b>ubbing <b>E</b>ngine<br />
-                  デジタル音源をカセットテープの A/B 面に配置し、デッキ入力用 WAV ファイルを書き出すツール。</p>
-                <div style={{ fontSize: 12, color: "var(--text-dim)", display: "flex", flexDirection: "column", gap: 10 }}>
-                  <p><b>{"// "}設定</b><br />
-                    テープ規格（C-46 / C-60 / C-90 / C-120 / カスタム）と種類（Type I / II / IV）を選択。<br />
-                    テープ種類は録音レベル基準値に影響……ラウドネス正規化のターゲットとして使用。</p>
-                  <p><b>{"// "}操作</b><br />
-                    まず現在の SIDE を確認してから、「ファイル追加」かドラッグ＆ドロップ。これで大丈夫。<br />
-                    対応：MP3 / FLAC / WAV / OGG / AAC / AIFF / M4A。<br />
-                    FLAC / AIFF はまず元ファイルのパラメータを読み取り、必要時のみ ffmpeg.wasm で WAV 化してデコード。<br />
-                    ドラッグで並べ替え、↑↓で微調整、→A / →B で面を移動。</p>
-                  <p><b>{"// "}配置</b><br />
-                    「自動振り分け」は長さを見て A/B 面を再配置し、容量バランスを揃える。<br />
-                    曲間ギャップは手動入力可能。スマートギャップ有効時は既存の無音を差し引く。<br />
-                    サンプルレート / ビット深度は面ごとに決まり、各トラックに変換方向を表示。</p>
-                  <p><b>{"// "}サンプルレート / ビット深度</b><br />
-                    面ごとに個別解決。Auto SR = その面の最高サンプルレート。<br />
-                    Auto ビット深度 = ロスレス有り → 24bit、なし → 16bit。<br />
-                    元の SR / ビット深度はソースファイルヘッダ基準で、ffmpeg の中間 WAV では上書きしない。</p>
-                  <p><b>{"// "}試聴</b><br />
-                    試聴は面全体のタイムライン再生。ギャップ、正規化ゲイン、末尾無音も反映。<br />
-                    シークバーと曲境界ノードでジャンプ可能。一時停止 / 再開 / 前後スキップ対応。<br />
-                    シミュレーションは OFF → TYPE I → TYPE II → TYPE IV → VINYL の順で循環。試聴専用。<br />
-                    メーターは VFD / VU / FFT / WAVE の4モード。<br />
-                    再生経路：AudioBuffer (32-bit float) → AudioContext (ネイティブSR)。</p>
-                  <p><b>{"// "}書出し</b><br />
-                    WAV 出力……デッキのライン入力に直結して録音。<br />
-                    ダウンサンプルやビット深度変換が必要なトラックは確認ダイアログ表示。</p>
-                  <p><b>{"// "}プレイリスト</b><br />
-                    JSON 形式で書出し・読込。読込はプレースホルダモード……同名ファイル再追加で自動マッチ。</p>
-                </div>
-                <p style={{ fontSize: 11, color: "var(--text-dim)", textAlign: "right", marginTop: 4 }}>
-                  ……音をテープにコンパイルする。 {RINA_SMILE}<br />
-                  <span style={{ fontSize: 10 }}>{T("appVersion")}</span>
-                </p>
-              </div>
-                : <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-                  <p><b>S</b>equential <b>I</b>nterleaved <b>D</b>ubbing <b>E</b>ngine<br />
-                    Arrange digital audio files onto cassette tape sides A/B and export deck-ready WAV files.</p>
+
+            <div className="modalScroll" style={{ padding: "18px 24px 22px", overflowY: "auto", overflowX: "hidden", minHeight: 0 }}>
+              {lang === "zh-CN" ? (
+                <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                  <p>
+                    <b>S</b>equential <b>I</b>nterleaved <b>D</b>ubbing <b>E</b>ngine<br />
+                    把数字音频文件编排到磁带 A/B 面，导出可直接送入卡座录制的 WAV 文件。<br />
+                    <span style={{ color: "var(--text-dim)", fontSize: 12 }}>璃奈觉得，把音乐放进磁带这件事，是值得认真对待的。</span>
+                  </p>
                   <div style={{ fontSize: 12, color: "var(--text-dim)", display: "flex", flexDirection: "column", gap: 10 }}>
-                    <p><b>{"// "}Configuration</b><br />
-                      Select tape spec (C-46 / C-60 / C-90 / C-120 / Custom) and type (Type I / II / IV).<br />
-                      Tape type sets the recording level reference used as the normalization target.</p>
-                    <p><b>{"// "}Operation</b><br />
-                      Confirm the current SIDE first, then use "Add Files" or drag audio in. That is the whole flow.<br />
-                      Supported: MP3 / FLAC / WAV / OGG / AAC / AIFF / M4A.<br />
-                      FLAC / AIFF keep source metadata from the file header first, then use ffmpeg.wasm WAV transcode only when decode fallback is needed.<br />
-                      Drag to reorder, use ↑↓ for fine moves, and →A / →B to switch sides.</p>
-                    <p><b>{"// "}Arrangement</b><br />
-                      "Auto Distribute" reallocates tracks by duration to keep side usage balanced.<br />
-                      Track gaps can be entered manually, or derived by subtracting existing head/tail silence.<br />
-                      Sample rate and bit depth are resolved per side, with conversion direction shown per track.</p>
-                    <p><b>{"// "}Sample Rate / Bit Depth</b><br />
-                      Resolved independently per side. Auto SR = highest SR among the side's tracks.<br />
-                      Auto bit depth = 24 if any lossless source, 16 otherwise.<br />
-                      Source SR / bit depth come from the original file header, not the ffmpeg intermediate WAV.<br />
-                      Resampling and bit-depth conversion direction are shown per track when they differ from target.</p>
-                    <p><b>{"// "}Preview</b><br />
-                      Preview follows the full side timeline, including gaps, normalization gain, and tail silence.<br />
-                      Use the seekbar or track markers to jump. Pause / resume / prev-next are in the transport row.<br />
-                      Simulation cycles OFF → TYPE I → TYPE II → TYPE IV → VINYL, and affects preview only.<br />
-                      Meter modes: VFD / VU / FFT / WAVE.<br />
-                      Audio path: AudioBuffer (32-bit float) → AudioContext (system native SR).</p>
-                    <p><b>{"// "}Export</b><br />
-                      Exports WAV — connect directly to your deck's line input.<br />
-                      Downsampled or bit-depth-converted tracks trigger a confirmation dialog before export.<br />
-                      Tail fill: pads silence to the tape's rated length.</p>
-                    <p><b>{"// "}Playlists</b><br />
-                      Export/import as JSON. Imported playlists are placeholder-only — re-add audio files with matching filenames to auto-hydrate.</p>
+                    <p><b>// 基本流程</b><br />
+                      先确认当前选中的 SIDE，再添加文件。可以点「添加文件」，也可以直接把音频拖进来。<br />
+                      支持格式：MP3 / FLAC / WAV / OGG / AAC / AIFF / M4A。<br />
+                      FLAC 和 AIFF 会优先读取原始文件头的采样率和位深。只有在浏览器无法直接解码时，才会调用 ffmpeg.wasm 进行格式转换。<br />
+                      顺序可以拖动调整。↑↓ 可以微调。→A / →B 可以把音轨移到另一面。</p>
+                    <p><b>// 磁带规格</b><br />
+                      选择磁带型号（C-46 / C-60 / C-90 / C-120 / 自定义）和类型（Type I / II / IV）。<br />
+                      磁带类型会影响响度归一化的目标电平。Type II 和 Type IV 可以录制更高的电平。这不是小事。</p>
+                    <p><b>// 编排</b><br />
+                      「自动分面」会按时长重新分配，让 A/B 两面的容量尽量接近。<br />
+                      曲间间隔可以手动填写。开启「智能间隔检测」后，会自动扣除音轨首尾已有的静音，只计算实际需要的间隔长度。<br />
+                      采样率和位深按每一面单独决定。音轨旁边会显示转换方向和目标值，请注意确认。<br />
+                      Auto 采样率 = 该面音轨中最高的采样率。Auto 位深 = 有无损格式时为 24bit，否则 16bit。</p>
+                    <p><b>// 试听</b><br />
+                      按整面时间线播放。曲间间隔、归一化增益、尾部填充都会计算在内。<br />
+                      进度条和音轨节点可以跳转。支持暂停、继续、上下曲。<br />
+                      电平表有五种显示模式：VFD 峰值 / VU 表头 / FFT 频谱 / 波形 / 声谱图。</p>
+                    <p><b>// 介质模拟</b><br />
+                      这部分只作用于试听，不会影响导出的 WAV 文件。<br />
+                      <b>模拟</b>：Type I / II / IV 磁带，或黑胶。模拟对应介质的频响特性。<br />
+                      <b>卡座</b>：随身听 / 二磁头 / 三磁头。不同档次的 transport 特性不同。<br />
+                      <b>音色</b>：中性 / 偏冷 / 偏暖。对整体频谱做倾向性调整。<br />
+                      <b>管级</b>：加入轻微的电子管谐波着色和高频圆润感。<br />
+                      <b>年代</b>（黑胶）：现代 / 经典 / 复古 / 重效果。控制磨损程度和频响衰减。<br />
+                      <b>爆豆</b>（黑胶）：click/pop 噪声的密度。</p>
+                    <p><b>// 导出</b><br />
+                      导出为 WAV 文件。连接卡座线路输入，直接录制即可。<br />
+                      需要降采样或位深转换的音轨，导出前会弹出确认提示。<br />
+                      尾部填充：自动补足静音，使总时长对齐磁带标称容量。</p>
+                    <p><b>// 歌单</b><br />
+                      可以导出和导入 JSON 格式的歌单。导入后为占位模式。<br />
+                      重新添加同名的音频文件，会自动完成匹配。不需要重新配置。</p>
+                    <p><b>// 波形 / 声谱图</b><br />
+                      每一面下方可以切换显示静态波形或 FFT 声谱图。<br />
+                      声谱图的纵轴是对数频率。颜色深浅对应电平强度。</p>
+                  </div>
+                  <p style={{ fontSize: 11, color: "var(--text-dim)", textAlign: "right", marginTop: 4 }}>
+                    ……把声音编译进磁带里。 {RINA_SMILE}<br />
+                    <span style={{ fontSize: 10 }}>{T("appVersion")}</span>
+                  </p>
+                </div>
+
+              ) : lang === "ja" ? (
+                <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                  <p>
+                    <b>S</b>equential <b>I</b>nterleaved <b>D</b>ubbing <b>E</b>ngine<br />
+                    デジタル音源をカセットテープの A/B 面に配置して、デッキのライン入力に直結できる WAV ファイルを書き出すツール。<br />
+                    <span style={{ color: "var(--text-dim)", fontSize: 12 }}>音楽をテープに記録することは、丁寧に扱う価値があると璃奈は思っています。</span>
+                  </p>
+                  <div style={{ fontSize: 12, color: "var(--text-dim)", display: "flex", flexDirection: "column", gap: 10 }}>
+                    <p><b>// 基本的な使い方</b><br />
+                      まず現在の SIDE を確認してから、ファイルを追加してください。「ファイル追加」ボタンを使うか、音声ファイルを直接ドラッグ＆ドロップできます。<br />
+                      対応フォーマット：MP3 / FLAC / WAV / OGG / AAC / AIFF / M4A。<br />
+                      FLAC と AIFF はまずファイルヘッダから元の SR とビット深度を読み取ります。ブラウザでデコードできない場合のみ、ffmpeg.wasm が呼ばれます。<br />
+                      ドラッグで順番を変えられます。↑↓ で細かく調整。→A / →B で面を移動。</p>
+                    <p><b>// テープ規格</b><br />
+                      テープ長（C-46 / C-60 / C-90 / C-120 / カスタム）と種類（Type I / II / IV）を選びます。<br />
+                      テープ種類はラウドネス正規化のターゲットレベルに影響します。Type II と Type IV はより高い録音レベルが使えます。これは小さくない違いです。</p>
+                    <p><b>// 配置</b><br />
+                      「自動振り分け」は時間をもとに再配置して、A/B 面の使用率を揃えます。<br />
+                      曲間ギャップは手動でも入力できます。スマートギャップ検出を有効にすると、先頭と末尾の無音を差し引いて適切な値を算出します。<br />
+                      SR とビット深度は面ごとに決まります。各トラックに変換の方向と目標値が表示されるので、確認してください。<br />
+                      Auto SR = 面内の最高 SR。Auto ビット深度 = ロスレスあり → 24bit、なし → 16bit。</p>
+                    <p><b>// 試聴</b><br />
+                      面全体のタイムラインで再生されます。ギャップ・正規化ゲイン・末尾パディングも含まれます。<br />
+                      シークバーとトラックノードでジャンプできます。一時停止・再開・前後スキップに対応しています。<br />
+                      メーターは 5 モードで切り替えられます：VFD ピーク / VU ニードル / FFT スペクトラム / 波形 / スペクトログラム。</p>
+                    <p><b>// 媒体シミュレーション</b><br />
+                      試聴専用の処理です。書き出した WAV ファイルには影響しません。<br />
+                      <b>モデリング</b>：Type I / II / IV テープ、またはレコード盤の周波数特性を再現します。<br />
+                      <b>デッキ</b>：ポータブル機 / 2 ヘッド / 3 ヘッドのトランスポート特性を適用します。<br />
+                      <b>音色</b>：中立 / クール / ウォーム。全体的な周波数の傾向を調整します。<br />
+                      <b>真空管</b>：軽微な倍音の着色と、高域の柔らかさを加えます。<br />
+                      <b>年代</b>（レコードモード）：現代 / 定番 / 旧式 / 効果。磨耗と帯域減衰の強度を選びます。<br />
+                      <b>ポップ</b>（レコードモード）：クリック/ポップノイズの密度を設定します。</p>
+                    <p><b>// 書き出し</b><br />
+                      WAV ファイルとして書き出します。デッキのライン入力に繋いで、そのまま録音できます。<br />
+                      ダウンサンプルやビット深度の変換が必要なトラックは、書き出し前に確認ダイアログが表示されます。<br />
+                      末尾パディング：テープの標準長に合わせて無音を補填します。</p>
+                    <p><b>// プレイリスト</b><br />
+                      JSON 形式で書き出し・読み込みができます。読み込み後はプレースホルダモードです。<br />
+                      同じファイル名の音声ファイルを再追加すると、自動でマッチングされます。再設定は不要です。</p>
+                    <p><b>// 波形 / スペクトログラム</b><br />
+                      各面の下に静的波形または FFT スペクトログラムを切り替えて表示できます。<br />
+                      スペクトログラムの縦軸は対数周波数スケールです。色の濃淡がレベルに対応しています。</p>
+                  </div>
+                  <p style={{ fontSize: 11, color: "var(--text-dim)", textAlign: "right", marginTop: 4 }}>
+                    ……音をテープにコンパイルする。 {RINA_SMILE}<br />
+                    <span style={{ fontSize: 10 }}>{T("appVersion")}</span>
+                  </p>
+                </div>
+
+              ) : (
+                <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
+                  <p>
+                    <b>S</b>equential <b>I</b>nterleaved <b>D</b>ubbing <b>E</b>ngine<br />
+                    Arrange digital audio files onto cassette tape sides A and B, then export WAV files ready for direct recording through a deck's line input.<br />
+                    <span style={{ color: "var(--text-dim)", fontSize: 12 }}>Rina thinks that putting music onto tape is something worth doing carefully.</span>
+                  </p>
+                  <div style={{ fontSize: 12, color: "var(--text-dim)", display: "flex", flexDirection: "column", gap: 10 }}>
+                    <p><b>// Getting started</b><br />
+                      Confirm the active SIDE first, then add files. Use the "Add Files" button, or drag audio directly into the side.<br />
+                      Supported formats: MP3 / FLAC / WAV / OGG / AAC / AIFF / M4A.<br />
+                      For FLAC and AIFF, the original sample rate and bit depth are read from the file header first. ffmpeg.wasm is only called when the browser cannot decode the file natively.<br />
+                      Drag to reorder. ↑↓ to nudge. →A / →B to move a track to the other side.</p>
+                    <p><b>// Tape settings</b><br />
+                      Choose a tape length (C-46 / C-60 / C-90 / C-120 / Custom) and type (Type I / II / IV).<br />
+                      Tape type sets the normalization target level. Type II and Type IV support higher recording levels. That is not a small difference.</p>
+                    <p><b>// Arrangement</b><br />
+                      "Auto Distribute" reallocates tracks by duration to keep A and B sides balanced.<br />
+                      Track gaps can also be entered manually. With Smart Gap Detection enabled, existing head and tail silence is subtracted automatically, so only the silence that is actually needed gets added.<br />
+                      Sample rate and bit depth are resolved per side. Each track shows the conversion direction and target value — please check these.<br />
+                      Auto SR = highest SR on the side. Auto bit depth = 24-bit if any lossless source is present, 16-bit otherwise.</p>
+                    <p><b>// Preview</b><br />
+                      Plays the full side timeline. Gaps, normalization gain, and tail padding are all included.<br />
+                      The seekbar and track markers can be used to jump to any point. Pause, resume, and previous/next track are supported.<br />
+                      The meter has five modes: VFD peak / VU needle / FFT spectrum / Waveform / Spectrogram.</p>
+                    <p><b>// Medium simulation</b><br />
+                      This only affects preview. The exported WAV is not changed.<br />
+                      <b>Simulation</b>: Type I / II / IV tape, or vinyl. Applies the frequency response of the chosen medium.<br />
+                      <b>Deck</b>: Portable / 2-head / 3-head transport characteristics.<br />
+                      <b>Tone</b>: Neutral / Cool / Warm. Adjusts the overall spectral tilt.<br />
+                      <b>Tube</b>: Adds subtle harmonic coloring and softness in the high frequencies.<br />
+                      <b>Era</b> (vinyl): Modern / Classic / Vintage / Effect. Controls wear and bandwidth roll-off.<br />
+                      <b>Crackle</b> (vinyl): Sets the density of click and pop surface noise.</p>
+                    <p><b>// Export</b><br />
+                      Exports as a WAV file. Connect to the deck's line input and record directly.<br />
+                      Tracks that require downsampling or bit-depth conversion will show a confirmation dialog before export.<br />
+                      Tail fill: silence is padded to match the tape's rated length.</p>
+                    <p><b>// Playlists</b><br />
+                      Playlists can be exported and imported as JSON. An imported playlist starts in placeholder mode.<br />
+                      Re-adding audio files with matching filenames will hydrate the stubs automatically. No reconfiguration is needed.</p>
+                    <p><b>// Waveform / Spectrogram</b><br />
+                      Each side can display a static waveform or an FFT spectrogram below the track list.<br />
+                      The spectrogram's vertical axis is logarithmic frequency. Color intensity maps to level.</p>
                   </div>
                   <p style={{ fontSize: 11, color: "var(--text-dim)", textAlign: "right", marginTop: 4 }}>
                     …compile your sound into tape. {RINA_SMILE}<br />
                     <span style={{ fontSize: 10 }}>{T("appVersion")}</span>
                   </p>
-                </div>}
+                </div>
+              )}
+            </div>
           </div>
         </div>
-      </div>}
+      )}
 
       {showAbout && <div onClick={() => setShowAbout(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.35)", zIndex: 100, display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}>
         <div onClick={e => e.stopPropagation()} style={{

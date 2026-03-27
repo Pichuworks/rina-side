@@ -1,57 +1,97 @@
-# CLAUDE.md — SIDE Project Guide
+# SIDE — Claude Development Notes
 
-## Structure
+Sequential Interleaved Dubbing Engine  
+Cassette tape preparation tool. Browser-only, no backend.
 
+## Stack
+
+- React 18 (via Vite)
+- Web Audio API — AudioContext, OfflineAudioContext, AudioBuffer
+- ffmpeg.wasm (`@ffmpeg/core-mt`) — lazy-loaded fallback decoder, requires COOP/COEP headers
+- Cloudflare Pages deployment (`npm run build` → `dist/`)
+
+## Project Structure
 ```
 src/
-├── main.jsx              # Entry
-├── App.jsx               # Main (~1200 lines) — config, tracks, audio, export, themes
-├── Player.jsx            # Playback deck (~310 lines) — transport, meters, sim toggle
-├── SideWaveform.jsx      # Static waveform (memo, pre-downsampled peaks)
-├── Icons.jsx             # Inline SVG icons
-└── ffmpeg-helper.js      # ffmpeg.wasm lazy loader
+  App.jsx          — main component: all state, UI, audio pipeline, themes, i18n
+  Player.jsx       — preview transport (timeline, seekbar, meter modes)
+  SideWaveform.jsx — static per-side waveform canvas (pre-downsampled peak pairs)
+  SideSpectrogram.jsx — per-side FFT spectrogram canvas (log-freq, level-mapped)
+  Icons.jsx        — inline SVG icon components, no external font dependency
+  ffmpeg-helper.js — lazy ffmpeg.wasm loader, WAV transcode, format detection
 ```
 
-## Performance model
+Everything except the canvas components and ffmpeg helper lives in `App.jsx`.
 
-During playback: **zero React re-renders**. `playPos`/`playingIdx` are refs. Player.jsx updates DOM directly.
+## Audio Pipeline
 
-SideWaveform uses `downsamplePeaks(2048)` at load time → drawing ~0.1ms.
+**Loading**
+1. Try `AudioContext.decodeAudioData()` directly
+2. If format likely needs transcode (FLAC / AIFF / OPUS etc.), or if step 1 fails → `ffmpeg.wasm` → WAV → retry decode
+3. Source SR and bit depth are read from file headers **before** ffmpeg transcode, so they reflect the original file
 
-## Theme system
+**Preview playback**
+- `AudioBuffer` (32-bit float) scheduled via `AudioContext` at system native SR
+- Medium simulation applied via Web Audio nodes (BiquadFilter, WaveShaperNode, gain staging)
+- Simulation is preview-only — no effect on export
 
-12 character themes. Default = 天王寺璃奈 (no separate entry).
-SIDE A/B colors auto-derived from accent via hue rotation (150°) + desaturation.
+**Export**
+- `OfflineAudioContext` at target SR
+- Normalization applied as gain before render
+- Output encoded to WAV (16 or 24-bit interleaved PCM) in-browser
+- Tail silence padded to tape rated length
 
-| Key     | Character  | Accent  | Source                                          |
-| ------- | ---------- | ------- | ----------------------------------------------- |
-| default | 天王寺璃奈 | #D4859A | Project pink, bg=#E8ECF2 (ペーパーホワイト基調) |
-| keke    | 唐可可     | #49BDF0 | Liella パステルブルー                           |
-| tomori  | 高松灯     | #77BBDD | MyGO公式                                        |
-| raana   | 要乐奈     | #77DD77 | MyGO公式                                        |
-| soyo    | 长崎爽世   | #FFDD88 | moegirl                                         |
-| anon    | 千早爱音   | #FF8899 | MyGO公式                                        |
-| taki    | 椎名立希   | #7777AA | MyGO公式                                        |
-| sakiko  | 丰川祥子   | #7799CC | Ave Mujica                                      |
-| mutsumi | 若叶睦     | #779977 | Ave Mujica                                      |
-| nyamu   | 祐天寺若麦 | #AA4477 | Ave Mujica                                      |
-| hatsuka | 三角初华   | #BB9955 | Ave Mujica                                      |
-| uika    | 八幡海铃   | #335566 | Ave Mujica                                      |
+## Themes
 
-## Audio pipeline
-
+Defined in `THEMES` object in `App.jsx`. Each entry:
+```js
+key: {
+  accent,       // required — primary color, drives auto-derived colors
+  bg,           // page background
+  bgCard,       // card/panel background
+  bgDeep,       // inset/deep background
+  border,       // border color
+  accentDim,    // muted accent (backgrounds, selections)
+  // optional overrides:
+  sideA,        // Side A indicator color (default: accent)
+  sideB,        // Side B indicator color (default: auto-derived from accent)
+  accentInk,    // text on accent-colored surfaces (default: auto-derived)
+  warning,      // warning color (default: auto-derived)
+  group,        // group label for separator in theme picker
+}
 ```
-Load:  File header parse (sampleRate / channels / bitDepth) → native decode or ffmpeg WAV transcode → AudioBuffer → peaks/analysis → track
-Play:  AudioBuffer → GainNode → [preview sim: TYPE I / TYPE II / TYPE IV / VINYL] → output + analysers
-Export: OfflineAudioContext → encodeWAV → download
-```
 
-Notes:
-- ffmpeg is decode-only fallback; it must not overwrite source metadata used by UI/export decisions.
-- Preview simulation is never baked into export.
+Theme display order and names are in `THEME_ORDER` and `THEME_NAMES`.  
+Current groups: `""` (default) · `liella` · `ngo` · `mygo` · `mujica` · `sumimi` · `crisiris`
 
-## Tape/Vinyl simulation
+## i18n
 
-Tape: TYPE I / II / IV each use distinct EQ + saturation + hiss profiles.
-Vinyl: EQ + bandwidth limit + surface noise + crackle + rumble + wow/flutter.
-Preview only — export always clean.
+All user-facing strings are in the `I18N` object at the top of `App.jsx`.  
+Three locales: `zh-CN` · `ja` · `en`  
+Access via `T("key")` inside the component (bound to current `lang` state).
+
+Help modal content is hardcoded JSX per locale (not in `I18N`) — search for `showHelp` to find it.
+
+## Key State
+
+| State | Type | Description |
+|---|---|---|
+| `sides` | `{ A: Track[], B: Track[] }` | all loaded tracks, split by side |
+| `tapePreset` | string | `C-46` / `C-60` / `C-90` / `C-120` / `CUSTOM` |
+| `tapeType` | string | `TYPE_I` / `TYPE_II` / `TYPE_IV` |
+| `normMode` | string | `PEAK` / `RMS` / `OFF` |
+| `simState` | string | `OFF` / `TAPE_I` / `TAPE_II` / `TAPE_IV` / `VINYL` |
+| `deckState` | string | `OFF` / `PORTABLE` / `2HEAD` / `3HEAD` |
+| `toneState` | string | `DEFAULT` / `COOL` / `WARM` |
+| `tubeState` | string | `OFF` / `ON` |
+| `vinylEra` | string | `MODERN` / `CLASSIC` / `VINTAGE` / `EFFECT` |
+| `crackleState` | string | `OFF` / `LOW` / `MID` / `HIGH` |
+| `theme` | string | key into `THEMES` |
+| `lang` | string | `zh-CN` / `ja` / `en` |
+
+## Notes
+
+- `SideWaveform` and `SideSpectrogram` are `memo`-wrapped canvas components. They re-render only when their `depKey` (derived from segment metadata) changes.
+- ffmpeg.wasm requires `SharedArrayBuffer`, which requires COOP/COEP headers. Cloudflare Pages: set these in `_headers` or `wrangler.toml`.
+- The `PEAK_N = 4096` constant in `SideWaveform.jsx` must match the `downsamplePeaks()` call in `App.jsx`.
+- Playlist JSON contains track metadata and side assignments but not audio data. Re-adding audio files with matching filenames auto-hydrates stub tracks.
