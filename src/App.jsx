@@ -1,6 +1,6 @@
 import React, { useState, useRef, useCallback, useMemo, useEffect } from "react";
 import { transcodeToWav, likelyNeedsTranscode } from "./ffmpeg-helper.js";
-import { IconAdd, IconAutoAwesome, IconFileOpen, IconSave, IconPlay, IconStop, IconExport, IconHelp, IconClearSide, IconClearAll, IconPalette, IconInfo } from "./Icons.jsx";
+import { IconAdd, IconAutoAwesome, IconFileOpen, IconSave, IconPlay, IconStop, IconExport, IconHelp, IconClearSide, IconClearAll, IconPalette, IconInfo, IconTool } from "./Icons.jsx";
 import Player from "./Player.jsx";
 import SideWaveform from "./SideWaveform.jsx";
 import SideSpectrogram from "./SideSpectrogram.jsx";
@@ -89,8 +89,56 @@ const I18N = {
   playlistImportError: { "zh-CN": "歌单文件解析失败", ja: "プレイリスト解析エラー", en: "Failed to parse playlist" },
   effectiveCapacity: { "zh-CN": "有效容量", ja: "実効容量", en: "Effective capacity" },
   help: { "zh-CN": "帮助", ja: "ヘルプ", en: "Help" },
+  tools: { "zh-CN": "工具", ja: "ツール", en: "Tools" },
   theme: { "zh-CN": "主题配色", ja: "テーマ配色", en: "Theme" },
   about: { "zh-CN": "关于", ja: "About", en: "About" },
+  toolCurrent: { "zh-CN": "当前工具", ja: "現在のツール", en: "Current Tool" },
+  toolRecCal: { "zh-CN": "录制校准", ja: "録音キャリブレーション", en: "Recording Calibration" },
+  toolRecCalDesc: {
+    "zh-CN": "同一时刻只输出一个校准信号。每种信号都对应一个明确的频率和电平规则，输出统一为双声道同相信号。",
+    ja: "同時に出力する校正信号は 1 つだけです。各信号には明確な周波数とレベル規則があり、出力は常にデュアルモノです。",
+    en: "Only one calibration signal can be output at a time. Each signal has a specific frequency and level rule, and output is always dual mono.",
+  },
+  toolSelectedSide: { "zh-CN": "校准 SIDE", ja: "校正 SIDE", en: "Calibration Side" },
+  toolSignalPick: { "zh-CN": "校准信号", ja: "校正信号", en: "Calibration Signal" },
+  toolSignalFreq: { "zh-CN": "输出信号", ja: "出力信号", en: "Output Signal" },
+  toolSignalLevel: { "zh-CN": "输出电平", ja: "出力レベル", en: "Output Level" },
+  toolSignalSource: { "zh-CN": "电平依据", ja: "レベル根拠", en: "Level Source" },
+  toolStereoMode: { "zh-CN": "声道方式", ja: "チャンネル方式", en: "Channel Mode" },
+  toolStereoDualMono: { "zh-CN": "双声道同相（dual mono）", ja: "デュアルモノ", en: "Dual mono" },
+  toolSignalRecBalance: { "zh-CN": "REC LEVEL / BALANCE", ja: "REC LEVEL / BALANCE", en: "REC LEVEL / BALANCE" },
+  toolSignalRecBalanceDesc: {
+    "zh-CN": "1kHz 中频参考音。REC LEVEL 用它对准最终节目峰值；BALANCE 也用同一个信号，因为左右输入必须完全一致。",
+    ja: "1kHz の中域基準音です。REC LEVEL は最終プログラムピーク基準、BALANCE も同一入力が必要なので同じ信号を使います。",
+    en: "A 1 kHz mid-band reference. REC LEVEL uses it against the final program peak, and BALANCE uses the same signal because L/R input must remain identical.",
+  },
+  toolSignalCal: { "zh-CN": "CAL", ja: "CAL", en: "CAL" },
+  toolSignalCalDesc: {
+    "zh-CN": "1kHz 固定参考音。它不跟节目走，只跟当前磁带类型的目标录音电平走。",
+    ja: "1kHz の固定基準音です。プログラムには追従せず、現在のテープ種別の録音目標レベルだけを使います。",
+    en: "A fixed 1 kHz reference tone. It does not follow program material, only the current tape type's recording target.",
+  },
+  toolSignalBias: { "zh-CN": "BIAS", ja: "BIAS", en: "BIAS" },
+  toolSignalBiasDesc: {
+    "zh-CN": "10kHz 高频测试音，电平比当前目标录音电平低 20dB，用于在线性区观察偏磁调整。",
+    ja: "10kHz の高域テストトーンで、現在の録音目標レベルより 20dB 低く設定し、線形域でバイアス調整を見ます。",
+    en: "A 10 kHz high-frequency tone set 20 dB below the current recording target so bias can be judged in the linear region.",
+  },
+  toolSignalRecEq: { "zh-CN": "REC EQ", ja: "REC EQ", en: "REC EQ" },
+  toolSignalRecEqDesc: {
+    "zh-CN": "10kHz 高频测试音，电平同样比当前目标录音电平低 20dB，用于观察录音端高频响应。",
+    ja: "10kHz の高域テストトーンで、同じく現在の録音目標レベルより 20dB 低く、録音側の高域応答を確認します。",
+    en: "A 10 kHz high-frequency tone, also 20 dB below the current recording target, used to inspect recording HF response.",
+  },
+  toolProgramPeakSource: { "zh-CN": "所选 SIDE 的最终节目峰值", ja: "選択 SIDE の最終プログラムピーク", en: "Selected side's final program peak" },
+  toolTapeTargetSource: { "zh-CN": "当前磁带类型的目标录音电平", ja: "現在のテープ種別の録音目標レベル", en: "Current tape type recording target" },
+  toolHighFreqSource: {
+    "zh-CN": "当前磁带类型目标录音电平下移 20dB 的高频测试电平",
+    ja: "現在のテープ種別の録音目標レベルから 20dB 下げた高域テストレベル",
+    en: "High-frequency test level set 20 dB below the current tape type recording target",
+  },
+  toolStart: { "zh-CN": "开始输出", ja: "出力開始", en: "Start Output" },
+  toolStop: { "zh-CN": "停止输出", ja: "出力停止", en: "Stop Output" },
   ctlSim: { "zh-CN": "模拟", ja: "モデリング", en: "Simulation" },
   ctlDeck: { "zh-CN": "卡座", ja: "デッキ", en: "Deck" },
   ctlTone: { "zh-CN": "音色", ja: "音色", en: "Tone" },
@@ -537,6 +585,15 @@ const VINYL_CRACKLE_PROFILES = {
 const DEFAULT_GAP = 3.0;
 const SILENCE_THRESHOLD = 0.005;
 const SILENCE_MIN_DUR = 0.3;
+const CALIBRATION_FREQ_HZ = 1000;
+const CALIBRATION_HIGH_FREQ_HZ = 10000;
+const CALIBRATION_HF_OFFSET_DB = -20;
+const CALIBRATION_SIGNAL_PRESETS = [
+  { id: "rec_level_balance", nameKey: "toolSignalRecBalance", descKey: "toolSignalRecBalanceDesc" },
+  { id: "cal", nameKey: "toolSignalCal", descKey: "toolSignalCalDesc" },
+  { id: "bias", nameKey: "toolSignalBias", descKey: "toolSignalBiasDesc" },
+  { id: "rec_eq", nameKey: "toolSignalRecEq", descKey: "toolSignalRecEqDesc" },
+];
 
 // ── Audio helpers ────────────────────────────────────────────
 function encodeWAV(ab, bitsPerSample = 16) {
@@ -1284,7 +1341,7 @@ function fmtTime(s) { if (!s || s < 0) return "0:00"; return `${Math.floor(s / 6
 function fmtTimeMs(s) { if (!s || s < 0) return "0:00.0"; return `${Math.floor(s / 60)}:${(s % 60).toFixed(1).padStart(4, "0")}`; }
 let _id = 0; const uid = () => `t_${++_id}_${Date.now()}`;
 
-const HeaderControls = React.memo(function HeaderControls({ lang, setLang, theme, setTheme, T }) {
+const HeaderControls = React.memo(function HeaderControls({ lang, setLang, theme, setTheme, onOpenTools, T }) {
   const [showThemePicker, setShowThemePicker] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
   const [showAbout, setShowAbout] = useState(false);
@@ -1298,6 +1355,9 @@ const HeaderControls = React.memo(function HeaderControls({ lang, setLang, theme
             background: lang === k ? "var(--accent)" : "var(--bg-card)", color: lang === k ? "var(--accent-contrast)" : "var(--text-dim)"
           }}>{l.label}</button>
         ))}
+        <button onClick={onOpenTools} style={{ ...btnTab, fontSize: 12, padding: "5px 10px", background: "var(--bg-card)", color: "var(--text-dim)" }} title={T("tools")}>
+          <IconTool size={16} />
+        </button>
         <div style={{ position: "relative" }}>
           <button onClick={() => setShowThemePicker(p => !p)} style={{
             ...btnTab, fontSize: 12, padding: "5px 10px",
@@ -1624,13 +1684,25 @@ export default function CassetteTool() {
   const [sidePreviewMode, setSidePreviewMode] = useState("waveform");
   const [toast, setToast] = useState(null);
   const [ffmpegStatus, setFfmpegStatus] = useState("idle"); // idle | loading | ready | unavailable
+  const [showTools, setShowTools] = useState(false);
+  const [activeTool, setActiveTool] = useState("rec-cal");
+  const [calibrationSide, setCalibrationSide] = useState("A");
+  const [calibrationSignalType, setCalibrationSignalType] = useState("rec_level_balance");
+  const [calibrationRunning, setCalibrationRunning] = useState(false);
 
   const acRef = useRef(null);
   const fileRef = useRef(null);
   const plRef = useRef(null);
+  const calibrationRef = useRef({ osc: null, gain: null, merger: null });
 
   const showToast = useCallback((m, d = 4000) => { setToast(m); setTimeout(() => setToast(null), d); }, []);
   const getAC = useCallback(() => { if (!acRef.current) acRef.current = new (window.AudioContext || window.webkitAudioContext)(); return acRef.current; }, []);
+  const openTools = useCallback(() => {
+    setCalibrationSide(activeTab);
+    setActiveTool("rec-cal");
+    setCalibrationSignalType("rec_level_balance");
+    setShowTools(true);
+  }, [activeTab]);
 
   const sideMin = tapePreset === "CUSTOM" ? customMin : TAPE_PRESETS[tapePreset].sideMinutes;
   const sideSec = sideMin * 60;
@@ -1658,6 +1730,23 @@ export default function CassetteTool() {
     const hasLossless = sideTracks.some(t => LOSSLESS_FMT.has(t.format));
     return hasLossless ? 24 : 16;
   }, [exportBits]);
+
+  const stopCalibration = useCallback(() => {
+    const calibration = calibrationRef.current;
+    if (calibration.osc) {
+      calibration.osc.onended = null;
+      try { calibration.osc.stop(); } catch { }
+    }
+    [calibration.osc, calibration.gain, calibration.merger].forEach((node) => {
+      try { node?.disconnect(); } catch { }
+    });
+    calibrationRef.current = { osc: null, gain: null, merger: null };
+    setCalibrationRunning(false);
+  }, []);
+
+  useEffect(() => {
+    if (!showTools) stopCalibration();
+  }, [showTools, stopCalibration]);
 
   // Compute effective gap for a track (considering smartGap)
   const getGap = useCallback((tr, nextTr) => {
@@ -1820,6 +1909,7 @@ export default function CassetteTool() {
 
   // ── Export Audio ──────────────────────────────────────────
   const expSide = useCallback(async (side) => {
+    stopCalibration();
     const allSide = tracks.filter(t => t.side === side);
     const st = allSide.filter(t => t.audioBuffer);
     const stubCount = allSide.length - st.length;
@@ -1868,7 +1958,7 @@ export default function CassetteTool() {
       a.href = u; a.download = `SIDE_${side}_${sr}hz_${bits}bit.wav`; a.click(); URL.revokeObjectURL(u);
     } catch (e) { console.error(e); alert(`Export failed: ${e.message}`); }
     setProcessing(false); setProcMsg(""); setExpProg(null);
-  }, [tracks, defaultGap, fillTail, normalizeMode, targetDb, sideSec, getAC, T, getGap, resolveExportSr, resolveExportBits]);
+  }, [tracks, defaultGap, fillTail, normalizeMode, targetDb, sideSec, getAC, T, getGap, resolveExportSr, resolveExportBits, stopCalibration]);
 
   // ── Playback Engine ───────────────────────────────────────
   const playGenRef = useRef(0); // generation counter to prevent stale callbacks
@@ -2113,6 +2203,7 @@ export default function CassetteTool() {
 
   // Start playback from a given position (seconds)
   const playFromPos = useCallback((side, fromPos) => {
+    stopCalibration();
     const p = playRef.current;
     p.sources.forEach(s => { s.onended = null; });
     p.sources.forEach(s => { try { s.stop(); } catch (e) { } });
@@ -2205,7 +2296,7 @@ export default function CassetteTool() {
       playRef.current.raf = requestAnimationFrame(tick);
     };
     playRef.current.raf = requestAnimationFrame(tick);
-  }, [getAC, buildPlaybackOutputChain, buildSchedule, getPlaybackCursor, buildPlaybackSimulationGraph, clearPlaybackOutputChain, clearSimulationGraphs, disconnectNodes, getPlaybackDisplayDelay, stopPlayback]);
+  }, [getAC, buildPlaybackOutputChain, buildSchedule, getPlaybackCursor, buildPlaybackSimulationGraph, clearPlaybackOutputChain, clearSimulationGraphs, disconnectNodes, getPlaybackDisplayDelay, stopPlayback, stopCalibration]);
 
   const playSide = useCallback((side) => {
     playFromPos(side, 0);
@@ -2305,11 +2396,12 @@ export default function CassetteTool() {
 
   // Cleanup on unmount only. Do not bind cleanup to sim-mode-dependent callback identity.
   useEffect(() => () => {
+    stopCalibration();
     stopPlaybackRef.current?.();
-  }, []);
+  }, [stopCalibration]);
 
   // ── Sub-components ───────────────────────────────────────
-  const buildPreviewGains = (audioTracks) => {
+  const buildPreviewGains = useCallback((audioTracks) => {
     const gains = audioTracks.map(() => 1.0);
     if (normalizeMode === "peak") {
       const tl = Math.pow(10, targetDb / 20);
@@ -2319,7 +2411,78 @@ export default function CassetteTool() {
       audioTracks.forEach((t, i) => { gains[i] = t.rms > 0 ? avg / t.rms : 1.0; });
     }
     return gains;
-  };
+  }, [normalizeMode, targetDb]);
+
+  const resolveCalibrationSignal = useCallback((signalType, side) => {
+    const sideTracks = tracks.filter((track) => track.side === side && track.audioBuffer);
+    const gains = buildPreviewGains(sideTracks);
+    const programPeak = sideTracks.reduce((maxPeak, track, index) => (
+      Math.max(maxPeak, (track.peak || 0) * (gains[index] || 1))
+    ), 0);
+    if (signalType === "rec_level_balance") {
+      if (programPeak > 0) {
+        return {
+          side,
+          signalType,
+          freqHz: CALIBRATION_FREQ_HZ,
+          amplitude: programPeak,
+          levelDb: toDb(programPeak),
+          sourceKey: "toolProgramPeakSource",
+        };
+      }
+      const targetAmp = Math.pow(10, targetDb / 20);
+      return {
+        side,
+        signalType,
+        freqHz: CALIBRATION_FREQ_HZ,
+        amplitude: targetAmp,
+        levelDb: targetDb,
+        sourceKey: "toolTapeTargetSource",
+      };
+    }
+    if (signalType === "cal") {
+      const targetAmp = Math.pow(10, targetDb / 20);
+      return {
+        side,
+        signalType,
+        freqHz: CALIBRATION_FREQ_HZ,
+        amplitude: targetAmp,
+        levelDb: targetDb,
+        sourceKey: "toolTapeTargetSource",
+      };
+    }
+    const hfLevelDb = targetDb + CALIBRATION_HF_OFFSET_DB;
+    const hfAmp = Math.pow(10, hfLevelDb / 20);
+    return {
+      side,
+      signalType,
+      freqHz: CALIBRATION_HIGH_FREQ_HZ,
+      amplitude: hfAmp,
+      levelDb: hfLevelDb,
+      sourceKey: "toolHighFreqSource",
+    };
+  }, [buildPreviewGains, targetDb, tracks]);
+
+  const startCalibration = useCallback(() => {
+    stopPlayback();
+    stopCalibration();
+    const ctx = getAC();
+    if (ctx.state === "suspended") ctx.resume();
+    const signal = resolveCalibrationSignal(calibrationSignalType, calibrationSide);
+    const osc = ctx.createOscillator();
+    osc.type = "sine";
+    osc.frequency.value = signal.freqHz;
+    const gain = ctx.createGain();
+    gain.gain.value = signal.amplitude;
+    const merger = ctx.createChannelMerger(2);
+    osc.connect(gain);
+    gain.connect(merger, 0, 0);
+    gain.connect(merger, 0, 1);
+    merger.connect(ctx.destination);
+    osc.start();
+    calibrationRef.current = { osc, gain, merger };
+    setCalibrationRunning(true);
+  }, [calibrationSide, calibrationSignalType, getAC, resolveCalibrationSignal, stopCalibration, stopPlayback]);
 
   const renderCapBar = (used, total, eff, side) => {
     const hardOver = used > total, softOver = !hardOver && used > eff;
@@ -2509,6 +2672,7 @@ export default function CassetteTool() {
   };
 
   const aHas = sideA.some(t => t.audioBuffer), bHas = sideB.some(t => t.audioBuffer);
+  const calibrationSignal = resolveCalibrationSignal(calibrationSignalType, calibrationSide);
 
   return (
     <div style={{
@@ -2530,6 +2694,98 @@ export default function CassetteTool() {
         boxShadow: "0 4px 20px rgba(0,0,0,0.08)", animation: "fadeIn 0.2s ease"
       }}>{toast}</div>}
 
+      {showTools && <div onClick={() => setShowTools(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.35)", zIndex: 120, display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}>
+        <div onClick={(e) => e.stopPropagation()} style={{
+          background: "var(--bg)", borderRadius: 14, width: "min(840px, calc(100vw - 32px))", maxHeight: "80vh", overflow: "hidden",
+          border: "1px solid var(--border)", boxShadow: "0 12px 36px rgba(0,0,0,0.16)", color: "var(--text)", display: "flex", flexDirection: "column"
+        }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "18px 22px 14px", borderBottom: "1px solid var(--border)", flexShrink: 0 }}>
+            <div>
+              <div style={{ fontSize: 12, color: "var(--text-dim)", marginBottom: 2 }}>{T("tools")}</div>
+              <div style={{ fontSize: 16, color: "var(--accent-ink)" }}>{T("toolCurrent")}</div>
+            </div>
+            <button onClick={() => setShowTools(false)} style={{ background: "none", border: "none", fontSize: 18, cursor: "pointer", color: "var(--text-dim)" }}>✕</button>
+          </div>
+
+          <div className="modalScroll" style={{ display: "grid", gridTemplateColumns: "180px minmax(0,1fr)", minHeight: 0, overflowY: "auto" }}>
+            <div style={{ padding: 16, borderRight: "1px solid var(--border)", background: "var(--bg-card)" }}>
+              <button onClick={() => setActiveTool("rec-cal")} style={{
+                width: "100%", border: "1px solid var(--border)", borderRadius: 10, padding: "12px 14px", cursor: "pointer", textAlign: "left",
+                background: activeTool === "rec-cal" ? "var(--accent-dim)" : "var(--bg)", color: activeTool === "rec-cal" ? "var(--accent-ink)" : "var(--text)"
+              }}>
+                <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>{T("toolRecCal")}</div>
+                <div style={{ fontSize: 11, lineHeight: 1.6, color: "var(--text-dim)" }}>1k / 10k dual mono</div>
+              </button>
+            </div>
+
+            <div style={{ padding: 18, display: "flex", flexDirection: "column", gap: 16 }}>
+              {activeTool === "rec-cal" && <>
+                <div>
+                  <div style={{ fontSize: 17, color: "var(--accent-ink)", marginBottom: 6 }}>{T("toolRecCal")}</div>
+                  <div style={{ fontSize: 13, lineHeight: 1.8, color: "var(--text-dim)" }}>{T("toolRecCalDesc")}</div>
+                </div>
+
+                <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
+                  <label style={{ ...lb, margin: 0 }}>{T("toolSelectedSide")}</label>
+                  {["A", "B"].map((side) => (
+                    <button key={side} onClick={() => setCalibrationSide(side)} style={{
+                      ...btnTab, minWidth: 54,
+                      background: calibrationSide === side ? `var(--side-${side.toLowerCase()})` : "var(--bg-deep)",
+                      color: calibrationSide === side ? getContrastColor(side === "A" ? sideColors.sideA : sideColors.sideB) : "var(--text)"
+                    }} disabled={calibrationRunning || calibrationSignalType !== "rec_level_balance"}>
+                      SIDE {side}
+                    </button>
+                  ))}
+                  <button onClick={calibrationRunning ? stopCalibration : startCalibration} disabled={processing} style={{
+                    ...btnS, padding: "8px 14px",
+                    borderColor: calibrationRunning ? "var(--danger)" : "var(--accent)",
+                    color: calibrationRunning ? "var(--danger)" : "var(--accent-ink)"
+                  }}>
+                    {calibrationRunning ? T("toolStop") : T("toolStart")}
+                  </button>
+                </div>
+
+                <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                  <label style={{ ...lb, margin: 0 }}>{T("toolSignalPick")}</label>
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 8 }}>
+                    {CALIBRATION_SIGNAL_PRESETS.map((preset) => (
+                      <button key={preset.id} onClick={() => setCalibrationSignalType(preset.id)} disabled={calibrationRunning} style={{
+                        border: "1px solid var(--border)", borderRadius: 10, padding: "12px 14px", cursor: "pointer", textAlign: "left",
+                        background: calibrationSignalType === preset.id ? "var(--accent-dim)" : "var(--bg-card)",
+                        color: calibrationSignalType === preset.id ? "var(--accent-ink)" : "var(--text)"
+                      }}>
+                        <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>{T(preset.nameKey)}</div>
+                        <div style={{ fontSize: 11, lineHeight: 1.7, color: "var(--text-dim)" }}>{T(preset.descKey)}</div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+
+                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10 }}>
+                  <div style={{ padding: "12px 14px", border: "1px solid var(--border)", borderRadius: 10, background: "var(--bg-card)" }}>
+                    <div style={{ fontSize: 11, color: "var(--text-dim)", marginBottom: 4 }}>{T("toolSignalFreq")}</div>
+                    <div style={{ fontSize: 15, color: "var(--text)" }}>{calibrationSignal.freqHz} Hz sine</div>
+                  </div>
+                  <div style={{ padding: "12px 14px", border: "1px solid var(--border)", borderRadius: 10, background: "var(--bg-card)" }}>
+                    <div style={{ fontSize: 11, color: "var(--text-dim)", marginBottom: 4 }}>{T("toolSignalLevel")}</div>
+                    <div style={{ fontSize: 15, color: "var(--text)" }}>{Number.isFinite(calibrationSignal.levelDb) ? `${calibrationSignal.levelDb.toFixed(1)} dBFS peak` : "−∞ dBFS"}</div>
+                  </div>
+                  <div style={{ padding: "12px 14px", border: "1px solid var(--border)", borderRadius: 10, background: "var(--bg-card)" }}>
+                    <div style={{ fontSize: 11, color: "var(--text-dim)", marginBottom: 4 }}>{T("toolStereoMode")}</div>
+                    <div style={{ fontSize: 15, color: "var(--text)" }}>{T("toolStereoDualMono")}</div>
+                  </div>
+                </div>
+
+                <div style={{ padding: "12px 14px", border: "1px solid var(--border)", borderRadius: 10, background: "var(--bg-card)" }}>
+                  <div style={{ fontSize: 11, color: "var(--text-dim)", marginBottom: 6 }}>{T("toolSignalSource")}</div>
+                  <div style={{ fontSize: 14, lineHeight: 1.7 }}>{T(calibrationSignal.sourceKey)}</div>
+                </div>
+              </>}
+            </div>
+          </div>
+        </div>
+      </div>}
+
       {/* Header */}
       <div style={{ display: "flex", alignItems: "center", gap: 12, marginBottom: 16, borderBottom: "1px solid var(--border)", paddingBottom: 12, flexWrap: "wrap" }}>
         <div style={{ flex: 1, minWidth: 200 }}>
@@ -2543,7 +2799,7 @@ export default function CassetteTool() {
           <div style={{ fontSize: 12, color: "var(--text-dim)", marginTop: 3, fontStyle: "italic", opacity: 0.75 }}>{T("appTagline")}</div>
         </div>
         <span style={{ fontSize: 10, color: "var(--text-dim)" }}>{T("appVersion")}</span>
-        <HeaderControls lang={lang} setLang={setLang} theme={theme} setTheme={setTheme} T={T} />
+        <HeaderControls lang={lang} setLang={setLang} theme={theme} setTheme={setTheme} onOpenTools={openTools} T={T} />
       </div>
 
       {/* Config */}

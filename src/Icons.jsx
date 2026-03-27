@@ -25,6 +25,11 @@ export const IconInfo = ({ size = 18, color = "currentColor" }) => (
     <circle cx="12" cy="7" r="1.25" fill="#fff" />
   </svg>
 );
+export const IconTool = ({ size = 18, color = "currentColor" }) => (
+  <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke={color} strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" style={s}>
+    <path d="M14.5 6.5a4 4 0 0 0 3.8 5.3l-7.4 7.4a1.8 1.8 0 0 1-2.5 0l-.6-.6a1.8 1.8 0 0 1 0-2.5l7.4-7.4a4 4 0 0 0 5.3-3.8l-2.9 1-2.1-2.1 1-2.9a4 4 0 0 0-2.2 1.6 4 4 0 0 0-.8 4z" />
+  </svg>
+);
 export const IconEqualizer = (p) => <I {...p} d="M10 20h4V4h-4v16zm-6 0h4v-8H4v8zM16 9v11h4V9h-4z" />;
 export const IconDeck = ({ size = 18, color = "currentColor" }) => (
   <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke={color} strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" style={s}>
