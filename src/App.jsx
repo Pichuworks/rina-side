@@ -92,8 +92,9 @@ const I18N = {
   tools: { "zh-CN": "工具", ja: "ツール", en: "Tools" },
   theme: { "zh-CN": "主题配色", ja: "テーマ配色", en: "Theme" },
   about: { "zh-CN": "关于", ja: "About", en: "About" },
-  toolCurrent: { "zh-CN": "当前工具", ja: "現在のツール", en: "Current Tool" },
+  toolDescTitle: { "zh-CN": "工具说明", ja: "ツール説明", en: "Tool Description" },
   toolRecCal: { "zh-CN": "录制校准", ja: "録音キャリブレーション", en: "Recording Calibration" },
+  toolRecCalCardDesc: { "zh-CN": "录音电平与高频校准", ja: "録音レベルと高域校正", en: "Rec level and HF calibration" },
   toolRecCalDesc: {
     "zh-CN": "同一时刻只输出一个校准信号。每种信号都对应一个明确的频率和电平规则，输出统一为双声道同相信号。",
     ja: "同時に出力する校正信号は 1 つだけです。各信号には明確な周波数とレベル規則があり、出力は常にデュアルモノです。",
@@ -118,11 +119,11 @@ const I18N = {
     ja: "1kHz の固定基準音です。プログラムには追従せず、現在のテープ種別の録音目標レベルだけを使います。",
     en: "A fixed 1 kHz reference tone. It does not follow program material, only the current tape type's recording target.",
   },
-  toolSignalBias: { "zh-CN": "BIAS", ja: "BIAS", en: "BIAS" },
+  toolSignalBias: { "zh-CN": "BIAS / REC EQ", ja: "BIAS / REC EQ", en: "BIAS / REC EQ" },
   toolSignalBiasDesc: {
-    "zh-CN": "10kHz 高频测试音，电平比当前目标录音电平低 20dB，用于在线性区观察偏磁调整。",
-    ja: "10kHz の高域テストトーンで、現在の録音目標レベルより 20dB 低く設定し、線形域でバイアス調整を見ます。",
-    en: "A 10 kHz high-frequency tone set 20 dB below the current recording target so bias can be judged in the linear region.",
+    "zh-CN": "10kHz 高频测试音，电平比当前目标录音电平低 20dB。这个信号同时覆盖 BIAS 和 REC EQ 的观察场景。",
+    ja: "10kHz の高域テストトーンで、現在の録音目標レベルより 20dB 低く設定します。BIAS と REC EQ の確認を同じ信号で兼用します。",
+    en: "A 10 kHz high-frequency tone set 20 dB below the current recording target. The same signal is shared for both bias and REC EQ checks.",
   },
   toolSignalRecEq: { "zh-CN": "REC EQ", ja: "REC EQ", en: "REC EQ" },
   toolSignalRecEqDesc: {
@@ -317,8 +318,8 @@ const THEMES = {
   uika: { accent: "#335566", bg: "#F0F4F6", bgCard: "#F8FBFC", bgDeep: "#E0E8EC", border: "#C4D0D6", accentDim: "#BCCDD8", group: "mujica" },
   mana: { accent: "#E8A68F", bg: "#FBF6F2", bgCard: "#FFFDFC", bgDeep: "#F2E8E1", border: "#E3D3C8", accentDim: "#F7DDD0", sideA: "#E8A68F", sideB: "#C7B48C", accentInk: "#9A5E4C", warning: "#D9B15E", group: "sumimi" },
   nozomu: { accent: "#D4600A", bg: "#F8F4EE", bgCard: "#FFFBF7", bgDeep: "#EDE5D8", border: "#D8CCBC", accentDim: "#F2DCC0", sideA: "#D4600A", sideB: "#6A7A8F", accentInk: "#8A3A08", warning: "#B89040", group: "crisiris" },
-  eri: { accent: "#C8920A", bg: "#FAF7F0", bgCard: "#FFFDF7", bgDeep: "#EDE8D8", border: "#D8D0BC", accentDim: "#F0E0A8", sideA: "#C8920A", sideB: "#800020", accentInk: "#7A5806", warning: "#9A4A30", group: "crisiris" },
-};
+  eri: { accent: "#DBA211", bg: "#FAF7F0", bgCard: "#FFFDF7", bgDeep: "#EDE8D8", border: "#D8D0BC", accentDim: "#F0E0A8", sideA: "#C8920A", sideB: "#800020", accentInk: "#7A5806", warning: "#9A4A30", group: "crisiris" },
+};  
 
 const THEME_ORDER = [
   "default",
@@ -592,7 +593,6 @@ const CALIBRATION_SIGNAL_PRESETS = [
   { id: "rec_level_balance", nameKey: "toolSignalRecBalance", descKey: "toolSignalRecBalanceDesc" },
   { id: "cal", nameKey: "toolSignalCal", descKey: "toolSignalCalDesc" },
   { id: "bias", nameKey: "toolSignalBias", descKey: "toolSignalBiasDesc" },
-  { id: "rec_eq", nameKey: "toolSignalRecEq", descKey: "toolSignalRecEqDesc" },
 ];
 
 // ── Audio helpers ────────────────────────────────────────────
@@ -1626,7 +1626,7 @@ export default function CassetteTool() {
     [th.warning, th.accent]
   );
   const tapeTypeColors = useMemo(() => deriveTapeTypeColors(th.accent), [th.accent]);
-  const accentContrast = useMemo(() => getContrastColor(th.accent), [th.accent]);
+  const accentContrast = useMemo(() => th.accentContrast || getContrastColor(th.accent), [th.accentContrast, th.accent]);
   const T = useCallback((k) => t(k, lang), [lang]);
 
   const [tapePreset, setTapePreset] = useState("C60");
@@ -1696,13 +1696,21 @@ export default function CassetteTool() {
   const calibrationRef = useRef({ osc: null, gain: null, merger: null });
 
   const showToast = useCallback((m, d = 4000) => { setToast(m); setTimeout(() => setToast(null), d); }, []);
-  const getAC = useCallback(() => { if (!acRef.current) acRef.current = new (window.AudioContext || window.webkitAudioContext)(); return acRef.current; }, []);
+  const getAC = useCallback(() => {
+    if (!acRef.current) {
+      const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+      acRef.current = new AudioContextCtor({ latencyHint: "interactive" });
+    }
+    return acRef.current;
+  }, []);
   const openTools = useCallback(() => {
     setCalibrationSide(activeTab);
     setActiveTool("rec-cal");
     setCalibrationSignalType("rec_level_balance");
+    const ctx = getAC();
+    if (ctx.state === "suspended") ctx.resume().catch(() => {});
     setShowTools(true);
-  }, [activeTab]);
+  }, [activeTab, getAC]);
 
   const sideMin = tapePreset === "CUSTOM" ? customMin : TAPE_PRESETS[tapePreset].sideMinutes;
   const sideSec = sideMin * 60;
@@ -2463,11 +2471,11 @@ export default function CassetteTool() {
     };
   }, [buildPreviewGains, targetDb, tracks]);
 
-  const startCalibration = useCallback(() => {
+  const startCalibration = useCallback(async () => {
     stopPlayback();
     stopCalibration();
     const ctx = getAC();
-    if (ctx.state === "suspended") ctx.resume();
+    if (ctx.state === "suspended") await ctx.resume();
     const signal = resolveCalibrationSignal(calibrationSignalType, calibrationSide);
     const osc = ctx.createOscillator();
     osc.type = "sine";
@@ -2676,8 +2684,8 @@ export default function CassetteTool() {
 
   return (
     <div style={{
-      "--bg": th.bg, "--bg-card": th.bgCard, "--bg-deep": th.bgDeep, "--bg-hover": "#F0EDEA",
-      "--text": "#2D2D38", "--text-dim": "#706B78", "--accent": th.accent, "--accent-dim": th.accentDim,
+      "--bg": th.bg, "--bg-card": th.bgCard, "--bg-deep": th.bgDeep, "--bg-hover": th.bgHover || "#F0EDEA",
+      "--text": th.text || "#2D2D38", "--text-dim": th.textDim || "#706B78", "--accent": th.accent, "--accent-dim": th.accentDim,
       "--accent-contrast": accentContrast, "--accent-ink": accentInk,
       "--border": th.border, "--danger": "#C45C5C", "--warning": warningColor,
       "--side-a": sideColors.sideA, "--side-b": sideColors.sideB,
@@ -2700,10 +2708,7 @@ export default function CassetteTool() {
           border: "1px solid var(--border)", boxShadow: "0 12px 36px rgba(0,0,0,0.16)", color: "var(--text)", display: "flex", flexDirection: "column"
         }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "18px 22px 14px", borderBottom: "1px solid var(--border)", flexShrink: 0 }}>
-            <div>
-              <div style={{ fontSize: 12, color: "var(--text-dim)", marginBottom: 2 }}>{T("tools")}</div>
-              <div style={{ fontSize: 16, color: "var(--accent-ink)" }}>{T("toolCurrent")}</div>
-            </div>
+            <div style={{ fontSize: 16, color: "var(--accent-ink)" }}>{T("tools")}</div>
             <button onClick={() => setShowTools(false)} style={{ background: "none", border: "none", fontSize: 18, cursor: "pointer", color: "var(--text-dim)" }}>✕</button>
           </div>
 
@@ -2714,14 +2719,14 @@ export default function CassetteTool() {
                 background: activeTool === "rec-cal" ? "var(--accent-dim)" : "var(--bg)", color: activeTool === "rec-cal" ? "var(--accent-ink)" : "var(--text)"
               }}>
                 <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>{T("toolRecCal")}</div>
-                <div style={{ fontSize: 11, lineHeight: 1.6, color: "var(--text-dim)" }}>1k / 10k dual mono</div>
+                <div style={{ fontSize: 11, lineHeight: 1.6, color: "var(--text-dim)" }}>{T("toolRecCalCardDesc")}</div>
               </button>
             </div>
 
             <div style={{ padding: 18, display: "flex", flexDirection: "column", gap: 16 }}>
               {activeTool === "rec-cal" && <>
                 <div>
-                  <div style={{ fontSize: 17, color: "var(--accent-ink)", marginBottom: 6 }}>{T("toolRecCal")}</div>
+                  <div style={{ fontSize: 13, fontWeight: 600, color: "var(--accent-ink)", marginBottom: 6 }}>{T("toolDescTitle")}</div>
                   <div style={{ fontSize: 13, lineHeight: 1.8, color: "var(--text-dim)" }}>{T("toolRecCalDesc")}</div>
                 </div>
 
@@ -2761,7 +2766,11 @@ export default function CassetteTool() {
                   </div>
                 </div>
 
-                <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 10 }}>
+                <div style={{ display: "flex", gap: 10, overflowX: "auto", paddingBottom: 2 }}>
+                  <div style={{ minWidth: 210, flex: "1.35 1 0", padding: "12px 14px", border: "1px solid var(--border)", borderRadius: 10, background: "var(--bg-card)" }}>
+                    <div style={{ fontSize: 11, color: "var(--text-dim)", marginBottom: 4 }}>{T("toolSignalSource")}</div>
+                    <div style={{ fontSize: 14, lineHeight: 1.7 }}>{T(calibrationSignal.sourceKey)}</div>
+                  </div>
                   <div style={{ padding: "12px 14px", border: "1px solid var(--border)", borderRadius: 10, background: "var(--bg-card)" }}>
                     <div style={{ fontSize: 11, color: "var(--text-dim)", marginBottom: 4 }}>{T("toolSignalFreq")}</div>
                     <div style={{ fontSize: 15, color: "var(--text)" }}>{calibrationSignal.freqHz} Hz sine</div>
@@ -2774,11 +2783,6 @@ export default function CassetteTool() {
                     <div style={{ fontSize: 11, color: "var(--text-dim)", marginBottom: 4 }}>{T("toolStereoMode")}</div>
                     <div style={{ fontSize: 15, color: "var(--text)" }}>{T("toolStereoDualMono")}</div>
                   </div>
-                </div>
-
-                <div style={{ padding: "12px 14px", border: "1px solid var(--border)", borderRadius: 10, background: "var(--bg-card)" }}>
-                  <div style={{ fontSize: 11, color: "var(--text-dim)", marginBottom: 6 }}>{T("toolSignalSource")}</div>
-                  <div style={{ fontSize: 14, lineHeight: 1.7 }}>{T(calibrationSignal.sourceKey)}</div>
                 </div>
               </>}
             </div>
@@ -2948,11 +2952,11 @@ export default function CassetteTool() {
           {playing ?
             <button onClick={stopPlayback} style={{ ...btnE, borderColor: "var(--danger)", color: "var(--danger)" }}><IconStop size={16} /> {T("stop")}</button>
             : <>
-              <button onClick={() => playSide("A")} style={{ ...btnE, borderColor: "var(--side-a)" }} disabled={processing || !aHas}><IconPlay size={16} /> A {T("play")}</button>
-              <button onClick={() => playSide("B")} style={{ ...btnE, borderColor: "var(--side-b)" }} disabled={processing || !bHas}><IconPlay size={16} /> B {T("play")}</button>
+              <button onClick={() => playSide("A")} style={{ ...btnE, borderColor: "var(--side-a)", color: "var(--side-a)", background: mixHex(sideColors.sideA, th.bgCard, 0.9) }} disabled={processing || !aHas}><IconPlay size={16} /> A {T("play")}</button>
+              <button onClick={() => playSide("B")} style={{ ...btnE, borderColor: "var(--side-b)", color: "var(--side-b)", background: mixHex(sideColors.sideB, th.bgCard, 0.92) }} disabled={processing || !bHas}><IconPlay size={16} /> B {T("play")}</button>
             </>}
-          <button onClick={() => expSide("A")} style={{ ...btnE, borderColor: "var(--side-a)" }} disabled={processing || playing || !aHas}><IconExport size={16} /> A {T("exportSide")}</button>
-          <button onClick={() => expSide("B")} style={{ ...btnE, borderColor: "var(--side-b)" }} disabled={processing || playing || !bHas}><IconExport size={16} /> B {T("exportSide")}</button>
+          <button onClick={() => expSide("A")} style={{ ...btnE, borderColor: "var(--side-a)", color: "var(--side-a)", background: mixHex(sideColors.sideA, th.bgCard, 0.9) }} disabled={processing || playing || !aHas}><IconExport size={16} /> A {T("exportSide")}</button>
+          <button onClick={() => expSide("B")} style={{ ...btnE, borderColor: "var(--side-b)", color: "var(--side-b)", background: mixHex(sideColors.sideB, th.bgCard, 0.92) }} disabled={processing || playing || !bHas}><IconExport size={16} /> B {T("exportSide")}</button>
         </div>
       </div>
 
@@ -2989,10 +2993,11 @@ export default function CassetteTool() {
         {["A", "B"].map(s => {
           const st = s === "A" ? sideA : sideB, dur = s === "A" ? durA : durB, hardOver = dur > sideSec, softOver = !hardOver && dur > effectiveSec;
           const badgeColor = hardOver ? "var(--danger)" : softOver ? "var(--warning)" : "var(--text-dim)";
+          const sideColor = s === "A" ? sideColors.sideA : sideColors.sideB;
           return (<button key={s} onClick={() => setActiveTab(s)} onDragOver={e => { e.preventDefault(); setActiveTab(s); }}
             style={{
               flex: 1, padding: "10px 16px",
-              background: activeTab === s ? "var(--bg-card)" : "transparent",
+              background: activeTab === s ? mixHex(sideColor, th.bgCard, 0.9) : "transparent",
               color: activeTab === s ? `var(--side-${s.toLowerCase()})` : "var(--text-dim)",
               border: "none", borderBottom: activeTab === s ? `2px solid var(--side-${s.toLowerCase()})` : "2px solid var(--border)",
               cursor: "pointer", fontSize: 13, fontWeight: 500, fontFamily: "var(--font-body)",
@@ -3000,8 +3005,8 @@ export default function CassetteTool() {
             }}>
             <span style={{ fontSize: 13, letterSpacing: "0.1em" }}>SIDE {s}</span>
             <span style={{
-              fontSize: 12, color: badgeColor,
-              background: "var(--bg-deep)", padding: "2px 6px", borderRadius: 3
+              fontSize: 12, color: activeTab === s ? sideColor : badgeColor,
+              background: activeTab === s ? mixHex(sideColor, th.bgDeep, 0.82) : "var(--bg-deep)", padding: "2px 6px", borderRadius: 3
             }}>
               {st.length}{T("tracks")} · {fmtTime(dur)}
             </span>

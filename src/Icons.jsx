@@ -26,8 +26,12 @@ export const IconInfo = ({ size = 18, color = "currentColor" }) => (
   </svg>
 );
 export const IconTool = ({ size = 18, color = "currentColor" }) => (
-  <svg viewBox="0 0 24 24" width={size} height={size} fill="none" stroke={color} strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round" style={s}>
-    <path d="M14.5 6.5a4 4 0 0 0 3.8 5.3l-7.4 7.4a1.8 1.8 0 0 1-2.5 0l-.6-.6a1.8 1.8 0 0 1 0-2.5l7.4-7.4a4 4 0 0 0 5.3-3.8l-2.9 1-2.1-2.1 1-2.9a4 4 0 0 0-2.2 1.6 4 4 0 0 0-.8 4z" />
+  <svg viewBox="0 0 24 24" width={size} height={size} fill={color} aria-hidden="true" style={s}>
+    <path
+      fillRule="evenodd"
+      clipRule="evenodd"
+      d="M12 6.75a5.25 5.25 0 0 1 6.775-5.025.75.75 0 0 1 .313 1.248l-3.32 3.319c.063.475.276.934.641 1.299.365.365.824.578 1.3.64l3.318-3.319a.75.75 0 0 1 1.248.313 5.25 5.25 0 0 1-5.472 6.756c-1.018-.086-1.87.1-2.309.634L7.344 21.3A3.298 3.298 0 1 1 2.7 16.657l8.684-7.151c.533-.44.72-1.291.634-2.309A5.342 5.342 0 0 1 12 6.75ZM4.117 19.125a.75.75 0 0 1 .75-.75h.008a.75.75 0 0 1 .75.75v.008a.75.75 0 0 1-.75.75h-.008a.75.75 0 0 1-.75-.75v-.008Z"
+    />
   </svg>
 );
 export const IconEqualizer = (p) => <I {...p} d="M10 20h4V4h-4v16zm-6 0h4v-8H4v8zM16 9v11h4V9h-4z" />;
