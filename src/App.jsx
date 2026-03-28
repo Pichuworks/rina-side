@@ -1,5 +1,6 @@
 import React, { useState, useRef, useCallback, useMemo, useEffect } from "react";
 import { transcodeToWav, likelyNeedsTranscode } from "./ffmpeg-helper.js";
+import { extractW1Audio, isW1File } from "./w1-helper.js";
 import { IconAdd, IconAutoAwesome, IconFileOpen, IconSave, IconPlay, IconStop, IconExport, IconHelp, IconClearSide, IconClearAll, IconPalette, IconInfo, IconTool } from "./Icons.jsx";
 import Player from "./Player.jsx";
 import SideWaveform from "./SideWaveform.jsx";
@@ -61,6 +62,12 @@ const I18N = {
   tapeTypeNote: { "zh-CN": "影响归一化目标电平", ja: "正規化ターゲットレベルに影響", en: "Affects normalization target level" },
   appTagline: { "zh-CN": "……把声音编译进磁带里。", ja: "……音をテープにコンパイルする。", en: "…compile your sound into tape." },
   decoding: { "zh-CN": "解码中", ja: "デコード中", en: "Decoding" },
+  w1Decrypting: { "zh-CN": "W1 解封装中", ja: "W1 展開中", en: "Unwrapping W1" },
+  w1DecryptFailed: {
+    "zh-CN": "W1 文件解封装失败",
+    ja: "W1 ファイルの展開に失敗しました",
+    en: "Failed to unwrap W1 file",
+  },
   rendering: { "zh-CN": "离线渲染中", ja: "オフラインレンダリング中", en: "Offline rendering" },
   encoding: { "zh-CN": "WAV 编码中", ja: "WAVエンコード中", en: "Encoding WAV" },
   total: { "zh-CN": "共计", ja: "計", en: "Total" },
@@ -1788,22 +1795,37 @@ export default function CassetteTool() {
       let ab = null;
       let fileBuf = null;
       let sourceMeta = null;
+      let importFile = f;
+      let displayName = f.name.replace(/\.[^.]+$/, "");
       try {
-        fileBuf = await f.arrayBuffer();
-        sourceMeta = detectSourceAudioMeta(f.name, fileBuf);
-        if (likelyNeedsTranscode(f.name)) {
+        if (isW1File(f.name)) {
+          setProcMsg(`${T("w1Decrypting")}: ${f.name}`);
+          const extracted = await extractW1Audio(f);
+          importFile = extracted.file;
+          fileBuf = extracted.audioBuffer;
+          sourceMeta = detectSourceAudioMeta(importFile.name, fileBuf);
+          displayName = extracted.meta?.musicName || displayName;
+        } else {
+          fileBuf = await f.arrayBuffer();
+          sourceMeta = detectSourceAudioMeta(f.name, fileBuf);
+        }
+        if (likelyNeedsTranscode(importFile.name)) {
           throw new Error("format likely unsupported natively, try ffmpeg");
         }
         ab = await ctx.decodeAudioData(fileBuf.slice(0));
       } catch (nativeErr) {
         try {
-          setProcMsg(`ffmpeg: ${f.name}`);
+          if (isW1File(f.name) && importFile === f) throw nativeErr;
+          setProcMsg(`ffmpeg: ${importFile.name}`);
           if (ffmpegStatus === "idle") setFfmpegStatus("loading");
-          const wavBuf = await transcodeToWav(f, (msg) => setProcMsg(`ffmpeg: ${msg}`));
+          const wavBuf = await transcodeToWav(importFile, (msg) => setProcMsg(`ffmpeg: ${msg}`));
           setFfmpegStatus("ready");
-          ab = await ctx.decodeAudioData(wavBuf);
+          ab = await ctx.decodeAudioData(wavBuf.slice(0));
         } catch (ffErr) {
           console.error(`Failed to decode ${f.name} (native + ffmpeg):`, ffErr);
+          if (isW1File(f.name) && importFile === f) {
+            showToast(`${T("w1DecryptFailed")}: ${f.name}`, 5000);
+          }
           if (ffErr.message?.includes("SharedArrayBuffer")) {
             setFfmpegStatus("unavailable");
             showToast("SharedArrayBuffer unavailable — COOP/COEP headers missing. FLAC/AIFF decoding disabled.", 6000);
@@ -1812,7 +1834,7 @@ export default function CassetteTool() {
       }
       if (!ab) continue;
       const sil = detectSilence(ab); const pk = getPeak(ab); const rms = getRMS(ab);
-      const ext = (f.name.match(/\.([^.]+)$/) || [])[1]?.toUpperCase() || "?";
+      const ext = (importFile.name.match(/\.([^.]+)$/) || [])[1]?.toUpperCase() || "?";
       const peaks = downsamplePeaks(ab, 4096);
       const spectrogram = computeSpectrogramPreview(ab);
       const audioMeta = {
@@ -1828,7 +1850,7 @@ export default function CassetteTool() {
         setTracks(p => p.map(t => t.id === stubMatch.id ? { ...t, ...audioMeta } : t));
       } else {
         nw.push({
-          id: uid(), name: f.name.replace(/\.[^.]+$/, ""), fileName: f.name,
+          id: uid(), name: displayName, fileName: f.name,
           side: side || "A", gapOverride: null, format: ext, ...audioMeta
         });
       }
@@ -2937,7 +2959,7 @@ export default function CassetteTool() {
 
       {/* Action buttons */}
       <div className="actionBar" style={{ marginBottom: 12 }}>
-        <input ref={fileRef} type="file" multiple accept="audio/*" style={{ display: "none" }}
+        <input ref={fileRef} type="file" multiple accept="audio/*,.ncm" style={{ display: "none" }}
           onChange={e => { if (e.target.files.length > 0) loadFiles(Array.from(e.target.files), activeTab); e.target.value = ""; }} />
         <input ref={plRef} type="file" accept=".json" style={{ display: "none" }} onChange={importPL} />
         <div className="actionBarMain">

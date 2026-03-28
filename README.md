@@ -34,6 +34,7 @@ Arrange tracks onto Sides A and B, preview with medium simulation, then export d
 
 **Other**
 - Playlist I/O: JSON export and import with filename-based auto-hydration
+- Direct `.ncm` import: browser-side unwrap to original MP3 / FLAC before decode
 - ffmpeg.wasm fallback for FLAC / AIFF / OPUS and other formats browsers can't decode natively
 - Source SR / bit-depth preserved from file headers (not overwritten by ffmpeg intermediate WAV)
 - 17 character themes based on official 応援色: MyGO / Ave Mujica / Liella / Nijigasaki / crisiris
