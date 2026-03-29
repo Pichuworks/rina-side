@@ -1,5 +1,5 @@
-import { memo, useRef, useEffect, useCallback } from "react";
-import { IconSkipPrev, IconSkipNext, IconPlay, IconPause, IconStop, IconEqualizer, IconTape, IconDeck, IconTone, IconTube } from "./Icons.jsx";
+import { memo, useRef, useEffect, useCallback, useState } from "react";
+import { IconSkipPrev, IconSkipNext, IconPlay, IconPause, IconStop, IconEqualizer, IconTape, IconDeck, IconTone, IconTube, IconPalette, IconTool } from "./Icons.jsx";
 
 // ── Theme colors ───────────────────────────────────────────
 const C_CYAN = "#90C7D7";
@@ -21,14 +21,145 @@ const SPECGRAM_MAX_HZ = 22050;
 const SPECGRAM_SCROLL_PX = 1;
 
 const VU_DB = [[-20,0],[-10,0.25],[-7,0.35],[-5,0.45],[-3,0.55],[0,0.7],["+3",0.85]];
-const METER_MODES = ["vfd","vu","spectrum","waveform","waterfall"];
+const METER_MODES = ["vfd","vu","spectrum","waveform","waterfall","oscilloscope"];
 const SIM_MODES = ["off","TAPE_I","TAPE_II","TAPE_IV","vinyl"];
 const DECK_MODES = ["off","portable","deck_2","deck_3"];
 const TONE_MODES = ["default","cool","warm"];
 const VINYL_ERAS = ["modern","classic","vintage","effect"];
 const VINYL_CRACKLE = ["off","low","mid","high"];
-const MODE_LABEL = {vfd:"VFD",vu:"VU",spectrum:"FFT",waveform:"WAVE",waterfall:"SGRAM"};
+const MODE_LABEL = {vfd:"VFD",vu:"VU",spectrum:"FFT",waveform:"WAVE",waterfall:"SGRAM",oscilloscope:"VECT"};
 const FONT = "'Noto Sans SC','Noto Sans JP','Hiragino Sans','Microsoft YaHei',system-ui,sans-serif";
+const IDLE_SCOPE_BUFFER = new Float32Array(512);
+const BITMAP_FONT = {
+  " ": ["00000","00000","00000","00000","00000","00000","00000"],
+  "+": ["00000","00100","00100","11111","00100","00100","00000"],
+  "-": ["00000","00000","00000","11111","00000","00000","00000"],
+  ".": ["00000","00000","00000","00000","00000","01100","01100"],
+  ":": ["00000","01100","01100","00000","01100","01100","00000"],
+  "/": ["00001","00010","00100","01000","10000","00000","00000"],
+  "0": ["01110","10001","10011","10101","11001","10001","01110"],
+  "1": ["00100","01100","00100","00100","00100","00100","01110"],
+  "2": ["01110","10001","00001","00010","00100","01000","11111"],
+  "3": ["11110","00001","00001","01110","00001","00001","11110"],
+  "4": ["00010","00110","01010","10010","11111","00010","00010"],
+  "5": ["11111","10000","10000","11110","00001","00001","11110"],
+  "6": ["01110","10000","10000","11110","10001","10001","01110"],
+  "7": ["11111","00001","00010","00100","01000","01000","01000"],
+  "8": ["01110","10001","10001","01110","10001","10001","01110"],
+  "9": ["01110","10001","10001","01111","00001","00001","01110"],
+  "A": ["01110","10001","10001","11111","10001","10001","10001"],
+  "C": ["01110","10001","10000","10000","10000","10001","01110"],
+  "D": ["11110","10001","10001","10001","10001","10001","11110"],
+  "E": ["11111","10000","10000","11110","10000","10000","11111"],
+  "F": ["11111","10000","10000","11110","10000","10000","10000"],
+  "H": ["10001","10001","10001","11111","10001","10001","10001"],
+  "K": ["10001","10010","10100","11000","10100","10010","10001"],
+  "L": ["10000","10000","10000","10000","10000","10000","11111"],
+  "M": ["10001","11011","10101","10101","10001","10001","10001"],
+  "N": ["10001","11001","10101","10011","10001","10001","10001"],
+  "O": ["01110","10001","10001","10001","10001","10001","01110"],
+  "Q": ["01110","10001","10001","10001","10101","10010","01101"],
+  "R": ["11110","10001","10001","11110","10100","10010","10001"],
+  "S": ["01111","10000","10000","01110","00001","00001","11110"],
+  "T": ["11111","00100","00100","00100","00100","00100","00100"],
+  "U": ["10001","10001","10001","10001","10001","10001","01110"],
+  "V": ["10001","10001","10001","10001","10001","01010","00100"],
+  "X": ["10001","10001","01010","00100","01010","10001","10001"],
+  "Y": ["10001","10001","01010","00100","00100","00100","00100"],
+  "Z": ["11111","00001","00010","00100","01000","10000","11111"],
+};
+const OSCILLOSCOPE_THEMES = [
+  {
+    id: "crt-cyan",
+    buttonLabel: "CRT1",
+    title: "Blue-green CRT phosphor",
+    shellFill: "linear-gradient(180deg,#22312d 0%,#131b19 100%)",
+    shellBorder: "#3d5950",
+    shellShadow: "rgba(84, 221, 196, 0.16)",
+    screen: "#081210",
+    text: "#92f3d4",
+    gridMajor: "rgba(128, 255, 220, 0.28)",
+    gridMinor: "rgba(128, 255, 220, 0.08)",
+    traceA: "#8effc7",
+    traceB: "#4be8d4",
+    glow: "rgba(110,255,212,0.58)",
+    scanline: "rgba(118, 255, 220, 0.04)",
+    noise: "rgba(128,255,220,0.10)",
+    resolution: 1,
+    yQuantize: 0,
+    lineWidth: 1.35,
+    blur: 10,
+    labelAccent: "#b8ffea",
+  },
+  {
+    id: "crt-amber",
+    buttonLabel: "CRT2",
+    title: "Amber CRT phosphor",
+    shellFill: "linear-gradient(180deg,#30261a 0%,#1a140d 100%)",
+    shellBorder: "#6e5530",
+    shellShadow: "rgba(255, 183, 67, 0.18)",
+    screen: "#120d07",
+    text: "#ffc764",
+    gridMajor: "rgba(255, 190, 90, 0.26)",
+    gridMinor: "rgba(255, 190, 90, 0.07)",
+    traceA: "#ffcd5e",
+    traceB: "#ffb53b",
+    glow: "rgba(255,194,91,0.62)",
+    scanline: "rgba(255, 198, 98, 0.045)",
+    noise: "rgba(255,194,91,0.09)",
+    resolution: 1,
+    yQuantize: 0,
+    lineWidth: 1.4,
+    blur: 11,
+    labelAccent: "#ffe2a8",
+  },
+  {
+    id: "lcd-white",
+    buttonLabel: "LCD3",
+    title: "White-backlit LCD scope",
+    shellFill: "linear-gradient(180deg,#c6ccd5 0%,#9ca6b4 100%)",
+    shellBorder: "#7c8796",
+    shellShadow: "rgba(76, 96, 128, 0.16)",
+    screen: "#E2E8F0",
+    text: "#526074",
+    gridMajor: "rgba(82, 96, 116, 0.18)",
+    gridMinor: "rgba(82, 96, 116, 0.06)",
+    traceA: "#2e3b4d",
+    traceB: "#57667d",
+    glow: "rgba(109,123,149,0.04)",
+    scanline: "rgba(55, 71, 94, 0.010)",
+    noise: "rgba(60,72,89,0.015)",
+    resolution: 1,
+    yQuantize: 0,
+    lineWidth: 1.1,
+    blur: 0,
+    labelAccent: "#334155",
+    fontMode: "dot",
+  },
+  {
+    id: "lcd-color",
+    buttonLabel: "LCD4",
+    title: "Low-resolution color LCD scope",
+    shellFill: "linear-gradient(180deg,#212639 0%,#111521 100%)",
+    shellBorder: "#4a5477",
+    shellShadow: "rgba(120, 146, 255, 0.16)",
+    screen: "#0F121D",
+    text: "#8ea1bf",
+    gridMajor: "rgba(142, 161, 191, 0.20)",
+    gridMinor: "rgba(142, 161, 191, 0.06)",
+    traceA: "#f6d65d",
+    traceB: "#42d5df",
+    glow: "rgba(108,144,255,0.05)",
+    scanline: "rgba(148, 168, 255, 0.012)",
+    noise: "rgba(120,146,255,0.015)",
+    resolution: 1,
+    yQuantize: 0,
+    lineWidth: 1.15,
+    blur: 0,
+    labelAccent: "#c9d8f0",
+    fontMode: "dot",
+  },
+];
 
 function prepareCanvas(canvas) {
   const dpr = window.devicePixelRatio || 1;
@@ -148,11 +279,23 @@ function Player({
   const spectrumLayoutRef = useRef(null);
   const waveRef = useRef(null);
   const waterfallRef = useRef(null);
+  const scopeRef = useRef(null);
+  const scopeFreezeRef = useRef({ left: IDLE_SCOPE_BUFFER, right: IDLE_SCOPE_BUFFER });
+  const scopeInfoRef = useRef({ freqHz: 0 });
   const waterfallHistoryRef = useRef(null);
   const waterfallLayoutRef = useRef(null);
   const rafRef = useRef(null);
   const decayRef = useRef({dL:0,dR:0,pL:0,pR:0});
   const specPeakRef = useRef(Array.from({length: SPEC_BANDS}, () => ({ level: 0, hold: 0 })));
+  const [scopeThemeIndex, setScopeThemeIndex] = useState(0);
+  const [scopeMenuOpen, setScopeMenuOpen] = useState(false);
+  const [scopePrecisionPoints, setScopePrecisionPoints] = useState(8192);
+  const [scopeZoom, setScopeZoom] = useState(0.7);
+  const [scopeSmooth, setScopeSmooth] = useState(0.28);
+  const [scopeLineScale, setScopeLineScale] = useState(1);
+  const [scopeGlowScale, setScopeGlowScale] = useState(1);
+  const [scopeGridScale, setScopeGridScale] = useState(1);
+  const [scopeNoiseScale, setScopeNoiseScale] = useState(1);
   // DOM refs for direct 60fps update — no React re-render
   const posRef = useRef(null);
   const progRef = useRef(null);
@@ -243,6 +386,7 @@ function Player({
   const tubeTip = tubeEnabled ? T("tubeStateOnTip") : T("tubeStateOffTip");
   const simLabel = simLabelMap[simMode] || simMode;
   const simTitle = `${T("ctlSim")}: ${simTipMap[simMode] || simMode}`;
+  const scopeTheme = OSCILLOSCOPE_THEMES[scopeThemeIndex];
   const getTrackCounter = useCallback((idx) => {
     if (st.length === 0) return "0/0";
     if (idx < 0) return `0/${st.length}`;
@@ -280,6 +424,66 @@ function Player({
     ctx.clearRect(0, 0, w, h);
   }, [playToken, meterMode]);
 
+  useEffect(() => {
+    if (meterMode !== "oscilloscope") return;
+    const canvas = scopeRef.current;
+    if (!canvas) return;
+    const { ctx, w, h } = prepareCanvas(canvas);
+    drawVectorscopeScreen({
+      ctx,
+      w,
+      h,
+      theme: scopeTheme,
+      left: playing && paused ? scopeFreezeRef.current.left : IDLE_SCOPE_BUFFER,
+      right: playing && paused ? scopeFreezeRef.current.right : IDLE_SCOPE_BUFFER,
+      sampleRate: analyserL?.context?.sampleRate || 48000,
+      fftSize: analyserL?.fftSize || 4096,
+      side: playingSide,
+      positionSec: playPosRef.current || 0,
+      paused: !playing || paused,
+      freqHz: scopeInfoRef.current.freqHz,
+      precisionPoints: scopePrecisionPoints,
+      zoom: scopeZoom,
+      smoothing: scopeSmooth,
+      lineScale: scopeLineScale,
+      glowScale: scopeGlowScale,
+      gridScale: scopeGridScale,
+      noiseScale: scopeNoiseScale,
+    });
+  }, [meterMode, scopeTheme, analyserL, playing, paused, playingSide, playPosRef, playToken, scopePrecisionPoints, scopeZoom, scopeSmooth, scopeLineScale, scopeGlowScale, scopeGridScale, scopeNoiseScale]);
+
+  useEffect(() => {
+    if (!playing || !paused || !analyserL || !analyserR) return;
+    const left = new Float32Array(analyserL.fftSize);
+    const right = new Float32Array(analyserR.fftSize);
+    analyserL.getFloatTimeDomainData(left);
+    analyserR.getFloatTimeDomainData(right);
+    scopeFreezeRef.current = { left, right };
+    if (meterMode !== "oscilloscope" || !scopeRef.current) return;
+    const { ctx, w, h } = prepareCanvas(scopeRef.current);
+    drawVectorscopeScreen({
+      ctx,
+      w,
+      h,
+      theme: scopeTheme,
+      left,
+      right,
+      sampleRate: analyserL.context.sampleRate || 48000,
+      fftSize: analyserL.fftSize || 4096,
+      side: playingSide,
+      positionSec: playPosRef.current || 0,
+      paused: true,
+      freqHz: scopeInfoRef.current.freqHz,
+      precisionPoints: scopePrecisionPoints,
+      zoom: scopeZoom,
+      smoothing: scopeSmooth,
+      lineScale: scopeLineScale,
+      glowScale: scopeGlowScale,
+      gridScale: scopeGridScale,
+      noiseScale: scopeNoiseScale,
+    });
+  }, [playing, paused, analyserL, analyserR, meterMode, scopeTheme, playingSide, playPosRef, scopePrecisionPoints, scopeZoom, scopeSmooth, scopeLineScale, scopeGlowScale, scopeGridScale, scopeNoiseScale]);
+
   // ── Animation loop ───────────────────────────────────────
   useEffect(() => {
     if (!playing || paused || !analyserL || !analyserR) return;
@@ -292,6 +496,7 @@ function Player({
     const tick = () => {
       analyserL.getFloatTimeDomainData(bufL);
       analyserR.getFloatTimeDomainData(bufR);
+      scopeFreezeRef.current = { left: bufL.slice(), right: bufR.slice() };
       let pkL = 0, pkR = 0;
       for (let i = 0; i < bufL.length; i++) {
         const l = Math.abs(bufL[i]), r = Math.abs(bufR[i]);
@@ -317,8 +522,12 @@ function Player({
       // Segmented spectrum
       const sc = specRef.current;
       const wfc = waterfallRef.current;
-      if (sc || wfc) {
+      const scopeCanvas = scopeRef.current;
+      if (sc || wfc || scopeCanvas) {
         analyserL.getFloatFrequencyData(freqL); analyserR.getFloatFrequencyData(freqR);
+        if (scopeCanvas) {
+          scopeInfoRef.current.freqHz = estimateDominantFreqHz(freqL, freqR, analyserL.context.sampleRate || 48000, analyserL.fftSize || 4096);
+        }
       }
       if (sc) {
         const { ctx, w, h } = prepareCanvas(sc);
@@ -512,11 +721,36 @@ function Player({
       if (reelLRef.current) reelLRef.current.style.transform = `rotate(${deg}deg)`;
       if (reelRRef.current) reelRRef.current.style.transform = `rotate(${-deg}deg)`;
 
+      if (scopeCanvas) {
+        const { ctx, w, h } = prepareCanvas(scopeCanvas);
+        drawVectorscopeScreen({
+          ctx,
+          w,
+          h,
+          theme: scopeTheme,
+          left: bufL,
+          right: bufR,
+          sampleRate: analyserL.context.sampleRate || 48000,
+          fftSize: analyserL.fftSize || 4096,
+          side: playingSide,
+          positionSec: pos,
+          paused,
+          freqHz: scopeInfoRef.current.freqHz,
+          precisionPoints: scopePrecisionPoints,
+          zoom: scopeZoom,
+          smoothing: scopeSmooth,
+          lineScale: scopeLineScale,
+          glowScale: scopeGlowScale,
+          gridScale: scopeGridScale,
+          noiseScale: scopeNoiseScale,
+        });
+      }
+
       rafRef.current = requestAnimationFrame(tick);
     };
     rafRef.current = requestAnimationFrame(tick);
     return () => { if (rafRef.current) cancelAnimationFrame(rafRef.current); };
-  }, [playing, paused, analyserL, analyserR, meterMode, playToken, getTrackCounter, getTrackTimeLabel]);
+  }, [playing, paused, analyserL, analyserR, meterMode, playToken, getTrackCounter, getTrackTimeLabel, playingSide, scopeTheme, scopePrecisionPoints, scopeZoom, scopeSmooth, scopeLineScale, scopeGlowScale, scopeGridScale, scopeNoiseScale]);
 
   return (
     <div style={{marginBottom:12,background:"var(--bg-card)",borderRadius:12,padding:"14px 18px",
@@ -574,6 +808,74 @@ function Player({
             color:"var(--text-dim)",cursor:"pointer",fontSize:11}}>
           <IconEqualizer size={14}/>{MODE_LABEL[meterMode]}
         </button>
+        {meterMode==="oscilloscope"&&(
+          <>
+            <button onClick={()=>setScopeThemeIndex(i => (i + 1) % OSCILLOSCOPE_THEMES.length)}
+              title={scopeTheme.title}
+              style={{height:32,display:"flex",alignItems:"center",gap:4,padding:"0 12px",
+                background:scopeTheme.screen,border:`1px solid ${scopeTheme.shellBorder}`,borderRadius:5,
+                color:scopeTheme.labelAccent,cursor:"pointer",fontSize:11,boxShadow:`inset 0 0 0 1px ${scopeTheme.gridMinor}`}}>
+              <IconPalette size={14}/>{scopeTheme.buttonLabel}
+            </button>
+            <div style={{position:"relative"}}>
+              <button onClick={()=>setScopeMenuOpen(v=>!v)}
+                title="Vectorscope Parameters"
+                style={{height:32,display:"flex",alignItems:"center",gap:4,padding:"0 12px",
+                  background:"var(--bg-deep)",border:"1px solid var(--border)",borderRadius:5,
+                  color:"var(--text-dim)",cursor:"pointer",fontSize:11}}>
+                <IconTool size={14}/>PARAM
+              </button>
+              {scopeMenuOpen&&(
+                <div style={{position:"absolute",top:36,right:0,zIndex:6,width:220,padding:10,
+                  background:"var(--bg-card)",border:"1px solid var(--border)",borderRadius:8,
+                  boxShadow:"0 12px 24px rgba(0,0,0,0.12)",display:"grid",gap:8}}>
+                  <label style={{display:"grid",gap:4,fontSize:11,color:"var(--text-dim)"}}>
+                    <span>Precision</span>
+                    <input type="number" min="512" step="256" value={scopePrecisionPoints}
+                      onChange={(e)=>setScopePrecisionPoints(Math.max(512, Number(e.target.value) || 512))}
+                      style={{height:28,background:"var(--bg)",border:"1px solid var(--border)",borderRadius:5,color:"var(--text)",padding:"0 8px"}}/>
+                  </label>
+                  <label style={{display:"grid",gap:4,fontSize:11,color:"var(--text-dim)"}}>
+                    <span>Zoom</span>
+                    <input type="number" min="0.1" max="2" step="0.01" value={scopeZoom}
+                      onChange={(e)=>setScopeZoom(Math.max(0.1, Number(e.target.value) || 0.1))}
+                      style={{height:28,background:"var(--bg)",border:"1px solid var(--border)",borderRadius:5,color:"var(--text)",padding:"0 8px"}}/>
+                  </label>
+                  <label style={{display:"grid",gap:4,fontSize:11,color:"var(--text-dim)"}}>
+                    <span>Smoothing</span>
+                    <input type="number" min="0.01" max="1" step="0.01" value={scopeSmooth}
+                      onChange={(e)=>setScopeSmooth(Math.max(0.01, Number(e.target.value) || 0.01))}
+                      style={{height:28,background:"var(--bg)",border:"1px solid var(--border)",borderRadius:5,color:"var(--text)",padding:"0 8px"}}/>
+                  </label>
+                  <label style={{display:"grid",gap:4,fontSize:11,color:"var(--text-dim)"}}>
+                    <span>Line</span>
+                    <input type="number" min="0.2" max="4" step="0.05" value={scopeLineScale}
+                      onChange={(e)=>setScopeLineScale(Math.max(0.2, Number(e.target.value) || 0.2))}
+                      style={{height:28,background:"var(--bg)",border:"1px solid var(--border)",borderRadius:5,color:"var(--text)",padding:"0 8px"}}/>
+                  </label>
+                  <label style={{display:"grid",gap:4,fontSize:11,color:"var(--text-dim)"}}>
+                    <span>Glow</span>
+                    <input type="number" min="0" max="4" step="0.05" value={scopeGlowScale}
+                      onChange={(e)=>setScopeGlowScale(Math.max(0, Number(e.target.value) || 0))}
+                      style={{height:28,background:"var(--bg)",border:"1px solid var(--border)",borderRadius:5,color:"var(--text)",padding:"0 8px"}}/>
+                  </label>
+                  <label style={{display:"grid",gap:4,fontSize:11,color:"var(--text-dim)"}}>
+                    <span>Grid</span>
+                    <input type="number" min="0" max="4" step="0.05" value={scopeGridScale}
+                      onChange={(e)=>setScopeGridScale(Math.max(0, Number(e.target.value) || 0))}
+                      style={{height:28,background:"var(--bg)",border:"1px solid var(--border)",borderRadius:5,color:"var(--text)",padding:"0 8px"}}/>
+                  </label>
+                  <label style={{display:"grid",gap:4,fontSize:11,color:"var(--text-dim)"}}>
+                    <span>Noise</span>
+                    <input type="number" min="0" max="4" step="0.05" value={scopeNoiseScale}
+                      onChange={(e)=>setScopeNoiseScale(Math.max(0, Number(e.target.value) || 0))}
+                      style={{height:28,background:"var(--bg)",border:"1px solid var(--border)",borderRadius:5,color:"var(--text)",padding:"0 8px"}}/>
+                  </label>
+                </div>
+              )}
+            </div>
+          </>
+        )}
         <button onClick={()=>setSimMode(m=>SIM_MODES[(SIM_MODES.indexOf(m)+1)%SIM_MODES.length])}
           title={simTitle}
           style={{height:32,display:"flex",alignItems:"center",gap:4,padding:"0 12px",
@@ -680,6 +982,18 @@ function Player({
           style={{width:"100%",height:140,borderRadius:4,display:"block"}}/>}
         {meterMode==="waterfall" && <canvas ref={waterfallRef} width={1536} height={384}
           style={{width:"100%",height:200,borderRadius:4,display:"block",background:"#050612"}}/>}
+        {meterMode==="oscilloscope" && (
+          <div style={{
+            padding: 18,
+            borderRadius: 20,
+            background: scopeTheme.shellFill,
+            border: `1.5px solid ${scopeTheme.shellBorder}`,
+            boxShadow: `inset 0 1px 0 rgba(255,255,255,0.08), 0 18px 32px ${scopeTheme.shellShadow}`,
+          }}>
+            <canvas ref={scopeRef}
+              style={{width:"100%",height:296,borderRadius:16,display:"block",background:scopeTheme.screen}}/>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -743,4 +1057,347 @@ function VUMeter() {
       ))}
     </div>
   );
+}
+
+function drawVectorscopeScreen({
+  ctx,
+  w,
+  h,
+  theme,
+  left,
+  right,
+  sampleRate,
+  fftSize,
+  side,
+  positionSec,
+  paused,
+  freqHz,
+  precisionPoints,
+  zoom,
+  smoothing,
+  lineScale,
+  glowScale,
+  gridScale,
+  noiseScale,
+}) {
+  ctx.clearRect(0, 0, w, h);
+  ctx.fillStyle = theme.screen;
+  ctx.fillRect(0, 0, w, h);
+
+  const padX = 22;
+  const padTop = theme.fontMode === "dot" ? 34 : 20;
+  const padBottom = 24;
+  const plotSize = Math.max(1, Math.min(w - padX * 2, h - padTop - padBottom));
+  const plotRect = {
+    x: Math.round((w - plotSize) / 2),
+    y: padTop,
+    w: plotSize,
+    h: plotSize,
+  };
+
+  drawVectorscopeGrid(ctx, plotRect, theme, gridScale);
+
+  drawVectorscopeTrace(
+    ctx,
+    left,
+    right,
+    plotRect,
+    theme,
+    precisionPoints,
+    zoom,
+    smoothing,
+    lineScale,
+    glowScale
+  );
+
+  drawScopeNoise(ctx, w, h, theme, noiseScale);
+  drawScopeOverlay(ctx, w, h, theme);
+  drawVectorscopeLabels(ctx, {
+    theme,
+    w,
+    h,
+    sampleRate,
+    fftSize,
+    side,
+    positionSec,
+    paused,
+    freqHz,
+  });
+}
+
+function drawVectorscopeGrid(ctx, rect, theme, gridScale = 1) {
+  const cols = 8;
+  const rows = 8;
+  const centerX = rect.x + rect.w / 2;
+  const centerY = rect.y + rect.h / 2;
+  ctx.save();
+  ctx.strokeStyle = withAlpha(theme.gridMinor, alphaOf(theme.gridMinor) * gridScale);
+  ctx.setLineDash([1, 6]);
+  for (let i = 1; i < cols; i += 1) {
+    const x = rect.x + (rect.w / cols) * i;
+    ctx.beginPath();
+    ctx.moveTo(x + 0.5, rect.y);
+    ctx.lineTo(x + 0.5, rect.y + rect.h);
+    ctx.stroke();
+  }
+  for (let i = 1; i < rows; i += 1) {
+    const y = rect.y + (rect.h / rows) * i;
+    ctx.beginPath();
+    ctx.moveTo(rect.x, y + 0.5);
+    ctx.lineTo(rect.x + rect.w, y + 0.5);
+    ctx.stroke();
+  }
+  ctx.setLineDash([]);
+  ctx.strokeStyle = withAlpha(theme.gridMajor, alphaOf(theme.gridMajor) * gridScale);
+  ctx.lineWidth = 1.2;
+  ctx.strokeRect(rect.x + 0.5, rect.y + 0.5, rect.w - 1, rect.h - 1);
+
+  ctx.beginPath();
+  ctx.moveTo(centerX + 0.5, rect.y);
+  ctx.lineTo(centerX + 0.5, rect.y + rect.h);
+  ctx.moveTo(rect.x, centerY + 0.5);
+  ctx.lineTo(rect.x + rect.w, centerY + 0.5);
+  ctx.stroke();
+
+  ctx.globalAlpha = 0.8;
+  ctx.beginPath();
+  ctx.moveTo(rect.x, rect.y + rect.h);
+  ctx.lineTo(rect.x + rect.w, rect.y);
+  ctx.moveTo(rect.x, rect.y);
+  ctx.lineTo(rect.x + rect.w, rect.y + rect.h);
+  ctx.strokeStyle = withAlpha(theme.gridMinor, alphaOf(theme.gridMinor) * gridScale);
+  ctx.stroke();
+
+  ctx.strokeStyle = withAlpha(theme.gridMajor, alphaOf(theme.gridMajor) * 0.36 * gridScale);
+  ctx.globalAlpha = 1;
+  ctx.beginPath();
+  ctx.arc(centerX, centerY, rect.w * 0.18, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.beginPath();
+  ctx.arc(centerX, centerY, rect.w * 0.36, 0, Math.PI * 2);
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawVectorscopeTrace(ctx, leftSamples, rightSamples, rect, theme, precisionPoints, zoom, smoothing, lineScale = 1, glowScale = 1) {
+  const limit = Math.min(leftSamples.length, rightSamples.length);
+  const desiredPoints = precisionPoints || 6144;
+  const step = Math.max(1, Math.floor(limit / desiredPoints));
+  const centerX = rect.x + rect.w / 2;
+  const centerY = rect.y + rect.h / 2;
+  const radius = rect.w * 0.485;
+  let avgL = 0;
+  let avgR = 0;
+  const smooth = smoothing || 0.28;
+  const safeZoom = Math.max(0.05, zoom || 0.7);
+  const scale = radius * safeZoom;
+  const points = [];
+  for (let i = 0; i < limit; i += step) {
+    const l = leftSamples[i] || 0;
+    const r = rightSamples[i] || 0;
+    avgL += (l - avgL) * smooth;
+    avgR += (r - avgR) * smooth;
+    const xRaw = centerX + avgL * scale;
+    const yRaw = centerY - avgR * scale;
+    points.push({
+      x: theme.yQuantize ? Math.round(xRaw / theme.yQuantize) * theme.yQuantize : xRaw,
+      y: theme.yQuantize ? Math.round(yRaw / theme.yQuantize) * theme.yQuantize : yRaw,
+    });
+  }
+  ctx.save();
+  ctx.beginPath();
+  ctx.rect(rect.x, rect.y, rect.w, rect.h);
+  ctx.clip();
+  ctx.strokeStyle = theme.traceA;
+  ctx.shadowColor = theme.glow;
+  ctx.shadowBlur = theme.blur * glowScale;
+  ctx.lineWidth = (theme.lineWidth + (theme.blur > 0 ? 1.1 : 0.2)) * lineScale;
+  ctx.globalAlpha = theme.blur > 0 ? 0.18 : 0.72;
+  ctx.beginPath();
+  for (let i = 0; i < points.length; i++) {
+    if (i === 0) ctx.moveTo(points[i].x, points[i].y);
+    else ctx.lineTo(points[i].x, points[i].y);
+  }
+  ctx.stroke();
+
+  ctx.shadowBlur = theme.blur > 0 ? theme.blur * 0.55 * glowScale : 0;
+  ctx.lineWidth = theme.lineWidth * lineScale;
+  ctx.globalAlpha = theme.blur > 0 ? 0.9 : 0.96;
+  ctx.beginPath();
+  for (let i = 0; i < points.length; i++) {
+    if (i === 0) ctx.moveTo(points[i].x, points[i].y);
+    else ctx.lineTo(points[i].x, points[i].y);
+  }
+  ctx.stroke();
+  ctx.restore();
+}
+
+function drawScopeNoise(ctx, w, h, theme, noiseScale = 1) {
+  ctx.save();
+  ctx.fillStyle = withAlpha(theme.noise, alphaOf(theme.noise) * noiseScale);
+  for (let i = 0; i < 42; i++) {
+    const x = Math.random() * w;
+    const y = Math.random() * h;
+    const size = theme.resolution >= 3 ? 2 : 1;
+    ctx.fillRect(x, y, size, size);
+  }
+  ctx.restore();
+}
+
+function drawScopeOverlay(ctx, w, h, theme) {
+  ctx.save();
+  if (theme.fontMode !== "dot") {
+    for (let y = 0; y < h; y += 3) {
+      ctx.fillStyle = theme.scanline;
+      ctx.fillRect(0, y, w, 1);
+    }
+  }
+  const vignette = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.1, w / 2, h / 2, Math.max(w, h) * 0.65);
+  vignette.addColorStop(0, "rgba(255,255,255,0)");
+  vignette.addColorStop(1, theme.fontMode === "dot" ? "rgba(0,0,0,0.12)" : "rgba(0,0,0,0.34)");
+  ctx.fillStyle = vignette;
+  ctx.fillRect(0, 0, w, h);
+  ctx.restore();
+}
+
+function drawVectorscopeLabels(ctx, {
+  theme,
+  w,
+  h,
+  sampleRate,
+  fftSize,
+  side,
+  positionSec,
+  paused,
+  freqHz,
+}) {
+  const topLeft = `FREQ ${formatScopeFrequency(freqHz)}`;
+  const topCenter = paused ? "XY Hold" : "XY Vector";
+  const bottomLeft = "L-R";
+  const bottomMidLeft = formatScopeChannelInfo(sampleRate, fftSize);
+  const bottomCenter = `${side || "A"} ${formatScopeClock(positionSec)}`;
+  const bottomRight = "L+R";
+  if (theme.fontMode === "dot") {
+    drawBitmapText(ctx, topLeft, 12, 8, { color: theme.text, align: "left", baseline: "top", scale: 1.5, gap: 1 });
+    drawBitmapText(ctx, topCenter, w / 2, 8, { color: theme.labelAccent, align: "center", baseline: "top", scale: 1.8, gap: 1 });
+    drawBitmapText(ctx, "AUTO", w - 12, 8, { color: theme.text, align: "right", baseline: "top", scale: 1.8, gap: 1 });
+    drawBitmapText(ctx, bottomLeft, 12, h - 8, { color: theme.text, align: "left", baseline: "bottom", scale: 1.8, gap: 1 });
+    drawBitmapText(ctx, bottomMidLeft, 58, h - 8, { color: theme.text, align: "left", baseline: "bottom", scale: 1.8, gap: 1 });
+    drawBitmapText(ctx, bottomCenter, w / 2, h - 8, { color: theme.labelAccent, align: "center", baseline: "bottom", scale: 1.8, gap: 1 });
+    drawBitmapText(ctx, bottomRight, w - 12, h - 8, { color: theme.text, align: "right", baseline: "bottom", scale: 1.8, gap: 1 });
+    return;
+  }
+  ctx.save();
+  ctx.font = `11px ${FONT}`;
+  ctx.fillStyle = theme.text;
+  ctx.textBaseline = "top";
+  ctx.fillText(topLeft, 12, 8);
+  ctx.textAlign = "center";
+  ctx.fillStyle = theme.labelAccent;
+  ctx.fillText(topCenter, w / 2, 8);
+  ctx.textAlign = "right";
+  ctx.fillStyle = theme.text;
+  ctx.fillText("Auto", w - 12, 8);
+  ctx.textAlign = "left";
+  ctx.textBaseline = "bottom";
+  ctx.fillText(bottomLeft, 12, h - 8);
+  ctx.fillText(bottomMidLeft, 54, h - 8);
+  ctx.textAlign = "center";
+  ctx.fillText(bottomCenter, w / 2, h - 8);
+  ctx.textAlign = "right";
+  ctx.fillText(bottomRight, w - 12, h - 8);
+  ctx.restore();
+}
+
+function drawBitmapText(ctx, text, x, y, { color, align = "left", baseline = "top", scale = 1.8, gap = 1 }) {
+  const chars = String(text).toUpperCase().split("");
+  const glyphW = 5;
+  const glyphH = 7;
+  const advance = glyphW + gap;
+  const renderedW = chars.reduce((sum, _ch, index) => sum + glyphW + (index === chars.length - 1 ? 0 : gap), 0) * scale;
+  const renderedH = glyphH * scale;
+  let drawX = x;
+  let drawY = y;
+  if (align === "center") drawX -= renderedW / 2;
+  if (align === "right") drawX -= renderedW;
+  if (baseline === "bottom") drawY -= renderedH;
+  ctx.save();
+  ctx.fillStyle = color;
+  chars.forEach((char, index) => {
+    const glyph = BITMAP_FONT[char] || BITMAP_FONT[" "];
+    for (let py = 0; py < glyphH; py++) {
+      const row = glyph[py] || "00000";
+      for (let px = 0; px < glyphW; px++) {
+        if (row[px] !== "1") continue;
+        ctx.fillRect(
+          Math.round(drawX + (index * advance + px) * scale),
+          Math.round(drawY + py * scale),
+          Math.max(1, scale * 0.82),
+          Math.max(1, scale * 0.82)
+        );
+      }
+    }
+  });
+  ctx.restore();
+}
+
+function formatScopeChannelInfo(sampleRate, fftSize) {
+  const timePerDivSec = (fftSize / sampleRate) / 10;
+  if (timePerDivSec >= 1e-3) return `M ${(timePerDivSec * 1e3).toFixed(timePerDivSec >= 0.01 ? 1 : 2)}ms`;
+  return `M ${(timePerDivSec * 1e6).toFixed(0)}us`;
+}
+
+function formatScopeClock(sec) {
+  const total = Math.max(0, sec || 0);
+  const mins = Math.floor(total / 60);
+  const secs = Math.floor(total % 60).toString().padStart(2, "0");
+  const millis = Math.floor((total % 1) * 1000).toString().padStart(3, "0");
+  return `${mins}:${secs}.${millis}`;
+}
+
+function formatScopeFrequency(freqHz) {
+  const value = Math.max(0, freqHz || 0);
+  if (value >= 1000) return `${(value / 1000).toFixed(value >= 10000 ? 1 : 2)}kHz`;
+  return `${value.toFixed(value >= 100 ? 0 : 1)}Hz`;
+}
+
+function estimateDominantFreqHz(freqL, freqR, sampleRate, fftSize) {
+  const binCount = Math.min(freqL.length, freqR.length);
+  let bestBin = 1;
+  let bestDb = -Infinity;
+  for (let i = 2; i < binCount; i++) {
+    const freq = (i * sampleRate) / fftSize;
+    if (freq < 20 || freq > 20000) continue;
+    const db = (freqL[i] + freqR[i]) * 0.5;
+    if (db > bestDb) {
+      bestDb = db;
+      bestBin = i;
+    }
+  }
+  return (bestBin * sampleRate) / fftSize;
+}
+
+function alphaOf(color) {
+  const match = String(color).match(/rgba?\(([^)]+)\)/i);
+  if (!match) return 1;
+  const parts = match[1].split(",").map((part) => part.trim());
+  return parts.length >= 4 ? Number(parts[3]) || 1 : 1;
+}
+
+function withAlpha(color, alpha) {
+  const match = String(color).match(/rgba?\(([^)]+)\)/i);
+  if (match) {
+    const parts = match[1].split(",").map((part) => part.trim());
+    const [r = "0", g = "0", b = "0"] = parts;
+    return `rgba(${r},${g},${b},${Math.max(0, alpha)})`;
+  }
+  if (String(color).startsWith("#")) {
+    const hex = color.slice(1);
+    const full = hex.length === 3 ? hex.split("").map((ch) => ch + ch).join("") : hex;
+    const r = parseInt(full.slice(0, 2), 16);
+    const g = parseInt(full.slice(2, 4), 16);
+    const b = parseInt(full.slice(4, 6), 16);
+    return `rgba(${r},${g},${b},${Math.max(0, alpha)})`;
+  }
+  return color;
 }

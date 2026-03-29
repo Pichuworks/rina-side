@@ -2068,8 +2068,8 @@ export default function CassetteTool() {
 
     const splitter = ctx.createChannelSplitter(2);
     volumeGain.connect(splitter);
-    const analyserL = ctx.createAnalyser(); analyserL.fftSize = 4096; analyserL.smoothingTimeConstant = 0.18;
-    const analyserR = ctx.createAnalyser(); analyserR.fftSize = 4096; analyserR.smoothingTimeConstant = 0.18;
+    const analyserL = ctx.createAnalyser(); analyserL.fftSize = 8192; analyserL.smoothingTimeConstant = 0.18;
+    const analyserR = ctx.createAnalyser(); analyserR.fftSize = 8192; analyserR.smoothingTimeConstant = 0.18;
     splitter.connect(analyserL, 0);
     splitter.connect(analyserR, 1);
 
