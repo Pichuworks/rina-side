@@ -5,6 +5,21 @@ import { IconAdd, IconAutoAwesome, IconFileOpen, IconSave, IconPlay, IconStop, I
 import Player from "./Player.jsx";
 import SideWaveform from "./SideWaveform.jsx";
 import SideSpectrogram from "./SideSpectrogram.jsx";
+import { TOOL_PLUGINS } from "./tool-plugins/index.js";
+import {
+  RESPONSE_MEASUREMENT_SPEC,
+  TRANSPORT_MEASUREMENT_SPEC,
+  TEST_TAPE_PROGRAM_SPEC,
+  generateTestTapeProgram,
+  analyseTestTapeProgram,
+} from "./deck-calibration.js";
+import {
+  normalizeCalibrationProfile,
+  buildLinearPhaseImpulse,
+  invertCalibrationProfile,
+  getProfileCorrectionDb,
+  profileSignature,
+} from "./calibration-profile.js";
 
 // ═══════════════════════════════════════════════════════════════
 // SIDE — Sequential Interleaved Dubbing Engine
@@ -20,6 +35,133 @@ const APP_GITHUB = "https://github.com/Pichuworks/rina-side";
 const LANGS = { "zh-CN": { label: "简体中文" }, ja: { label: "日本語" }, en: { label: "EN" } };
 
 const I18N = {
+  toolSignalOutput: { "zh-CN": "校准信号输出", ja: "校正信号出力", en: "Calibration Signal Output" },
+  toolSignalOutputCardDesc: { "zh-CN": "用于录音电平与高频校准的信号输出", ja: "録音レベルと高域校正用の信号出力", en: "Signal output for rec level and HF calibration" },
+  toolSignalOutputDesc: {
+    "zh-CN": "同一时刻只输出一个校准信号。每种信号都对应明确的频率与电平规则，输出始终为双声道同相信号。",
+    ja: "同時に出力できる校正信号は 1 つだけです。各信号には明確な周波数とレベル規則があり、出力は常にデュアルモノです。",
+    en: "Only one calibration signal can be output at a time. Each signal has a specific frequency and level rule, and output is always dual mono.",
+  },
+  toolDeckRecCal: { "zh-CN": "卡座录制校准", ja: "デッキ録音校正", en: "Deck Recording Calibration" },
+  toolDeckRecCalCardDesc: { "zh-CN": "扫频校准、频响分析与 wow/flutter 诊断", ja: "スイープ校正、周波数応答解析、wow/flutter 診断", en: "Sweep calibration, response analysis, and wow/flutter diagnostics" },
+  toolDeckRecCalDesc: {
+    "zh-CN": "这个模块用于完成卡座完整录放链路的校准。它会生成扫频、分析回采结果、计算频响偏移，并提供速度偏差与 wow/flutter 诊断入口。",
+    ja: "このモジュールはデッキの録再チェーン全体を校正します。スイープ生成、録り戻し解析、周波数応答偏差の算出、速度偏差と wow/flutter 診断を扱います。",
+    en: "This module calibrates the full deck record/play chain: sweep generation, return analysis, response deviation estimation, and speed plus wow/flutter diagnostics.",
+  },
+  toolDeckRecCalResponseTitle: { "zh-CN": "频响校准", ja: "周波数応答校正", en: "Response Calibration" },
+  toolDeckRecCalResponseDesc: {
+    "zh-CN": "生成参考扫频，导入回采结果后计算录放链路的频响偏移，并生成可加载到试听和导出的校准 profile。",
+    ja: "基準スイープを生成し、録り戻し結果から録再チェーンの周波数偏差を算出して、試聴と書き出しに適用できる校正 profile を生成します。",
+    en: "Generate reference sweeps, analyse return captures, and build a calibration profile for preview and export.",
+  },
+  toolDeckRecCalResponseFocusTitle: { "zh-CN": "频响校准流程", ja: "周波数応答校正フロー", en: "Response Calibration Flow" },
+  toolDeckRecCalResponseFocusDesc: {
+    "zh-CN": "这一支会生成参考扫频、导入回采结果、计算频响偏移，并最终生成可加载到试听与导出的校准 profile。",
+    ja: "この系統では基準スイープ生成、録り戻し結果の読込、周波数応答偏差の算出、そして試聴と書き出しに適用できる校正 profile の生成を行います。",
+    en: "This path generates reference sweeps, imports return captures, estimates response deviation, and produces a calibration profile for preview and export.",
+  },
+  toolDeckRecCalResponseWorkflowDesc: {
+    "zh-CN": "本机模式：导出参考扫频，录到空白带后自录自放，生成本机校准 Profile，并可保存频响基线 Manifest。测试带模式：加载频响基线 Manifest，导入其它设备回放结果，生成该设备的校准 Profile。",
+    ja: "1. 基準スイープを生成して書き出す。2. 録り戻しファイルまたはブラウザ録音を取り込む。3. 周波数応答偏差を計算して校正 profile を生成する。",
+    en: "1. Generate and export reference sweeps. 2. Import return captures or record in-browser. 3. Estimate response deviation and generate a calibration profile.",
+  },
+  toolDeckRecCalTransportTitle: { "zh-CN": "走带诊断", ja: "走行診断", en: "Transport Diagnostics" },
+  toolDeckRecCalTransportDesc: {
+    "zh-CN": "通过 3150 Hz 等测试音分析走带偏快、偏慢、wow/flutter 与稳定性问题。该路径只给诊断结果，不生成静态 EQ 修正。",
+    ja: "3150 Hz などのテストトーンから速度ずれ、wow/flutter、安定性の問題を解析します。この経路は診断専用で、静的 EQ 補正は生成しません。",
+    en: "Use 3150 Hz and related test tones to analyse speed error, wow/flutter, and stability. This path is diagnostic-only and does not generate static EQ correction.",
+  },
+  toolDeckRecCalTransportFocusTitle: { "zh-CN": "走带诊断流程", ja: "走行診断フロー", en: "Transport Diagnostic Flow" },
+  toolDeckRecCalTransportFocusDesc: {
+    "zh-CN": "这一支使用恒定测试音分析走带偏快、偏慢、wow/flutter 和稳定性问题，只输出诊断结果，不生成 EQ 修正文件。",
+    ja: "この系統では一定トーンを用いて速度ずれ、wow/flutter、安定性の問題を解析し、診断結果のみを出力します。EQ 補正ファイルは生成しません。",
+    en: "This path uses constant test tones to analyse speed error, wow/flutter, and stability. It produces diagnostics only and does not generate an EQ correction file.",
+  },
+  toolDeckRecCalTransportWorkflowDesc: {
+    "zh-CN": "本机模式：导出 3150 Hz，录到空白带后自录自放，输出本机速度偏差与 wow/flutter，并可保存走带基线 Manifest。测试带模式：加载走带基线 Manifest，导入其它设备回放结果，输出相对诊断结果。",
+    ja: "1. 3150 Hz などのテストトーンを生成して書き出す。2. 録り戻しファイルまたはブラウザ録音を取り込む。3. 速度偏差と wow/flutter の診断結果を出力する。",
+    en: "1. Generate and export 3150 Hz and related test tones. 2. Import return captures or record in-browser. 3. Produce speed and wow/flutter diagnostics.",
+  },
+  toolDeckRecCalWorkflowTitle: { "zh-CN": "预定工作流", ja: "予定ワークフロー", en: "Planned Workflow" },
+  toolDeckRecCalWorkflowDesc: {
+    "zh-CN": "1. 生成并导出参考扫频。2. 导入回录文件或网页录音。3. 生成校准 profile 或输出走带诊断结果。",
+    ja: "1. 基準スイープを生成して書き出す。2. 録り戻しファイルまたはブラウザ録音を取り込む。3. 校正 profile か走行診断結果を生成する。",
+    en: "1. Generate and export reference sweeps. 2. Import return captures or record in-browser. 3. Produce a calibration profile or transport diagnostic report.",
+  },
+  toolDeckRecCalProgramTitle: { "zh-CN": "测试带程序", ja: "テストテーププログラム", en: "Test Tape Program" },
+  toolDeckRecCalProgramFocusTitle: { "zh-CN": "单次导出 / 单次分析", ja: "単一書き出し / 単一解析", en: "Single Export / Single Analysis" },
+  toolDeckRecCalProgramFocusDesc: {
+    "zh-CN": "导出一条包含扫频与 3150 Hz 的测试带程序；导入一次完整回录后，同时得到频响校准结果和走带诊断结果。",
+    ja: "スイープと 3150 Hz を含む 1 本のテストテーププログラムを書き出し、完全な録り戻しを 1 回取り込むだけで周波数校正結果と走行診断結果を同時に得ます。",
+    en: "Export one test tape program containing the sweep and 3150 Hz; after importing one full return capture, produce both response calibration and transport diagnostics together.",
+  },
+  toolDeckRecCalProgramWorkflowDesc: {
+    "zh-CN": "本机模式：导出测试带程序，录到空白带后自录自放，生成本机校准 Profile，并保存测试带程序 Manifest。测试带模式：加载测试带程序 Manifest，导入其它设备回放结果，生成该设备的频响校准结果和走带诊断结果。",
+    ja: "本機モード: テストテーププログラムを書き出し、空テープへ録音して自己録再し、本機の校正 Profile とテストテーププログラム Manifest を生成します。テストテープモード: テストテーププログラム Manifest を読み込み、他機の再生結果を取り込んで、その機器の周波数校正結果と走行診断結果を生成します。",
+    en: "Self-deck mode: export the test tape program, record it to a blank tape, play it back on the same deck, generate this deck's calibration profile, and save the test tape program manifest. Test-tape mode: load the test tape program manifest, import another device's playback capture, and generate both response calibration and transport diagnostics for that device.",
+  },  toolExportRef: { "zh-CN": "导出参考信号", ja: "基準信号を書き出す", en: "Export Reference Signal" },
+  toolImportCapture: { "zh-CN": "导入回录文件", ja: "録り戻しファイルを読み込む", en: "Import Return Capture" },
+  toolStartRecord: { "zh-CN": "开始网页录音", ja: "ブラウザ録音を開始", en: "Start In-Browser Recording" },
+  toolStopRecord: { "zh-CN": "停止网页录音", ja: "ブラウザ録音を停止", en: "Stop In-Browser Recording" },
+  toolAnalyseNow: { "zh-CN": "生成结果", ja: "結果を生成", en: "Generate Result" },
+  toolSaveProfile: { "zh-CN": "保存校准 Profile", ja: "校正 Profile を保存", en: "Save Calibration Profile" },
+  toolRefSweepLabel: { "zh-CN": "参考扫频", ja: "基準スイープ", en: "Reference Sweep" },
+  toolRefToneLabel: { "zh-CN": "测试音", ja: "テストトーン", en: "Test Tone" },
+  toolCaptureReady: { "zh-CN": "已载入回采结果", ja: "録り戻し結果を読み込み済み", en: "Return capture loaded" },
+  toolCaptureMissing: { "zh-CN": "还没有回采结果", ja: "録り戻し結果がまだありません", en: "No return capture yet" },
+  toolRecordingBusy: { "zh-CN": "网页录音中", ja: "ブラウザ録音中", en: "Recording in browser" },
+  toolResponseResultTitle: { "zh-CN": "频响结果", ja: "周波数応答結果", en: "Response Result" },
+  toolTransportResultTitle: { "zh-CN": "走带诊断结果", ja: "走行診断結果", en: "Transport Result" },
+  toolMeanFreq: { "zh-CN": "平均频率", ja: "平均周波数", en: "Mean Frequency" },
+  toolSpeedError: { "zh-CN": "速度偏差", ja: "速度偏差", en: "Speed Error" },
+  toolWowFlutterRms: { "zh-CN": "Wow/Flutter RMS", ja: "Wow/Flutter RMS", en: "Wow/Flutter RMS" },
+  toolWowFlutterPk: { "zh-CN": "Wow/Flutter 峰峰值", ja: "Wow/Flutter P-P", en: "Wow/Flutter Peak-to-Peak" },
+  toolReferenceWowFloor: { "zh-CN": "参考带 W/F 底噪", ja: "基準テープ W/F フロア", en: "Reference W/F Floor" },
+  toolTopCorrection: { "zh-CN": "校准点", ja: "校正ポイント", en: "Correction Points" },
+  toolRefExported: { "zh-CN": "测试带程序已导出", ja: "テストテーププログラムを書き出しました", en: "Test tape program exported" },
+  toolProfileSaved: { "zh-CN": "校准 Profile 已保存", ja: "校正 Profile を保存しました", en: "Calibration profile saved" },
+  toolCaptureImported: { "zh-CN": "回录文件已导入", ja: "録り戻しファイルを読み込みました", en: "Return capture imported" },
+  toolRecordUnavailable: { "zh-CN": "当前浏览器不支持网页录音", ja: "このブラウザでは録音を利用できません", en: "This browser does not support in-browser recording" },
+  toolRecordFailed: { "zh-CN": "网页录音失败", ja: "ブラウザ録音に失敗しました", en: "In-browser recording failed" },
+  calibrationProfile: { "zh-CN": "校准 Profile", ja: "校正 Profile", en: "Calibration Profile" },
+  loadCalibrationProfile: { "zh-CN": "加载校准 Profile", ja: "校正 Profile を読込", en: "Load Calibration Profile" },
+  clearCalibrationProfile: { "zh-CN": "清除校准 Profile", ja: "校正 Profile を解除", en: "Clear Calibration Profile" },
+  noCalibrationProfile: { "zh-CN": "未加载", ja: "未読込", en: "Not loaded" },
+  applyCalibrationPreview: { "zh-CN": "试听 EQ", ja: "試聴 EQ", en: "Preview EQ" },
+  applyCalibrationExport: { "zh-CN": "导出 EQ", ja: "書出 EQ", en: "Export EQ" },
+  calibrationProfileLoaded: { "zh-CN": "校准 Profile 已加载", ja: "校正 Profile を読み込みました", en: "Calibration profile loaded" },
+  calibrationProfileCleared: { "zh-CN": "校准 Profile 已清除", ja: "校正 Profile を解除しました", en: "Calibration profile cleared" },
+  calibrationProfileLoadFailed: { "zh-CN": "校准 Profile 加载失败", ja: "校正 Profile の読込に失敗しました", en: "Failed to load calibration profile" },
+  toolLoadResponseManifest: { "zh-CN": "加载频响基线 Manifest", ja: "周波数基線 Manifest を読込", en: "Load Response Baseline Manifest" },
+  toolClearResponseManifest: { "zh-CN": "清除频响基线 Manifest", ja: "周波数基線 Manifest を解除", en: "Clear Response Baseline Manifest" },
+  toolResponseManifestMissing: { "zh-CN": "未加载频响基线 Manifest", ja: "周波数基線 Manifest 未読込", en: "No response baseline manifest loaded" },
+  toolResponseManifestReady: { "zh-CN": "已加载频响基线 Manifest", ja: "周波数基線 Manifest 読込済", en: "Response baseline manifest loaded" },
+  toolLoadTransportManifest: { "zh-CN": "加载走带基线 Manifest", ja: "走行基線 Manifest を読込", en: "Load Transport Baseline Manifest" },
+  toolClearTransportManifest: { "zh-CN": "清除走带基线 Manifest", ja: "走行基線 Manifest を解除", en: "Clear Transport Baseline Manifest" },
+  toolTransportManifestMissing: { "zh-CN": "未加载走带基线 Manifest", ja: "走行基線 Manifest 未読込", en: "No transport baseline manifest loaded" },
+  toolTransportManifestReady: { "zh-CN": "已加载走带基线 Manifest", ja: "走行基線 Manifest 読込済", en: "Transport baseline manifest loaded" },
+    toolManifestImported: { "zh-CN": "测试带程序 Manifest 已加载", ja: "テストテーププログラム Manifest を読み込みました", en: "Test tape program manifest loaded" },
+  toolLoadProgramManifest: { "zh-CN": "加载测试带程序 Manifest", ja: "テストテーププログラム Manifest を読み込む", en: "Load Test Tape Program Manifest" },
+  toolClearProgramManifest: { "zh-CN": "清除测试带程序 Manifest", ja: "テストテーププログラム Manifest を解除", en: "Clear Test Tape Program Manifest" },
+  toolProgramManifestMissing: { "zh-CN": "未加载测试带程序 Manifest", ja: "テストテーププログラム Manifest 未読込", en: "No test tape program manifest loaded" },
+  toolProgramManifestReady: { "zh-CN": "已加载测试带程序 Manifest", ja: "テストテーププログラム Manifest 読込済み", en: "Test tape program manifest loaded" },
+  toolScenarioSelfDeck: { "zh-CN": "本机校准/诊断", ja: "本機校正/診断", en: "Self Deck Calibration" },
+  toolScenarioSelfDeckDesc: { "zh-CN": "只有空白带和本卡座时，导出整条测试带程序，自录自放后同时完成本机校准和走带诊断", ja: "空テープと本機だけでテストテーププログラム全体を書き出し、自己録再後に本機校正と走行診断を同時に行う", en: "With only a blank tape and this deck, export the full test tape program and use self record/play to run both calibration and transport diagnostics together" },
+  toolScenarioTestTape: { "zh-CN": "自制测试带测其它设备", ja: "自作テストテープで他機測定", en: "Measure Other Devices With Your Tape" },
+  toolScenarioTestTapeDesc: { "zh-CN": "加载本机保存的测试带程序 Manifest，导入其它卡座/随身听对整条程序的回放结果并做相对分析", ja: "本機で保存したテストテーププログラム Manifest を読み込み、他機のプログラム全体の再生結果を相対分析", en: "Load the saved test tape program manifest, import another deck or portable player's full-program playback capture, and analyse it relative to your tape" },
+  toolSaveResponseBaseline: { "zh-CN": "保存频响基线 Manifest", ja: "周波数基線 Manifest を保存", en: "Save Response Baseline Manifest" },
+  toolSaveTransportBaseline: { "zh-CN": "保存走带基线 Manifest", ja: "走行基線 Manifest を保存", en: "Save Transport Baseline Manifest" },
+    toolExportProgram: { "zh-CN": "导出测试带程序", ja: "テストテーププログラムを書き出す", en: "Export Test Tape Program" },
+  toolSaveProgramManifest: { "zh-CN": "保存测试带程序 Manifest", ja: "テストテーププログラム Manifest を保存", en: "Save Test Tape Program Manifest" },
+  toolBaselineSaved: { "zh-CN": "测试带程序 Manifest 已保存", ja: "テストテーププログラム Manifest を保存しました", en: "Test tape program manifest saved" },
+    toolHelpTitle: { "zh-CN": "操作路径", ja: "操作手順", en: "Workflow Help" },
+  toolSelfProgramHelp: { "zh-CN": "只有空白带和本卡座时：点“导出测试带程序”，把整条程序录到空白带；再用同一台卡座回放并导入回录/网页录音；点“生成结果”；同时得到本机频响校准结果和走带诊断结果；点“保存校准 Profile”得到本机补偿文件；点“保存测试带程序 Manifest”得到这盒测试带给其它设备使用的基线。", ja: "空テープと本機だけの場合: 「テストテーププログラムを書き出す」を押して全プログラムを空テープへ録音し、同じデッキで再生して録り戻し/ブラウザ録音を取り込み、「結果を生成」を押す。これで本機の周波数校正結果と走行診断結果を同時に得る。「校正 Profile を保存」で本機補正用ファイル、「テストテーププログラム Manifest を保存」で他機測定用の基線を保存する。", en: "With only a blank tape and this deck: click Export Test Tape Program, record the full program to the blank tape, then play it back on the same deck and import the return capture or browser recording. Click Generate Result to produce both response calibration and transport diagnostics together. Save Calibration Profile for this deck's correction file, and save Test Tape Program Manifest as the baseline for measuring other devices." },
+  toolTestTapeProgramHelp: { "zh-CN": "这盒带已经由本机录好时：进入“自制测试带测其它设备”；加载“测试带程序 Manifest”；导入其它卡座/随身听播放这盒带得到的完整回录结果；点“生成结果”；同时得到该设备的频响校准结果和走带诊断结果；需要补偿文件时点“保存校准 Profile”。", ja: "このテープを本機で録音済みの場合: 「自作テストテープで他機測定」に入り、「テストテーププログラム Manifest」を読み込み、他機がこのテープを再生した完全な録り戻し結果を取り込んで「結果を生成」を押す。これでその機器の周波数校正結果と走行診断結果を同時に得る。補正ファイルが必要なら「校正 Profile を保存」を押す。", en: "When this tape has already been recorded on your deck: enter Measure Other Devices With Your Tape, load the Test Tape Program Manifest, import the full playback capture from the other deck or portable player, and click Generate Result. This produces both response calibration and transport diagnostics for that device together. If you need a correction file, click Save Calibration Profile." },
+  toolSelfResponseHelp: { "zh-CN": "只有空白带和本卡座时：导出参考扫频，录到空白带；再用同一台卡座回放并导入回录/网页录音；点“生成结果”；点“保存校准 Profile”得到本机补偿文件；点“保存频响基线 Manifest”得到这盒测试带的频响基线。", ja: "空テープと本機だけの場合: 基準スイープを書き出して録音し、同じデッキで再生して録り戻し/ブラウザ録音を取り込み、「結果を生成」を押す。「校正 Profile を保存」で本機補正用ファイル、「周波数基線 Manifest を保存」でこのテストテープの基線を保存する。", en: "With only a blank tape and this deck: export the reference sweep, record it, play it back on the same deck, import the capture, then generate the result. Save Calibration Profile for this deck, and save Response Baseline Manifest for this test tape." },
+  toolSelfTransportHelp: { "zh-CN": "只有空白带和本卡座时：导出 3150 Hz，录到空白带；再用同一台卡座回放并导入回录/网页录音；点“生成结果”；输出本机速度偏差和 wow/flutter；点“保存走带基线 Manifest”得到这盒测试带的走带基线。", ja: "空テープと本機だけの場合: 3150 Hz を書き出して録音し、同じデッキで再生して録り戻し/ブラウザ録音を取り込み、「結果を生成」を押す。本機の速度偏差と wow/flutter を表示し、「走行基線 Manifest を保存」でこのテストテープの走行基線を保存する。", en: "With only a blank tape and this deck: export 3150 Hz, record it, play it back on the same deck, import the capture, and generate the result. This reports this deck's speed error and wow/flutter; save Transport Baseline Manifest for this test tape." },
+  toolTestTapeResponseHelp: { "zh-CN": "这盒带已经由本机录好时：进入“自制测试带测其它设备 -> 频响校准”；加载“频响基线 Manifest”；导入其它卡座/随身听播放这盒带得到的回录结果；点“生成结果”；点“保存校准 Profile”得到该设备的相对校准文件。", ja: "このテープを本機で録音済みの場合: 「自作テストテープで他機測定 -> 周波数校正」に入り、「周波数基線 Manifest」を読み込み、他機の再生結果を取り込んで「結果を生成」を押す。「校正 Profile を保存」でその機器用の相対校正ファイルを保存する。", en: "When this tape was recorded on your deck: go to Measure Other Devices -> Response Calibration, load the Response Baseline Manifest, import the other deck's playback capture, generate the result, then save Calibration Profile for that device." },
+  toolTestTapeTransportHelp: { "zh-CN": "这盒带已经由本机录好时：进入“自制测试带测其它设备 -> 走带诊断”；加载“走带基线 Manifest”；导入其它卡座/随身听播放这盒带得到的回录结果；点“生成结果”；输出该设备相对这盒测试带基线的速度偏差和 wow/flutter 诊断。", ja: "このテープを本機で録音済みの場合: 「自作テストテープで他機測定 -> 走行診断」に入り、「走行基線 Manifest」を読み込み、他機の再生結果を取り込んで「結果を生成」を押す。その機器の相対的な速度偏差と wow/flutter を表示する。", en: "When this tape was recorded on your deck: go to Measure Other Devices -> Transport Diagnostics, load the Transport Baseline Manifest, import the other device's playback capture, and generate the result. This reports relative speed error and wow/flutter against your tape baseline." },
   appTitle: { "zh-CN": "SIDE — 磁带转录引擎", ja: "SIDE — 磁帯転写エンジン", en: "SIDE — Cassette Dubbing Engine" },
   appSubtitle: { "zh-CN": "阿佐谷202室 · 磁带转录工具", ja: "阿佐ヶ谷202号室 · 磁帯転写ツール", en: "Asagaya Room 202 · Cassette Transcription Tool" },
   appVersion: { "zh-CN": `Ver ${APP_VERSION} · by 天使天才天王寺璃奈`, ja: `Ver ${APP_VERSION} · by 天使天才天王寺璃奈`, en: `Ver ${APP_VERSION} · by Angel, Genius, Tennoji Rina` },
@@ -596,7 +738,7 @@ const SILENCE_MIN_DUR = 0.3;
 const CALIBRATION_FREQ_HZ = 1000;
 const CALIBRATION_HIGH_FREQ_HZ = 10000;
 const CALIBRATION_HF_OFFSET_DB = -20;
-const CALIBRATION_SIGNAL_PRESETS = [
+const SIGNAL_OUTPUT_PRESETS = [
   { id: "rec_level_balance", nameKey: "toolSignalRecBalance", descKey: "toolSignalRecBalanceDesc" },
   { id: "cal", nameKey: "toolSignalCal", descKey: "toolSignalCalDesc" },
   { id: "bias", nameKey: "toolSignalBias", descKey: "toolSignalBiasDesc" },
@@ -1692,15 +1834,30 @@ export default function CassetteTool() {
   const [toast, setToast] = useState(null);
   const [ffmpegStatus, setFfmpegStatus] = useState("idle"); // idle | loading | ready | unavailable
   const [showTools, setShowTools] = useState(false);
-  const [activeTool, setActiveTool] = useState("rec-cal");
+  const [activeTool, setActiveTool] = useState("signal-output");
   const [calibrationSide, setCalibrationSide] = useState("A");
-  const [calibrationSignalType, setCalibrationSignalType] = useState("rec_level_balance");
-  const [calibrationRunning, setCalibrationRunning] = useState(false);
+  const [signalOutputType, setSignalOutputType] = useState("rec_level_balance");
+  const [signalOutputRunning, setSignalOutputRunning] = useState(false);
+  const [loadedCalibrationProfile, setLoadedCalibrationProfile] = useState(null);
+  const [loadedCalibrationProfileName, setLoadedCalibrationProfileName] = useState("");
+  const [applyCalibrationPreview, setApplyCalibrationPreview] = useState(true);
+  const [applyCalibrationExport, setApplyCalibrationExport] = useState(true);
+  const [deckCalProgramManifest, setDeckCalProgramManifest] = useState(null);
+  const [deckCalProgramManifestName, setDeckCalProgramManifestName] = useState("");
+  const [deckCalRecordingKind, setDeckCalRecordingKind] = useState("");
+  const [deckCalCapture, setDeckCalCapture] = useState(null);
+  const [deckCalCaptureName, setDeckCalCaptureName] = useState("");
+  const [responseAnalysis, setResponseAnalysis] = useState(null);
+  const [transportAnalysis, setTransportAnalysis] = useState(null);
 
   const acRef = useRef(null);
   const fileRef = useRef(null);
   const plRef = useRef(null);
-  const calibrationRef = useRef({ osc: null, gain: null, merger: null });
+  const calibrationProfileRef = useRef(null);
+  const signalOutputRef = useRef({ osc: null, gain: null, merger: null });
+  const deckCalRecordRef = useRef({ recorder: null, stream: null, chunks: [], kind: "" });
+  const correctionImpulseCacheRef = useRef(new Map());
+  const trackOutputStatsCacheRef = useRef(new Map());
 
   const showToast = useCallback((m, d = 4000) => { setToast(m); setTimeout(() => setToast(null), d); }, []);
   const getAC = useCallback(() => {
@@ -1712,12 +1869,143 @@ export default function CassetteTool() {
   }, []);
   const openTools = useCallback(() => {
     setCalibrationSide(activeTab);
-    setActiveTool("rec-cal");
-    setCalibrationSignalType("rec_level_balance");
+    setActiveTool("signal-output");
+    setSignalOutputType("rec_level_balance");
     const ctx = getAC();
     if (ctx.state === "suspended") ctx.resume().catch(() => {});
     setShowTools(true);
   }, [activeTab, getAC]);
+
+  const createBufferLikeSlice = useCallback((audioBuffer, startSample, length) => {
+    const safeStart = Math.max(0, Math.min(audioBuffer.length, Math.round(startSample)));
+    const safeLength = Math.max(0, Math.min(Math.round(length), audioBuffer.length - safeStart));
+    const channels = Array.from({ length: audioBuffer.numberOfChannels }, (_, channel) => {
+      const src = audioBuffer.getChannelData(channel);
+      return new Float32Array(src.slice(safeStart, safeStart + safeLength));
+    });
+    return {
+      numberOfChannels: audioBuffer.numberOfChannels,
+      sampleRate: audioBuffer.sampleRate,
+      length: safeLength,
+      getChannelData(channel) {
+        return channels[channel] || channels[0];
+      },
+    };
+  }, []);
+
+  const createAudioBufferFromBufferLike = useCallback((ctx, bufferLike) => {
+    const buffer = ctx.createBuffer(bufferLike.numberOfChannels, bufferLike.length, bufferLike.sampleRate);
+    for (let channel = 0; channel < bufferLike.numberOfChannels; channel++) {
+      buffer.copyToChannel(bufferLike.getChannelData(channel), channel);
+    }
+    return buffer;
+  }, []);
+
+  const scaleBufferLike = useCallback((bufferLike, gain) => {
+    if (!Number.isFinite(gain) || Math.abs(gain - 1) < 1e-6) return bufferLike;
+    const channels = Array.from({ length: bufferLike.numberOfChannels }, (_, channel) => {
+      const src = bufferLike.getChannelData(channel);
+      const out = new Float32Array(src.length);
+      for (let i = 0; i < src.length; i++) out[i] = src[i] * gain;
+      return out;
+    });
+    return {
+      numberOfChannels: bufferLike.numberOfChannels,
+      sampleRate: bufferLike.sampleRate,
+      length: bufferLike.length,
+      getChannelData(channel) {
+        return channels[channel] || channels[0];
+      },
+    };
+  }, []);
+
+  const getCorrectionImpulse = useCallback((profile, sampleRate, inverse = false) => {
+    if (!profile) return null;
+    const baseSignature = profileSignature(profile);
+    const key = `${baseSignature}|${sampleRate}|${inverse ? "inv" : "fwd"}`;
+    const cache = correctionImpulseCacheRef.current;
+    if (!cache.has(key)) {
+      const targetProfile = inverse
+        ? invertCalibrationProfile(profile, { type: "side.reference-preemphasis-profile", name: `${profile.name} Inverse` })
+        : profile;
+      cache.set(key, buildLinearPhaseImpulse(targetProfile, sampleRate));
+    }
+    return cache.get(key);
+  }, []);
+
+  const createImpulseAudioBuffer = useCallback((ctx, impulse) => {
+    const buffer = ctx.createBuffer(2, impulse.length, ctx.sampleRate);
+    buffer.copyToChannel(impulse.left, 0);
+    buffer.copyToChannel(impulse.right, 1);
+    return buffer;
+  }, []);
+
+  const renderTrackOutputWithProfile = useCallback(async (audioBuffer, sampleRate, profile) => {
+    const impulse = profile ? getCorrectionImpulse(profile, sampleRate) : null;
+    const renderLength = Math.ceil((audioBuffer.duration * sampleRate) + (impulse?.length || 0));
+    const oc = new OfflineAudioContext(audioBuffer.numberOfChannels, renderLength, sampleRate);
+    const src = oc.createBufferSource();
+    src.buffer = audioBuffer;
+    if (impulse) {
+      const conv = oc.createConvolver();
+      conv.normalize = false;
+      conv.buffer = createImpulseAudioBuffer(oc, impulse);
+      src.connect(conv);
+      conv.connect(oc.destination);
+    } else {
+      src.connect(oc.destination);
+    }
+    src.start(0);
+    const rendered = await oc.startRendering();
+    return impulse ? createBufferLikeSlice(rendered, impulse.delaySamples, Math.ceil(audioBuffer.duration * sampleRate)) : rendered;
+  }, [createBufferLikeSlice, createImpulseAudioBuffer, getCorrectionImpulse]);
+
+  const renderBufferLikeWithProfile = useCallback(async (bufferLike, profile, inverse = false) => {
+    if (!profile) return bufferLike;
+    const impulse = getCorrectionImpulse(profile, bufferLike.sampleRate, inverse);
+    if (!impulse) return bufferLike;
+    const renderLength = bufferLike.length + impulse.length;
+    const oc = new OfflineAudioContext(bufferLike.numberOfChannels, renderLength, bufferLike.sampleRate);
+    const src = oc.createBufferSource();
+    src.buffer = createAudioBufferFromBufferLike(oc, bufferLike);
+    const conv = oc.createConvolver();
+    conv.normalize = false;
+    conv.buffer = createImpulseAudioBuffer(oc, impulse);
+    src.connect(conv);
+    conv.connect(oc.destination);
+    src.start(0);
+    const rendered = await oc.startRendering();
+    return createBufferLikeSlice(rendered, impulse.delaySamples, bufferLike.length);
+  }, [createAudioBufferFromBufferLike, createBufferLikeSlice, createImpulseAudioBuffer, getCorrectionImpulse]);
+
+  const getTrackOutputStats = useCallback(async (track, sampleRate, profile) => {
+    if (!track?.audioBuffer) return { peak: 0, rms: 0 };
+    if (!profile) return { peak: track.peak || 0, rms: track.rms || 0 };
+    const key = `${track.id}|${sampleRate}|${profileSignature(profile)}`;
+    const cache = trackOutputStatsCacheRef.current;
+    if (!cache.has(key)) {
+      cache.set(key, (async () => {
+        const rendered = await renderTrackOutputWithProfile(track.audioBuffer, sampleRate, profile);
+        return {
+          peak: getPeak(rendered),
+          rms: getRMS(rendered),
+        };
+      })());
+    }
+    return cache.get(key);
+  }, [renderTrackOutputWithProfile]);
+
+  const resolveNormalizedTrackGains = useCallback(async (audioTracks, sampleRate, profile) => {
+    if (!audioTracks.length) return [];
+    if (normalizeMode === "off") return audioTracks.map(() => 1);
+    const stats = await Promise.all(audioTracks.map((track) => getTrackOutputStats(track, sampleRate, profile)));
+    if (normalizeMode === "peak") {
+      const targetAmp = Math.pow(10, targetDb / 20);
+      return stats.map((stat) => stat.peak > 0 ? targetAmp / stat.peak : 1);
+    }
+    const avgRms = stats.reduce((sum, stat) => sum + stat.rms, 0) / stats.length;
+    return stats.map((stat) => stat.rms > 0 ? avgRms / stat.rms : 1);
+  }, [getTrackOutputStats, normalizeMode, targetDb]);
 
   const sideMin = tapePreset === "CUSTOM" ? customMin : TAPE_PRESETS[tapePreset].sideMinutes;
   const sideSec = sideMin * 60;
@@ -1746,22 +2034,23 @@ export default function CassetteTool() {
     return hasLossless ? 24 : 16;
   }, [exportBits]);
 
-  const stopCalibration = useCallback(() => {
-    const calibration = calibrationRef.current;
-    if (calibration.osc) {
-      calibration.osc.onended = null;
-      try { calibration.osc.stop(); } catch { }
+  const stopSignalOutput = useCallback(() => {
+    const signalOutput = signalOutputRef.current;
+    if (signalOutput.osc) {
+      signalOutput.osc.onended = null;
+      try { signalOutput.osc.stop(); } catch { }
     }
-    [calibration.osc, calibration.gain, calibration.merger].forEach((node) => {
+    [signalOutput.osc, signalOutput.gain, signalOutput.merger].forEach((node) => {
       try { node?.disconnect(); } catch { }
     });
-    calibrationRef.current = { osc: null, gain: null, merger: null };
-    setCalibrationRunning(false);
+    signalOutputRef.current = { osc: null, gain: null, merger: null };
+    setSignalOutputRunning(false);
   }, []);
 
   useEffect(() => {
-    if (!showTools) stopCalibration();
-  }, [showTools, stopCalibration]);
+    if (!showTools) stopSignalOutput();
+  }, [showTools, stopSignalOutput]);
+
 
   // Compute effective gap for a track (considering smartGap)
   const getGap = useCallback((tr, nextTr) => {
@@ -1784,6 +2073,22 @@ export default function CassetteTool() {
 
   const durA = useMemo(() => calcDur(sideA), [sideA, calcDur]);
   const durB = useMemo(() => calcDur(sideB), [sideB, calcDur]);
+
+  const decodeExternalAudioFile = useCallback(async (file, label = file.name) => {
+    const ctx = getAC();
+    setProcMsg(`${T("decoding")}: ${label}`);
+    const fileBuf = await file.arrayBuffer();
+    try {
+      if (likelyNeedsTranscode(file.name)) throw new Error("format likely unsupported natively, try ffmpeg");
+      return await ctx.decodeAudioData(fileBuf.slice(0));
+    } catch (nativeErr) {
+      setProcMsg(`ffmpeg: ${label}`);
+      if (ffmpegStatus === "idle") setFfmpegStatus("loading");
+      const wavBuf = await transcodeToWav(file, (msg) => setProcMsg(`ffmpeg: ${msg}`));
+      setFfmpegStatus("ready");
+      return await ctx.decodeAudioData(wavBuf.slice(0));
+    }
+  }, [T, ffmpegStatus, getAC]);
 
   // ── File loading ─────────────────────────────────────────
   const loadFiles = useCallback(async (files, side) => {
@@ -1939,7 +2244,7 @@ export default function CassetteTool() {
 
   // ── Export Audio ──────────────────────────────────────────
   const expSide = useCallback(async (side) => {
-    stopCalibration();
+    stopSignalOutput();
     const allSide = tracks.filter(t => t.side === side);
     const st = allSide.filter(t => t.audioBuffer);
     const stubCount = allSide.length - st.length;
@@ -1966,34 +2271,53 @@ export default function CassetteTool() {
     setProcessing(true); setExpProg({ side, step: 0, total: st.length + 2 });
     try {
       const ch = 2;
-      let gains = st.map(() => 1.0);
-      if (normalizeMode === "peak") { const tl = Math.pow(10, targetDb / 20); gains = st.map(t => t.peak > 0 ? tl / t.peak : 1.0); }
-      else if (normalizeMode === "rms") { const avg = st.reduce((s, t) => s + t.rms, 0) / st.length; gains = st.map(t => t.rms > 0 ? avg / t.rms : 1.0); }
+      const exportProfile = loadedCalibrationProfile && applyCalibrationExport ? loadedCalibrationProfile : null;
+      const gains = await resolveNormalizedTrackGains(st, sr, exportProfile);
       let len = 0;
       st.forEach((tr, i) => { len += tr.duration * sr; if (i < st.length - 1) len += getGap(tr, st[i + 1]) * sr; });
       if (fillTail) len = Math.max(len, sideSec * sr);
       len = Math.ceil(len);
-      const oc = new OfflineAudioContext(ch, len, sr); let cur = 0;
+      const exportImpulse = exportProfile ? getCorrectionImpulse(exportProfile, sr) : null;
+      const renderLength = len + (exportImpulse?.length || 0);
+      const oc = new OfflineAudioContext(ch, renderLength, sr); let cur = 0;
+      const mixBus = oc.createGain();
+      mixBus.gain.value = 1.0;
+      if (exportImpulse) {
+        const convolver = oc.createConvolver();
+        convolver.normalize = false;
+        convolver.buffer = createImpulseAudioBuffer(oc, exportImpulse);
+        mixBus.connect(convolver);
+        convolver.connect(oc.destination);
+      } else {
+        mixBus.connect(oc.destination);
+      }
       for (let i = 0; i < st.length; i++) {
         setExpProg({ side, step: i + 1, total: st.length + 2 }); setProcMsg(`SIDE ${side}: [${i + 1}/${st.length}] ${st[i].name}`);
         const tr = st[i], src = oc.createBufferSource(), gn = oc.createGain();
-        src.buffer = tr.audioBuffer; gn.gain.value = gains[i]; src.connect(gn); gn.connect(oc.destination);
+        src.buffer = tr.audioBuffer; gn.gain.value = gains[i]; src.connect(gn); gn.connect(mixBus);
         src.start(cur / sr); cur += Math.ceil(tr.duration * sr);
         if (i < st.length - 1) cur += Math.ceil(getGap(tr, st[i + 1]) * sr);
       }
       setProcMsg(`SIDE ${side}: ${T("rendering")}...`); setExpProg({ side, step: st.length + 1, total: st.length + 2 });
       const r = await oc.startRendering();
       setProcMsg(`SIDE ${side}: ${T("encoding")}...`); setExpProg({ side, step: st.length + 2, total: st.length + 2 });
-      const blob = encodeWAV(r, bits), u = URL.createObjectURL(blob), a = document.createElement("a");
+      let encodedBuffer = exportImpulse ? createBufferLikeSlice(r, exportImpulse.delaySamples, len) : r;
+      if (exportImpulse) {
+        const renderedPeak = getPeak(encodedBuffer);
+        const postGain = renderedPeak > 0.999 ? 0.999 / renderedPeak : 1;
+        encodedBuffer = scaleBufferLike(encodedBuffer, postGain);
+      }
+      const blob = encodeWAV(encodedBuffer, bits), u = URL.createObjectURL(blob), a = document.createElement("a");
       a.href = u; a.download = `SIDE_${side}_${sr}hz_${bits}bit.wav`; a.click(); URL.revokeObjectURL(u);
     } catch (e) { console.error(e); alert(`Export failed: ${e.message}`); }
     setProcessing(false); setProcMsg(""); setExpProg(null);
-  }, [tracks, defaultGap, fillTail, normalizeMode, targetDb, sideSec, getAC, T, getGap, resolveExportSr, resolveExportBits, stopCalibration]);
+  }, [tracks, defaultGap, fillTail, sideSec, getAC, T, getGap, resolveExportSr, resolveExportBits, stopSignalOutput, loadedCalibrationProfile, applyCalibrationExport, getCorrectionImpulse, createImpulseAudioBuffer, createBufferLikeSlice, scaleBufferLike, resolveNormalizedTrackGains]);
 
   // ── Playback Engine ───────────────────────────────────────
   const playGenRef = useRef(0); // generation counter to prevent stale callbacks
   const appliedSimKeyRef = useRef(`${simMode}|${activeDeckProfile}|${toneProfile}|${tubeEnabled ? 1 : 0}|${vinylEra}|${vinylCrackle}`);
   const appliedPlaybackStructureRef = useRef(playbackStructureKey);
+  const appliedCorrectionKeyRef = useRef(`${profileSignature(loadedCalibrationProfile)}|${applyCalibrationPreview ? 1 : 0}`);
   const getPlaybackCursor = useCallback((schedule, pos, contentDur, totalDur) => {
     if (!schedule.length) return -1;
     if (totalDur > contentDur && pos >= contentDur) return schedule.length;
@@ -2009,8 +2333,11 @@ export default function CassetteTool() {
       : simMode === "vinyl"
         ? VINYL_SIM_PROFILE.warpBaseDelayMs / 1000
         : 0;
-    return Math.max(0, baseLatency + outputLatency + mediumDelay);
-  }, [simMode]);
+    const correctionDelay = loadedCalibrationProfile && applyCalibrationPreview
+      ? (getCorrectionImpulse(loadedCalibrationProfile, ctx?.sampleRate || 48000)?.delaySamples || 0) / (ctx?.sampleRate || 48000)
+      : 0;
+    return Math.max(0, baseLatency + outputLatency + mediumDelay + correctionDelay);
+  }, [applyCalibrationPreview, getCorrectionImpulse, loadedCalibrationProfile, simMode]);
 
   const stopAuxSources = useCallback((sources) => {
     sources.forEach((source) => {
@@ -2082,6 +2409,22 @@ export default function CassetteTool() {
       outputNodes: [simOutput, volumeGain, splitter, analyserL, analyserR],
     };
   }, [playerVolume]);
+
+  const buildPlaybackCorrectionGraph = useCallback((ctx, inputNode) => {
+    if (!loadedCalibrationProfile || !applyCalibrationPreview) {
+      return { output: inputNode, nodes: [] };
+    }
+    const impulse = getCorrectionImpulse(loadedCalibrationProfile, ctx.sampleRate);
+    if (!impulse) return { output: inputNode, nodes: [] };
+    const convolver = ctx.createConvolver();
+    convolver.normalize = false;
+    convolver.buffer = createImpulseAudioBuffer(ctx, impulse);
+    inputNode.connect(convolver);
+    return {
+      output: convolver,
+      nodes: [convolver],
+    };
+  }, [applyCalibrationPreview, createImpulseAudioBuffer, getCorrectionImpulse, loadedCalibrationProfile]);
 
   const buildPlaybackSimulationGraph = useCallback((ctx, inputNode, simOutput, playPos, totalDur, initialGain = 1) => {
     let outputNode = inputNode;
@@ -2216,24 +2559,19 @@ export default function CassetteTool() {
   const buildSchedule = useCallback((side) => {
     const st = tracks.filter(t => t.side === side && t.audioBuffer);
     const schedule = []; let offset = 0;
-    const gains = st.map(tr => {
-      if (normalizeMode === "peak") { const tl = Math.pow(10, targetDb / 20); return tr.peak > 0 ? tl / tr.peak : 1.0; }
-      if (normalizeMode === "rms") { const avg = st.reduce((s, t) => s + t.rms, 0) / st.length; return tr.rms > 0 ? avg / tr.rms : 1.0; }
-      return 1.0;
-    });
     st.forEach((tr, i) => {
-      schedule.push({ id: tr.id, name: tr.name, start: offset, dur: tr.duration, idx: i, buffer: tr.audioBuffer, gain: gains[i] });
+      schedule.push({ id: tr.id, name: tr.name, start: offset, dur: tr.duration, idx: i, buffer: tr.audioBuffer });
       offset += tr.duration;
       if (i < st.length - 1) offset += getGap(tr, st[i + 1]);
     });
     // If tail fill enabled, extend to tape side length
     const dur = fillTail ? Math.max(offset, sideSec) : offset;
     return { schedule, totalDur: dur, contentDur: offset, trackCount: st.length };
-  }, [tracks, normalizeMode, targetDb, getGap, fillTail, sideSec]);
+  }, [tracks, getGap, fillTail, sideSec]);
 
   // Start playback from a given position (seconds)
-  const playFromPos = useCallback((side, fromPos) => {
-    stopCalibration();
+  const playFromPos = useCallback(async (side, fromPos) => {
+    stopSignalOutput();
     const p = playRef.current;
     p.sources.forEach(s => { s.onended = null; });
     p.sources.forEach(s => { try { s.stop(); } catch (e) { } });
@@ -2250,12 +2588,21 @@ export default function CassetteTool() {
     if (ctx.state === "suspended") ctx.resume();
     const { schedule, totalDur, contentDur } = buildSchedule(side);
     if (!schedule.length) { stopPlayback(); return; }
+    const sideTracks = tracks.filter((track) => track.side === side && track.audioBuffer);
+    const gains = await resolveNormalizedTrackGains(
+      sideTracks,
+      ctx.sampleRate,
+      loadedCalibrationProfile && applyCalibrationPreview ? loadedCalibrationProfile : null
+    );
+    if (playGenRef.current !== gen) return;
+    const gainByTrackId = new Map(sideTracks.map((track, index) => [track.id, gains[index] || 1]));
     const clampedPos = Math.max(0, Math.min(fromPos, totalDur));
 
     const masterGain = ctx.createGain(); masterGain.gain.value = 1.0;
     const outputChain = buildPlaybackOutputChain(ctx);
     const sourceNodes = [];
-    const simGraph = buildPlaybackSimulationGraph(ctx, masterGain, outputChain.simOutput, clampedPos, totalDur);
+    const correctionGraph = buildPlaybackCorrectionGraph(ctx, masterGain);
+    const simGraph = buildPlaybackSimulationGraph(ctx, correctionGraph.output, outputChain.simOutput, clampedPos, totalDur);
 
     const sources = [];
     const now = ctx.currentTime;
@@ -2265,7 +2612,7 @@ export default function CassetteTool() {
       if (trackEnd <= clampedPos) return;
       const src = ctx.createBufferSource();
       src.buffer = s.buffer;
-      const gn = ctx.createGain(); gn.gain.value = s.gain;
+      const gn = ctx.createGain(); gn.gain.value = gainByTrackId.get(s.id) || 1;
       src.connect(gn); gn.connect(masterGain);
       sourceNodes.push(gn, src);
       if (clampedPos > s.start) {
@@ -2286,7 +2633,7 @@ export default function CassetteTool() {
     playRef.current = {
       ...playRef.current,
       sources,
-      sourceNodes,
+      sourceNodes: [...sourceNodes, ...(correctionGraph.nodes || [])],
       simGraphs: [simGraph],
       outputNodes: outputChain.outputNodes,
       simCleanupTimers: [],
@@ -2326,7 +2673,7 @@ export default function CassetteTool() {
       playRef.current.raf = requestAnimationFrame(tick);
     };
     playRef.current.raf = requestAnimationFrame(tick);
-  }, [getAC, buildPlaybackOutputChain, buildSchedule, getPlaybackCursor, buildPlaybackSimulationGraph, clearPlaybackOutputChain, clearSimulationGraphs, disconnectNodes, getPlaybackDisplayDelay, stopPlayback, stopCalibration]);
+  }, [getAC, buildPlaybackCorrectionGraph, buildPlaybackOutputChain, buildSchedule, getPlaybackCursor, buildPlaybackSimulationGraph, clearPlaybackOutputChain, clearSimulationGraphs, disconnectNodes, getPlaybackDisplayDelay, stopPlayback, stopSignalOutput, tracks, resolveNormalizedTrackGains, loadedCalibrationProfile, applyCalibrationPreview]);
 
   const playSide = useCallback((side) => {
     playFromPos(side, 0);
@@ -2365,6 +2712,22 @@ export default function CassetteTool() {
   }, [simMode, activeDeckProfile, toneProfile, tubeEnabled, vinylEra, vinylCrackle, playing, playingSide, rebuildPlaybackSimulationGraph]);
 
   useEffect(() => {
+    const appliedKey = `${profileSignature(loadedCalibrationProfile)}|${applyCalibrationPreview ? 1 : 0}`;
+    if (appliedCorrectionKeyRef.current === appliedKey) return;
+    appliedCorrectionKeyRef.current = appliedKey;
+    if (!playing || !playingSide) return;
+    const wasPaused = paused;
+    void (async () => {
+      await playFromPos(playingSide, playPosRef.current);
+      if (wasPaused) {
+        const ctx = getAC();
+        ctx.suspend();
+        setPaused(true);
+      }
+    })();
+  }, [applyCalibrationPreview, getAC, loadedCalibrationProfile, paused, playFromPos, playing, playingSide]);
+
+  useEffect(() => {
     if (simMode.startsWith("TAPE_")) return;
     if (deckProfile !== "off") setDeckProfile("off");
   }, [simMode, deckProfile]);
@@ -2398,7 +2761,14 @@ export default function CassetteTool() {
         stopPlayback();
         return;
       }
-      playFromPos(playingSide, Math.min(totalDur, contentDur + blankOffset));
+      void (async () => {
+        await playFromPos(playingSide, Math.min(totalDur, contentDur + blankOffset));
+        if (wasPaused) {
+          const ctx = getAC();
+          ctx.suspend();
+          setPaused(true);
+        }
+      })();
     } else {
       const currentSeg = schedule[curIdx];
       const currentTrack = tracks.find((track) => track.id === currentSeg.id && track.audioBuffer);
@@ -2414,21 +2784,26 @@ export default function CassetteTool() {
         stopPlayback();
         return;
       }
-      playFromPos(currentTrack.side, nextSeg.start + Math.min(offsetInTrack, nextSeg.dur));
-    }
-
-    if (wasPaused) {
-      const ctx = getAC();
-      ctx.suspend();
-      setPaused(true);
+      void (async () => {
+        await playFromPos(currentTrack.side, nextSeg.start + Math.min(offsetInTrack, nextSeg.dur));
+        if (wasPaused) {
+          const ctx = getAC();
+          ctx.suspend();
+          setPaused(true);
+        }
+      })();
+      return;
     }
   }, [playbackStructureKey, playing, playingSide, paused, tracks, buildSchedule, playFromPos, stopPlayback, getAC]);
 
   // Cleanup on unmount only. Do not bind cleanup to sim-mode-dependent callback identity.
   useEffect(() => () => {
-    stopCalibration();
+    stopSignalOutput();
+    const active = deckCalRecordRef.current;
+    try { if (active.recorder && active.recorder.state !== "inactive") active.recorder.stop(); } catch { }
+    try { active.stream?.getTracks?.().forEach((track) => track.stop()); } catch { }
     stopPlaybackRef.current?.();
-  }, [stopCalibration]);
+  }, [stopSignalOutput]);
 
   // ── Sub-components ───────────────────────────────────────
   const buildPreviewGains = useCallback((audioTracks) => {
@@ -2443,7 +2818,7 @@ export default function CassetteTool() {
     return gains;
   }, [normalizeMode, targetDb]);
 
-  const resolveCalibrationSignal = useCallback((signalType, side) => {
+  const resolveSignalOutput = useCallback((signalType, side) => {
     const sideTracks = tracks.filter((track) => track.side === side && track.audioBuffer);
     const gains = buildPreviewGains(sideTracks);
     const programPeak = sideTracks.reduce((maxPeak, track, index) => (
@@ -2493,12 +2868,12 @@ export default function CassetteTool() {
     };
   }, [buildPreviewGains, targetDb, tracks]);
 
-  const startCalibration = useCallback(async () => {
+  const startSignalOutput = useCallback(async () => {
     stopPlayback();
-    stopCalibration();
+    stopSignalOutput();
     const ctx = getAC();
     if (ctx.state === "suspended") await ctx.resume();
-    const signal = resolveCalibrationSignal(calibrationSignalType, calibrationSide);
+    const signal = resolveSignalOutput(signalOutputType, calibrationSide);
     const osc = ctx.createOscillator();
     osc.type = "sine";
     osc.frequency.value = signal.freqHz;
@@ -2510,9 +2885,229 @@ export default function CassetteTool() {
     gain.connect(merger, 0, 1);
     merger.connect(ctx.destination);
     osc.start();
-    calibrationRef.current = { osc, gain, merger };
-    setCalibrationRunning(true);
-  }, [calibrationSide, calibrationSignalType, getAC, resolveCalibrationSignal, stopCalibration, stopPlayback]);
+    signalOutputRef.current = { osc, gain, merger };
+    setSignalOutputRunning(true);
+  }, [calibrationSide, signalOutputType, getAC, resolveSignalOutput, stopSignalOutput, stopPlayback]);
+
+  const downloadBlob = useCallback((blob, filename) => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, []);
+
+  const loadCalibrationProfileFile = useCallback(async (file) => {
+    if (!file) return;
+    try {
+      const raw = JSON.parse(await file.text());
+      const profile = normalizeCalibrationProfile(raw);
+      setLoadedCalibrationProfile(profile);
+      setLoadedCalibrationProfileName(file.name);
+      setApplyCalibrationPreview(true);
+      setApplyCalibrationExport(true);
+      showToast(T("calibrationProfileLoaded"));
+    } catch (err) {
+      showToast(`${T("calibrationProfileLoadFailed")}: ${err.message}`, 5000);
+    }
+  }, [T, showToast]);
+
+  const clearCalibrationProfile = useCallback(() => {
+    setLoadedCalibrationProfile(null);
+    setLoadedCalibrationProfileName("");
+    setApplyCalibrationPreview(false);
+    setApplyCalibrationExport(false);
+    correctionImpulseCacheRef.current.clear();
+    showToast(T("calibrationProfileCleared"));
+  }, [T, showToast]);
+
+  const loadDeckCalProgramManifestFile = useCallback(async (file) => {
+    if (!file) return;
+    try {
+      const raw = JSON.parse(await file.text());
+      if (raw?.type !== "side.test-tape-program-manifest") throw new Error("Not a test tape program manifest");
+      setDeckCalProgramManifest(raw);
+      setDeckCalProgramManifestName(file.name);
+      showToast(T("toolManifestImported"));
+    } catch (err) {
+      showToast(`${T("playlistImportError")}: ${err.message}`, 5000);
+    }
+  }, [T, showToast]);
+
+  const clearDeckCalProgramManifest = useCallback(() => {
+    setDeckCalProgramManifest(null);
+    setDeckCalProgramManifestName("");
+  }, []);
+
+  const applyProgramManifestToResponse = useCallback((analysis, manifest) => {
+    const baseline = manifest?.baselines?.response;
+    if (!baseline?.frequenciesHz?.length) return analysis;
+    const adjustedMeasuredDb = analysis.frequenciesHz.map((freq, index) => (
+      analysis.measuredDb[index] - getProfileCorrectionDb({ channels: { L: { frequenciesHz: baseline.frequenciesHz, correctionDb: baseline.referenceDb } } }, freq, "L")
+    ));
+    const adjustedCorrectionDb = analysis.frequenciesHz.map((freq, index) => (
+      analysis.correctionDb[index] + getProfileCorrectionDb({ channels: { L: { frequenciesHz: baseline.frequenciesHz, correctionDb: baseline.referenceDb } } }, freq, "L")
+    ));
+    return {
+      ...analysis,
+      measuredDb: adjustedMeasuredDb,
+      correctionDb: adjustedCorrectionDb,
+      manifestName: manifest.name,
+      profile: {
+        ...analysis.profile,
+        sourceManifest: {
+          name: manifest.name,
+          createdAt: manifest.createdAt,
+        },
+        channels: {
+          L: { frequenciesHz: analysis.frequenciesHz, correctionDb: adjustedCorrectionDb },
+          R: { frequenciesHz: analysis.frequenciesHz, correctionDb: adjustedCorrectionDb },
+        },
+      },
+    };
+  }, []);
+
+  const applyProgramManifestToTransport = useCallback((analysis, manifest) => {
+    const baseline = manifest?.baselines?.transport;
+    if (!baseline?.nominalOnTapeToneHz) return analysis;
+    const nominalHz = baseline.nominalOnTapeToneHz;
+    return {
+      ...analysis,
+      nominalHz,
+      speedErrorPercent: ((analysis.meanHz - nominalHz) / nominalHz) * 100,
+      writerWowFlutterFloorPercentRms: baseline.wowFlutterFloorPercentRms || 0,
+      manifestName: manifest.name,
+    };
+  }, []);
+
+  const exportTestTapeProgram = useCallback(async () => {
+    const program = generateTestTapeProgram(TEST_TAPE_PROGRAM_SPEC);
+    downloadBlob(encodeWAV(program.bufferLike, 24), "deck-cal-test-tape-program.wav");
+    showToast(T("toolRefExported"));
+  }, [T, downloadBlob, showToast]);
+
+  const importDeckCalCaptureFile = useCallback(async (file) => {
+    if (!file) return;
+    setProcessing(true);
+    try {
+      const ab = await decodeExternalAudioFile(file);
+      setDeckCalCapture(ab);
+      setDeckCalCaptureName(file.name);
+      setResponseAnalysis(null);
+      setTransportAnalysis(null);
+      showToast(T("toolCaptureImported"));
+    } catch (err) {
+      showToast(`${T("playlistImportError")}: ${err.message}`, 5000);
+    } finally {
+      setProcessing(false);
+      setProcMsg("");
+    }
+  }, [T, decodeExternalAudioFile, showToast]);
+
+  const startDeckCalRecording = useCallback(async (kind) => {
+    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
+      showToast(T("toolRecordUnavailable"), 5000);
+      return;
+    }
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          channelCount: 2,
+          echoCancellation: false,
+          noiseSuppression: false,
+          autoGainControl: false,
+        },
+      });
+      const mimeType = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus"].find((type) => MediaRecorder.isTypeSupported(type)) || "";
+      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+      const chunks = [];
+      recorder.ondataavailable = (event) => {
+        if (event.data?.size) chunks.push(event.data);
+      };
+      recorder.onstop = async () => {
+        const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
+        const ext = recorder.mimeType?.includes("ogg") ? "ogg" : "webm";
+        const file = new File([blob], `${kind}-capture.${ext}`, { type: blob.type });
+        setDeckCalRecordingKind("");
+        stream.getTracks().forEach((track) => track.stop());
+        deckCalRecordRef.current = { recorder: null, stream: null, chunks: [], kind: "" };
+        await importDeckCalCaptureFile(file);
+      };
+      recorder.start();
+      deckCalRecordRef.current = { recorder, stream, chunks, kind };
+      setDeckCalRecordingKind(kind);
+    } catch (err) {
+      console.error(err);
+      showToast(`${T("toolRecordFailed")}: ${err.message}`, 5000);
+    }
+  }, [T, importDeckCalCaptureFile, showToast]);
+
+  const stopDeckCalRecording = useCallback(() => {
+    const active = deckCalRecordRef.current;
+    if (active.recorder && active.recorder.state !== "inactive") active.recorder.stop();
+  }, []);
+
+  useEffect(() => {
+    if (!showTools && deckCalRecordingKind) stopDeckCalRecording();
+  }, [deckCalRecordingKind, showTools, stopDeckCalRecording]);
+
+  const analyseDeckCalCapture = useCallback((scenario = "self") => {
+    if (!deckCalCapture) return;
+    try {
+      const rawResult = analyseTestTapeProgram(deckCalCapture, generateTestTapeProgram(TEST_TAPE_PROGRAM_SPEC));
+      const shouldApplyManifest = scenario === "test-tape" && deckCalProgramManifest;
+      const nextResponse = shouldApplyManifest ? applyProgramManifestToResponse(rawResult.response, deckCalProgramManifest) : rawResult.response;
+      const nextTransport = shouldApplyManifest ? applyProgramManifestToTransport(rawResult.transport, deckCalProgramManifest) : rawResult.transport;
+      setResponseAnalysis(nextResponse);
+      setTransportAnalysis(nextTransport);
+    } catch (err) {
+      showToast(`Test tape analysis failed: ${err.message}`, 5000);
+    }
+  }, [applyProgramManifestToResponse, applyProgramManifestToTransport, deckCalCapture, deckCalProgramManifest, showToast]);
+
+  const saveResponseProfile = useCallback(() => {
+    if (!responseAnalysis?.profile) return;
+    const blob = new Blob([JSON.stringify(responseAnalysis.profile, null, 2)], { type: "application/json" });
+    downloadBlob(blob, "deck-calibration-profile.json");
+    showToast(T("toolProfileSaved"));
+  }, [T, downloadBlob, responseAnalysis, showToast]);
+
+  const saveDeckCalProgramManifest = useCallback(() => {
+    if (!responseAnalysis || !transportAnalysis) return;
+    const manifest = {
+      version: 1,
+      type: "side.test-tape-program-manifest",
+      name: "Self Deck Test Tape Program",
+      createdAt: new Date().toISOString(),
+      program: {
+        sampleRate: TEST_TAPE_PROGRAM_SPEC.sampleRate,
+        interSegmentSec: TEST_TAPE_PROGRAM_SPEC.interSegmentSec,
+        response: {
+          startHz: RESPONSE_MEASUREMENT_SPEC.startHz,
+          endHz: RESPONSE_MEASUREMENT_SPEC.endHz,
+          durationSec: RESPONSE_MEASUREMENT_SPEC.mainSec,
+        },
+        transport: {
+          toneHz: TRANSPORT_MEASUREMENT_SPEC.toneHz,
+          durationSec: TRANSPORT_MEASUREMENT_SPEC.mainSec,
+        },
+      },
+      baselines: {
+        response: {
+          frequenciesHz: responseAnalysis.frequenciesHz,
+          referenceDb: responseAnalysis.measuredDb,
+        },
+        transport: {
+          nominalOnTapeToneHz: transportAnalysis.meanHz,
+          wowFlutterFloorPercentRms: transportAnalysis.wowFlutterPercentRms || 0,
+          speedOffsetPercent: transportAnalysis.speedErrorPercent || 0,
+        },
+      },
+    };
+    downloadBlob(new Blob([JSON.stringify(manifest, null, 2)], { type: "application/json" }), "self-test-tape-program.manifest.json");
+    showToast(T("toolBaselineSaved"));
+  }, [T, downloadBlob, responseAnalysis, showToast, transportAnalysis]);
 
   const renderCapBar = (used, total, eff, side) => {
     const hardOver = used > total, softOver = !hardOver && used > eff;
@@ -2702,7 +3297,9 @@ export default function CassetteTool() {
   };
 
   const aHas = sideA.some(t => t.audioBuffer), bHas = sideB.some(t => t.audioBuffer);
-  const calibrationSignal = resolveCalibrationSignal(calibrationSignalType, calibrationSide);
+  const signalOutput = resolveSignalOutput(signalOutputType, calibrationSide);
+  const activePlugin = TOOL_PLUGINS.find((plugin) => plugin.id === activeTool);
+  const ActiveToolPluginComponent = activePlugin?.Component;
 
   return (
     <div style={{
@@ -2724,7 +3321,7 @@ export default function CassetteTool() {
         boxShadow: "0 4px 20px rgba(0,0,0,0.08)", animation: "fadeIn 0.2s ease"
       }}>{toast}</div>}
 
-      {showTools && <div onClick={() => setShowTools(false)} style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.35)", zIndex: 120, display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}>
+      {showTools && <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,0.35)", zIndex: 120, display: "flex", alignItems: "center", justifyContent: "center", padding: "16px" }}>
         <div onClick={(e) => e.stopPropagation()} style={{
           background: "var(--bg)", borderRadius: 14, width: "min(840px, calc(100vw - 32px))", maxHeight: "80vh", overflow: "hidden",
           border: "1px solid var(--border)", boxShadow: "0 12px 36px rgba(0,0,0,0.16)", color: "var(--text)", display: "flex", flexDirection: "column"
@@ -2734,22 +3331,31 @@ export default function CassetteTool() {
             <button onClick={() => setShowTools(false)} style={{ background: "none", border: "none", fontSize: 18, cursor: "pointer", color: "var(--text-dim)" }}>✕</button>
           </div>
 
-          <div className="modalScroll" style={{ display: "grid", gridTemplateColumns: "180px minmax(0,1fr)", minHeight: 0, overflowY: "auto" }}>
-            <div style={{ padding: 16, borderRight: "1px solid var(--border)", background: "var(--bg-card)" }}>
-              <button onClick={() => setActiveTool("rec-cal")} style={{
-                width: "100%", border: "1px solid var(--border)", borderRadius: 10, padding: "12px 14px", cursor: "pointer", textAlign: "left",
-                background: activeTool === "rec-cal" ? "var(--accent-dim)" : "var(--bg)", color: activeTool === "rec-cal" ? "var(--accent-ink)" : "var(--text)"
+          <div className="modalScroll" style={{ display: "grid", gridTemplateColumns: "180px minmax(0,1fr)", minHeight: 0, overflow: "hidden", flex: 1 }}>
+            <div style={{ padding: 16, borderRight: "1px solid var(--border)", background: "var(--bg-card)", overflowY: "auto", minHeight: 0 }}>
+              <button onClick={() => setActiveTool("signal-output")} style={{
+                width: "100%", border: "1px solid var(--border)", borderRadius: 10, padding: "12px 14px", cursor: "pointer", textAlign: "left", marginBottom: 8,
+                background: activeTool === "signal-output" ? "var(--accent-dim)" : "var(--bg)", color: activeTool === "signal-output" ? "var(--accent-ink)" : "var(--text)"
               }}>
-                <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>{T("toolRecCal")}</div>
-                <div style={{ fontSize: 11, lineHeight: 1.6, color: "var(--text-dim)" }}>{T("toolRecCalCardDesc")}</div>
+                <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>{T("toolSignalOutput")}</div>
+                <div style={{ fontSize: 11, lineHeight: 1.6, color: "var(--text-dim)" }}>{T("toolSignalOutputCardDesc")}</div>
               </button>
+              {TOOL_PLUGINS.map((plugin) => (
+                <button key={plugin.id} onClick={() => setActiveTool(plugin.id)} style={{
+                  width: "100%", border: "1px solid var(--border)", borderRadius: 10, padding: "12px 14px", cursor: "pointer", textAlign: "left",
+                  background: activeTool === plugin.id ? "var(--accent-dim)" : "var(--bg)", color: activeTool === plugin.id ? "var(--accent-ink)" : "var(--text)"
+                }}>
+                  <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>{T(plugin.titleKey)}</div>
+                  <div style={{ fontSize: 11, lineHeight: 1.6, color: "var(--text-dim)" }}>{T(plugin.descKey)}</div>
+                </button>
+              ))}
             </div>
 
-            <div style={{ padding: 18, display: "flex", flexDirection: "column", gap: 16 }}>
-              {activeTool === "rec-cal" && <>
+            <div style={{ padding: 18, display: "flex", flexDirection: "column", gap: 16, overflowY: "auto", minHeight: 0 }}>
+              {activeTool === "signal-output" && <>
                 <div>
                   <div style={{ fontSize: 13, fontWeight: 600, color: "var(--accent-ink)", marginBottom: 6 }}>{T("toolDescTitle")}</div>
-                  <div style={{ fontSize: 13, lineHeight: 1.8, color: "var(--text-dim)" }}>{T("toolRecCalDesc")}</div>
+                  <div style={{ fontSize: 13, lineHeight: 1.8, color: "var(--text-dim)" }}>{T("toolSignalOutputDesc")}</div>
                 </div>
 
                 <div style={{ display: "flex", flexWrap: "wrap", gap: 10, alignItems: "center" }}>
@@ -2759,27 +3365,27 @@ export default function CassetteTool() {
                       ...btnTab, minWidth: 54,
                       background: calibrationSide === side ? `var(--side-${side.toLowerCase()})` : "var(--bg-deep)",
                       color: calibrationSide === side ? getContrastColor(side === "A" ? sideColors.sideA : sideColors.sideB) : "var(--text)"
-                    }} disabled={calibrationRunning || calibrationSignalType !== "rec_level_balance"}>
+                    }} disabled={signalOutputRunning || signalOutputType !== "rec_level_balance"}>
                       SIDE {side}
                     </button>
                   ))}
-                  <button onClick={calibrationRunning ? stopCalibration : startCalibration} disabled={processing} style={{
+                  <button onClick={signalOutputRunning ? stopSignalOutput : startSignalOutput} disabled={processing} style={{
                     ...btnS, padding: "8px 14px",
-                    borderColor: calibrationRunning ? "var(--danger)" : "var(--accent)",
-                    color: calibrationRunning ? "var(--danger)" : "var(--accent-ink)"
+                    borderColor: signalOutputRunning ? "var(--danger)" : "var(--accent)",
+                    color: signalOutputRunning ? "var(--danger)" : "var(--accent-ink)"
                   }}>
-                    {calibrationRunning ? T("toolStop") : T("toolStart")}
+                    {signalOutputRunning ? T("toolStop") : T("toolStart")}
                   </button>
                 </div>
 
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                   <label style={{ ...lb, margin: 0 }}>{T("toolSignalPick")}</label>
                   <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))", gap: 8 }}>
-                    {CALIBRATION_SIGNAL_PRESETS.map((preset) => (
-                      <button key={preset.id} onClick={() => setCalibrationSignalType(preset.id)} disabled={calibrationRunning} style={{
+                    {SIGNAL_OUTPUT_PRESETS.map((preset) => (
+                      <button key={preset.id} onClick={() => setSignalOutputType(preset.id)} disabled={signalOutputRunning} style={{
                         border: "1px solid var(--border)", borderRadius: 10, padding: "12px 14px", cursor: "pointer", textAlign: "left",
-                        background: calibrationSignalType === preset.id ? "var(--accent-dim)" : "var(--bg-card)",
-                        color: calibrationSignalType === preset.id ? "var(--accent-ink)" : "var(--text)"
+                        background: signalOutputType === preset.id ? "var(--accent-dim)" : "var(--bg-card)",
+                        color: signalOutputType === preset.id ? "var(--accent-ink)" : "var(--text)"
                       }}>
                         <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>{T(preset.nameKey)}</div>
                         <div style={{ fontSize: 11, lineHeight: 1.7, color: "var(--text-dim)" }}>{T(preset.descKey)}</div>
@@ -2791,15 +3397,15 @@ export default function CassetteTool() {
                 <div style={{ display: "flex", gap: 10, overflowX: "auto", paddingBottom: 2 }}>
                   <div style={{ minWidth: 210, flex: "1.35 1 0", padding: "12px 14px", border: "1px solid var(--border)", borderRadius: 10, background: "var(--bg-card)" }}>
                     <div style={{ fontSize: 11, color: "var(--text-dim)", marginBottom: 4 }}>{T("toolSignalSource")}</div>
-                    <div style={{ fontSize: 14, lineHeight: 1.7 }}>{T(calibrationSignal.sourceKey)}</div>
+                    <div style={{ fontSize: 14, lineHeight: 1.7 }}>{T(signalOutput.sourceKey)}</div>
                   </div>
                   <div style={{ padding: "12px 14px", border: "1px solid var(--border)", borderRadius: 10, background: "var(--bg-card)" }}>
                     <div style={{ fontSize: 11, color: "var(--text-dim)", marginBottom: 4 }}>{T("toolSignalFreq")}</div>
-                    <div style={{ fontSize: 15, color: "var(--text)" }}>{calibrationSignal.freqHz} Hz sine</div>
+                    <div style={{ fontSize: 15, color: "var(--text)" }}>{signalOutput.freqHz} Hz sine</div>
                   </div>
                   <div style={{ padding: "12px 14px", border: "1px solid var(--border)", borderRadius: 10, background: "var(--bg-card)" }}>
                     <div style={{ fontSize: 11, color: "var(--text-dim)", marginBottom: 4 }}>{T("toolSignalLevel")}</div>
-                    <div style={{ fontSize: 15, color: "var(--text)" }}>{Number.isFinite(calibrationSignal.levelDb) ? `${calibrationSignal.levelDb.toFixed(1)} dBFS peak` : "−∞ dBFS"}</div>
+                    <div style={{ fontSize: 15, color: "var(--text)" }}>{Number.isFinite(signalOutput.levelDb) ? `${signalOutput.levelDb.toFixed(1)} dBFS peak` : "−∞ dBFS"}</div>
                   </div>
                   <div style={{ padding: "12px 14px", border: "1px solid var(--border)", borderRadius: 10, background: "var(--bg-card)" }}>
                     <div style={{ fontSize: 11, color: "var(--text-dim)", marginBottom: 4 }}>{T("toolStereoMode")}</div>
@@ -2807,6 +3413,24 @@ export default function CassetteTool() {
                   </div>
                 </div>
               </>}
+              {ActiveToolPluginComponent && <ActiveToolPluginComponent
+                T={T}
+                processing={processing}
+                captureName={deckCalCaptureName}
+                responseAnalysis={responseAnalysis}
+                transportAnalysis={transportAnalysis}
+                programManifestName={deckCalProgramManifestName}
+                recordingKind={deckCalRecordingKind}
+                onLoadProgramManifest={loadDeckCalProgramManifestFile}
+                onClearProgramManifest={clearDeckCalProgramManifest}
+                onExportProgram={exportTestTapeProgram}
+                onImportCapture={importDeckCalCaptureFile}
+                onStartRecording={startDeckCalRecording}
+                onStopRecording={stopDeckCalRecording}
+                onAnalyseCapture={analyseDeckCalCapture}
+                onSaveResponseProfile={saveResponseProfile}
+                onSaveProgramManifest={saveDeckCalProgramManifest}
+              />}
             </div>
           </div>
         </div>
@@ -2954,6 +3578,36 @@ export default function CassetteTool() {
               </div>
             </div>
           </div>
+
+          <div style={{ flexBasis: "100%", height: 0 }} />
+
+          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
+            <label style={{ ...lb, margin: 0 }}>{T("calibrationProfile")}</label>
+            <button onClick={() => calibrationProfileRef.current?.click()} style={btnS} disabled={processing}>{T("loadCalibrationProfile")}</button>
+            <button onClick={clearCalibrationProfile} style={btnS} disabled={processing || !loadedCalibrationProfile}>{T("clearCalibrationProfile")}</button>
+            <span style={{ fontSize: 12, color: "var(--text-dim)", minWidth: 160 }}>{loadedCalibrationProfileName || T("noCalibrationProfile")}</span>
+            <div style={{ width: 1, height: 20, background: "var(--border)", alignSelf: "center", flexShrink: 0 }} />
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <label style={{ ...lb, margin: 0 }}>{T("applyCalibrationPreview")}</label>
+              <button
+                onClick={() => loadedCalibrationProfile && setApplyCalibrationPreview((value) => !value)}
+                style={toggleStyle(!!loadedCalibrationProfile && applyCalibrationPreview)}
+                disabled={!loadedCalibrationProfile}
+              >
+                {!!loadedCalibrationProfile && applyCalibrationPreview ? "ON" : "OFF"}
+              </button>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <label style={{ ...lb, margin: 0 }}>{T("applyCalibrationExport")}</label>
+              <button
+                onClick={() => loadedCalibrationProfile && setApplyCalibrationExport((value) => !value)}
+                style={toggleStyle(!!loadedCalibrationProfile && applyCalibrationExport)}
+                disabled={!loadedCalibrationProfile}
+              >
+                {!!loadedCalibrationProfile && applyCalibrationExport ? "ON" : "OFF"}
+              </button>
+            </div>
+          </div>
         </div>
       </div>
 
@@ -2962,6 +3616,8 @@ export default function CassetteTool() {
         <input ref={fileRef} type="file" multiple accept="audio/*,.ncm" style={{ display: "none" }}
           onChange={e => { if (e.target.files.length > 0) loadFiles(Array.from(e.target.files), activeTab); e.target.value = ""; }} />
         <input ref={plRef} type="file" accept=".json" style={{ display: "none" }} onChange={importPL} />
+        <input ref={calibrationProfileRef} type="file" accept=".json,application/json" style={{ display: "none" }}
+          onChange={async e => { const file = e.target.files?.[0]; if (file) await loadCalibrationProfileFile(file); e.target.value = ""; }} />
         <div className="actionBarMain">
           <button onClick={() => fileRef.current?.click()} style={btnP} disabled={processing}><IconAdd size={16} /> {T("addFiles")} → SIDE {activeTab}</button>
           <button onClick={autoDistribute} style={btnS} disabled={processing || !tracks.length}><IconAutoAwesome size={16} /> {T("autoDistribute")}</button>

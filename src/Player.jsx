@@ -29,44 +29,93 @@ const VINYL_ERAS = ["modern","classic","vintage","effect"];
 const VINYL_CRACKLE = ["off","low","mid","high"];
 const MODE_LABEL = {vfd:"VFD",vu:"VU",spectrum:"FFT",waveform:"WAVE",waterfall:"SGRAM",oscilloscope:"VECT"};
 const FONT = "'Noto Sans SC','Noto Sans JP','Hiragino Sans','Microsoft YaHei',system-ui,sans-serif";
+const LCD_FONT = "'Pixel Operator','JetBrains Mono',monospace";
 const IDLE_SCOPE_BUFFER = new Float32Array(512);
 const BITMAP_FONT = {
   " ": ["00000","00000","00000","00000","00000","00000","00000"],
+  "!": ["00100","00100","00100","00100","00000","00000","00100"],
+  "\"": ["01010","01010","01010","00000","00000","00000","00000"],
+  "#": ["01010","01010","11111","01010","11111","01010","01010"],
+  "$": ["00100","01111","10100","01110","00101","11110","00100"],
+  "%": ["11001","11010","00100","01000","00100","01011","10011"],
+  "&": ["01100","10010","10100","01000","10101","10001","01010"],
+  "'": ["00100","00100","01000","00000","00000","00000","00000"],
+  "(": ["00010","00100","01000","01000","01000","00100","00010"],
+  ")": ["01000","00100","00010","00010","00010","00100","01000"],
+  "*": ["00000","00100","10101","01110","10101","00100","00000"],
   "+": ["00000","00100","00100","11111","00100","00100","00000"],
+  ",": ["00000","00000","00000","00000","01100","00100","01000"],
   "-": ["00000","00000","00000","11111","00000","00000","00000"],
   ".": ["00000","00000","00000","00000","00000","01100","01100"],
-  ":": ["00000","01100","01100","00000","01100","01100","00000"],
-  "/": ["00001","00010","00100","01000","10000","00000","00000"],
-  "0": ["01110","10001","10011","10101","11001","10001","01110"],
+  "/": ["00000","00001","00010","00100","01000","10000","00000"],
+  "0": ["01110","10001","10001","10001","10001","10001","01110"],
   "1": ["00100","01100","00100","00100","00100","00100","01110"],
   "2": ["01110","10001","00001","00010","00100","01000","11111"],
-  "3": ["11110","00001","00001","01110","00001","00001","11110"],
+  "3": ["11111","00010","00100","00010","00001","10001","01110"],
   "4": ["00010","00110","01010","10010","11111","00010","00010"],
-  "5": ["11111","10000","10000","11110","00001","00001","11110"],
-  "6": ["01110","10000","10000","11110","10001","10001","01110"],
+  "5": ["11111","10000","11110","00001","00001","10001","01110"],
+  "6": ["00110","01000","10000","11110","10001","10001","01110"],
   "7": ["11111","00001","00010","00100","01000","01000","01000"],
   "8": ["01110","10001","10001","01110","10001","10001","01110"],
-  "9": ["01110","10001","10001","01111","00001","00001","01110"],
+  "9": ["01110","10001","10001","01111","00001","00010","01100"],
+  ":": ["00000","01100","01100","00000","01100","01100","00000"],
+  ";": ["00000","01100","01100","00000","01100","00100","01000"],
+  "<": ["00010","00100","01000","10000","01000","00100","00010"],
+  "=": ["00000","00000","11111","00000","11111","00000","00000"],
+  ">": ["01000","00100","00010","00001","00010","00100","01000"],
+  "?": ["01110","10001","00001","00010","00100","00000","00100"],
   "A": ["01110","10001","10001","11111","10001","10001","10001"],
+  "B": ["11110","10001","10001","11110","10001","10001","11110"],
   "C": ["01110","10001","10000","10000","10000","10001","01110"],
   "D": ["11110","10001","10001","10001","10001","10001","11110"],
   "E": ["11111","10000","10000","11110","10000","10000","11111"],
   "F": ["11111","10000","10000","11110","10000","10000","10000"],
+  "G": ["01110","10001","10000","10111","10001","10001","01111"],
   "H": ["10001","10001","10001","11111","10001","10001","10001"],
+  "I": ["01110","00100","00100","00100","00100","00100","01110"],
+  "J": ["00001","00001","00001","00001","10001","10001","01110"],
   "K": ["10001","10010","10100","11000","10100","10010","10001"],
   "L": ["10000","10000","10000","10000","10000","10000","11111"],
   "M": ["10001","11011","10101","10101","10001","10001","10001"],
   "N": ["10001","11001","10101","10011","10001","10001","10001"],
   "O": ["01110","10001","10001","10001","10001","10001","01110"],
+  "P": ["11110","10001","10001","11110","10000","10000","10000"],
   "Q": ["01110","10001","10001","10001","10101","10010","01101"],
   "R": ["11110","10001","10001","11110","10100","10010","10001"],
-  "S": ["01111","10000","10000","01110","00001","00001","11110"],
+  "S": ["01110","10001","10000","01110","00001","10001","01110"],
   "T": ["11111","00100","00100","00100","00100","00100","00100"],
   "U": ["10001","10001","10001","10001","10001","10001","01110"],
   "V": ["10001","10001","10001","10001","10001","01010","00100"],
+  "W": ["10001","10001","10001","10101","10101","11011","10001"],
   "X": ["10001","10001","01010","00100","01010","10001","10001"],
-  "Y": ["10001","10001","01010","00100","00100","00100","00100"],
+  "Y": ["10001","10001","10001","01010","00100","00100","00100"],
   "Z": ["11111","00001","00010","00100","01000","10000","11111"],
+  "a": ["00000","00000","01110","00001","01111","10001","01111"],
+  "b": ["10000","10000","10110","11001","10001","10001","11110"],
+  "c": ["00000","00000","01110","10000","10000","10001","01110"],
+  "d": ["00001","00001","01101","10011","10001","10001","01111"],
+  "e": ["00000","00000","01110","10001","11111","10000","01110"],
+  "f": ["00110","01001","01000","11110","01000","01000","01000"],
+  "g": ["00000","01111","10001","10001","01111","00001","01110"],
+  "h": ["10000","10000","10110","11001","10001","10001","10001"],
+  "i": ["00100","00000","01100","00100","00100","00100","01110"],
+  "j": ["00010","00000","00010","00010","00010","10010","01100"],
+  "k": ["10000","10000","10010","10100","11000","10100","10010"],
+  "l": ["01100","00100","00100","00100","00100","00100","01110"],
+  "m": ["00000","00000","11010","10101","10101","10101","10101"],
+  "n": ["00000","00000","11110","10001","10001","10001","10001"],
+  "o": ["00000","00000","01110","10001","10001","10001","01110"],
+  "p": ["00000","11110","10001","10001","11110","10000","10000"],
+  "q": ["00000","01101","10011","10011","01101","00001","00001"],
+  "r": ["00000","00000","10110","11001","10000","10000","10000"],
+  "s": ["00000","00000","01110","10000","01110","00001","11110"],
+  "t": ["01000","11100","01000","01000","01000","01001","00110"],
+  "u": ["00000","00000","10001","10001","10001","10011","01101"],
+  "v": ["00000","00000","10001","10001","10001","01010","00100"],
+  "w": ["00000","00000","10001","10101","10101","10101","01010"],
+  "x": ["00000","00000","10001","01010","00100","01010","10001"],
+  "y": ["00000","10001","10001","10001","01111","00001","01110"],
+  "z": ["00000","00000","11111","00010","00100","01000","11111"],
 };
 const OSCILLOSCOPE_THEMES = [
   {
@@ -134,7 +183,9 @@ const OSCILLOSCOPE_THEMES = [
     lineWidth: 1.1,
     blur: 0,
     labelAccent: "#334155",
-    fontMode: "dot",
+    fontMode: "lcd",
+    isLCD: true,
+    quantize: 3,
   },
   {
     id: "lcd-color",
@@ -157,7 +208,9 @@ const OSCILLOSCOPE_THEMES = [
     lineWidth: 1.15,
     blur: 0,
     labelAccent: "#c9d8f0",
-    fontMode: "dot",
+    fontMode: "lcd",
+    isLCD: true,
+    quantize: 3,
   },
 ];
 
@@ -288,14 +341,19 @@ function Player({
   const decayRef = useRef({dL:0,dR:0,pL:0,pR:0});
   const specPeakRef = useRef(Array.from({length: SPEC_BANDS}, () => ({ level: 0, hold: 0 })));
   const [scopeThemeIndex, setScopeThemeIndex] = useState(0);
-  const [scopeMenuOpen, setScopeMenuOpen] = useState(false);
-  const [scopePrecisionPoints, setScopePrecisionPoints] = useState(8192);
+  const [scopeFftSize, setScopeFftSize] = useState(1024);
+  const [scopePrecisionPoints, setScopePrecisionPoints] = useState(65536);
   const [scopeZoom, setScopeZoom] = useState(0.7);
-  const [scopeSmooth, setScopeSmooth] = useState(0.28);
-  const [scopeLineScale, setScopeLineScale] = useState(1);
-  const [scopeGlowScale, setScopeGlowScale] = useState(1);
-  const [scopeGridScale, setScopeGridScale] = useState(1);
-  const [scopeNoiseScale, setScopeNoiseScale] = useState(1);
+  const [scopeSmooth, setScopeSmooth] = useState(0.05);
+  const [scopeLineScale, setScopeLineScale] = useState(0.2);
+  const [scopeGlowScale, setScopeGlowScale] = useState(2);
+  const [scopeGridScale, setScopeGridScale] = useState(3);
+  const [scopeNoiseScale, setScopeNoiseScale] = useState(2);
+
+  useEffect(() => {
+    if (analyserL) analyserL.fftSize = scopeFftSize;
+    if (analyserR) analyserR.fftSize = scopeFftSize;
+  }, [analyserL, analyserR, scopeFftSize]);
   // DOM refs for direct 60fps update — no React re-render
   const posRef = useRef(null);
   const progRef = useRef(null);
@@ -487,13 +545,17 @@ function Player({
   // ── Animation loop ───────────────────────────────────────
   useEffect(() => {
     if (!playing || paused || !analyserL || !analyserR) return;
-    const bufL = new Float32Array(analyserL.fftSize);
-    const bufR = new Float32Array(analyserR.fftSize);
+    let bufL = new Float32Array(analyserL.fftSize);
+    let bufR = new Float32Array(analyserR.fftSize);
     const freqL = new Float32Array(analyserL.frequencyBinCount);
     const freqR = new Float32Array(analyserR.frequencyBinCount);
     const dr = decayRef.current;
 
     const tick = () => {
+      if (bufL.length !== analyserL.fftSize) {
+        bufL = new Float32Array(analyserL.fftSize);
+        bufR = new Float32Array(analyserR.fftSize);
+      }
       analyserL.getFloatTimeDomainData(bufL);
       analyserR.getFloatTimeDomainData(bufR);
       scopeFreezeRef.current = { left: bufL.slice(), right: bufR.slice() };
@@ -809,72 +871,13 @@ function Player({
           <IconEqualizer size={14}/>{MODE_LABEL[meterMode]}
         </button>
         {meterMode==="oscilloscope"&&(
-          <>
-            <button onClick={()=>setScopeThemeIndex(i => (i + 1) % OSCILLOSCOPE_THEMES.length)}
-              title={scopeTheme.title}
-              style={{height:32,display:"flex",alignItems:"center",gap:4,padding:"0 12px",
-                background:scopeTheme.screen,border:`1px solid ${scopeTheme.shellBorder}`,borderRadius:5,
-                color:scopeTheme.labelAccent,cursor:"pointer",fontSize:11,boxShadow:`inset 0 0 0 1px ${scopeTheme.gridMinor}`}}>
-              <IconPalette size={14}/>{scopeTheme.buttonLabel}
-            </button>
-            <div style={{position:"relative"}}>
-              <button onClick={()=>setScopeMenuOpen(v=>!v)}
-                title="Vectorscope Parameters"
-                style={{height:32,display:"flex",alignItems:"center",gap:4,padding:"0 12px",
-                  background:"var(--bg-deep)",border:"1px solid var(--border)",borderRadius:5,
-                  color:"var(--text-dim)",cursor:"pointer",fontSize:11}}>
-                <IconTool size={14}/>PARAM
-              </button>
-              {scopeMenuOpen&&(
-                <div style={{position:"absolute",top:36,right:0,zIndex:6,width:220,padding:10,
-                  background:"var(--bg-card)",border:"1px solid var(--border)",borderRadius:8,
-                  boxShadow:"0 12px 24px rgba(0,0,0,0.12)",display:"grid",gap:8}}>
-                  <label style={{display:"grid",gap:4,fontSize:11,color:"var(--text-dim)"}}>
-                    <span>Precision</span>
-                    <input type="number" min="512" step="256" value={scopePrecisionPoints}
-                      onChange={(e)=>setScopePrecisionPoints(Math.max(512, Number(e.target.value) || 512))}
-                      style={{height:28,background:"var(--bg)",border:"1px solid var(--border)",borderRadius:5,color:"var(--text)",padding:"0 8px"}}/>
-                  </label>
-                  <label style={{display:"grid",gap:4,fontSize:11,color:"var(--text-dim)"}}>
-                    <span>Zoom</span>
-                    <input type="number" min="0.1" max="2" step="0.01" value={scopeZoom}
-                      onChange={(e)=>setScopeZoom(Math.max(0.1, Number(e.target.value) || 0.1))}
-                      style={{height:28,background:"var(--bg)",border:"1px solid var(--border)",borderRadius:5,color:"var(--text)",padding:"0 8px"}}/>
-                  </label>
-                  <label style={{display:"grid",gap:4,fontSize:11,color:"var(--text-dim)"}}>
-                    <span>Smoothing</span>
-                    <input type="number" min="0.01" max="1" step="0.01" value={scopeSmooth}
-                      onChange={(e)=>setScopeSmooth(Math.max(0.01, Number(e.target.value) || 0.01))}
-                      style={{height:28,background:"var(--bg)",border:"1px solid var(--border)",borderRadius:5,color:"var(--text)",padding:"0 8px"}}/>
-                  </label>
-                  <label style={{display:"grid",gap:4,fontSize:11,color:"var(--text-dim)"}}>
-                    <span>Line</span>
-                    <input type="number" min="0.2" max="4" step="0.05" value={scopeLineScale}
-                      onChange={(e)=>setScopeLineScale(Math.max(0.2, Number(e.target.value) || 0.2))}
-                      style={{height:28,background:"var(--bg)",border:"1px solid var(--border)",borderRadius:5,color:"var(--text)",padding:"0 8px"}}/>
-                  </label>
-                  <label style={{display:"grid",gap:4,fontSize:11,color:"var(--text-dim)"}}>
-                    <span>Glow</span>
-                    <input type="number" min="0" max="4" step="0.05" value={scopeGlowScale}
-                      onChange={(e)=>setScopeGlowScale(Math.max(0, Number(e.target.value) || 0))}
-                      style={{height:28,background:"var(--bg)",border:"1px solid var(--border)",borderRadius:5,color:"var(--text)",padding:"0 8px"}}/>
-                  </label>
-                  <label style={{display:"grid",gap:4,fontSize:11,color:"var(--text-dim)"}}>
-                    <span>Grid</span>
-                    <input type="number" min="0" max="4" step="0.05" value={scopeGridScale}
-                      onChange={(e)=>setScopeGridScale(Math.max(0, Number(e.target.value) || 0))}
-                      style={{height:28,background:"var(--bg)",border:"1px solid var(--border)",borderRadius:5,color:"var(--text)",padding:"0 8px"}}/>
-                  </label>
-                  <label style={{display:"grid",gap:4,fontSize:11,color:"var(--text-dim)"}}>
-                    <span>Noise</span>
-                    <input type="number" min="0" max="4" step="0.05" value={scopeNoiseScale}
-                      onChange={(e)=>setScopeNoiseScale(Math.max(0, Number(e.target.value) || 0))}
-                      style={{height:28,background:"var(--bg)",border:"1px solid var(--border)",borderRadius:5,color:"var(--text)",padding:"0 8px"}}/>
-                  </label>
-                </div>
-              )}
-            </div>
-          </>
+          <button onClick={()=>setScopeThemeIndex(i => (i + 1) % OSCILLOSCOPE_THEMES.length)}
+            title={scopeTheme.title}
+            style={{height:32,display:"flex",alignItems:"center",gap:4,padding:"0 12px",
+              background:scopeTheme.screen,border:`1px solid ${scopeTheme.shellBorder}`,borderRadius:5,
+              color:scopeTheme.labelAccent,cursor:"pointer",fontSize:11,boxShadow:`inset 0 0 0 1px ${scopeTheme.gridMinor}`}}>
+            <IconPalette size={14}/>{scopeTheme.buttonLabel}
+          </button>
         )}
         <button onClick={()=>setSimMode(m=>SIM_MODES[(SIM_MODES.indexOf(m)+1)%SIM_MODES.length])}
           title={simTitle}
@@ -989,9 +992,42 @@ function Player({
             background: scopeTheme.shellFill,
             border: `1.5px solid ${scopeTheme.shellBorder}`,
             boxShadow: `inset 0 1px 0 rgba(255,255,255,0.08), 0 18px 32px ${scopeTheme.shellShadow}`,
+            position: "relative"
           }}>
             <canvas ref={scopeRef}
               style={{width:"100%",height:296,borderRadius:16,display:"block",background:scopeTheme.screen}}/>
+            
+            <div style={{
+              position: "absolute", top: 18, right: 18, bottom: 18, width: 84,
+              borderLeft: `1.5px solid ${scopeTheme.gridMajor}`,
+              background: withAlpha(scopeTheme.screen, 0.4),
+              display: "flex", flexDirection: "column",
+              borderTopRightRadius: 16, borderBottomRightRadius: 16,
+              overflow: "hidden"
+            }}>
+              {[
+                { label: "MEMORY", value: scopeFftSize, cycle: () => setScopeFftSize(v => { const o = [1024, 2048, 4096, 8192, 16384, 32768]; return o[(o.indexOf(v)+1)%o.length] || 32768; }) },
+                { label: "PRECIS", value: scopePrecisionPoints, cycle: () => setScopePrecisionPoints(v => { const o = [1024, 2048, 4096, 8192, 16384, 32768, 65536]; return o[(o.indexOf(v)+1)%o.length] || 65536; }) },
+                { label: "ZOOM", value: scopeZoom.toFixed(2), cycle: () => setScopeZoom(v => { const o = [0.5, 0.7, 0.85, 1.0, 1.25, 1.5, 2.0]; return o[(o.indexOf(v)+1)%o.length] || 0.7; }) },
+                { label: "SMOOTH", value: scopeSmooth.toFixed(2), cycle: () => setScopeSmooth(v => { const o = [0.01, 0.05, 0.1, 0.28, 0.5, 0.8]; return o[(o.indexOf(v)+1)%o.length] || 0.05; }) },
+                { label: "LINE", value: scopeLineScale.toFixed(2), cycle: () => setScopeLineScale(v => { const o = [0.2, 0.5, 1.0, 1.5, 2.0]; return o[(o.indexOf(v)+1)%o.length] || 0.2; }) },
+                { label: "GLOW", value: scopeGlowScale, cycle: () => setScopeGlowScale(v => (v + 1) % 5) },
+                { label: "GRID", value: scopeGridScale, cycle: () => setScopeGridScale(v => (v + 1) % 5) },
+              ].map((item, idx, arr) => (
+                <div key={item.label} onClick={item.cycle} style={{
+                  flex: 1, display: "flex", flexDirection: "column", justifyContent: "center", alignItems: "center",
+                  borderBottom: idx === arr.length - 1 ? "none" : `1px solid ${withAlpha(scopeTheme.gridMajor, 0.5)}`,
+                  cursor: "pointer", userSelect: "none",
+                  color: scopeTheme.text, fontSize: scopeTheme.isLCD ? 13 : 11, fontFamily: scopeTheme.isLCD ? LCD_FONT : "monospace",
+                  background: "transparent", transition: "background 0.1s"
+                }}
+                onMouseEnter={e => e.currentTarget.style.background = withAlpha(scopeTheme.gridMinor, 0.5)}
+                onMouseLeave={e => e.currentTarget.style.background = "transparent"}>
+                  <div style={{opacity: 0.7, fontSize: scopeTheme.isLCD ? 11 : 10}}>{item.label}</div>
+                  <div style={{color: scopeTheme.labelAccent, fontWeight: "bold", marginTop: 2, fontSize: scopeTheme.isLCD ? 15 : undefined}}>{item.value}</div>
+                </div>
+              ))}
+            </div>
           </div>
         )}
       </div>
@@ -1080,16 +1116,22 @@ function drawVectorscopeScreen({
   gridScale,
   noiseScale,
 }) {
-  ctx.clearRect(0, 0, w, h);
-  ctx.fillStyle = theme.screen;
-  ctx.fillRect(0, 0, w, h);
+  if (theme.isLCD) {
+    ctx.clearRect(0, 0, w, h);
+    ctx.fillStyle = theme.screen;
+    ctx.fillRect(0, 0, w, h);
+  } else {
+    ctx.fillStyle = withAlpha(theme.screen, 0.25);
+    ctx.fillRect(0, 0, w, h);
+  }
 
+  const rightMargin = 104; // Leaves room for the right-side OSD menu without traces colliding with it
   const padX = 22;
-  const padTop = theme.fontMode === "dot" ? 34 : 20;
+  const padTop = theme.isLCD ? 26 : theme.fontMode === "dot" ? 34 : 20;
   const padBottom = 24;
-  const plotSize = Math.max(1, Math.min(w - padX * 2, h - padTop - padBottom));
+  const plotSize = Math.max(1, Math.min(w - padX * 2 - rightMargin, h - padTop - padBottom));
   const plotRect = {
-    x: Math.round((w - plotSize) / 2),
+    x: Math.round((w - rightMargin - plotSize) / 2),
     y: padTop,
     w: plotSize,
     h: plotSize,
@@ -1182,32 +1224,43 @@ function drawVectorscopeGrid(ctx, rect, theme, gridScale = 1) {
 function drawVectorscopeTrace(ctx, leftSamples, rightSamples, rect, theme, precisionPoints, zoom, smoothing, lineScale = 1, glowScale = 1) {
   const limit = Math.min(leftSamples.length, rightSamples.length);
   const desiredPoints = precisionPoints || 6144;
-  const step = Math.max(1, Math.floor(limit / desiredPoints));
+  const smooth = smoothing || 0.28;
+  const step = smooth <= 0.02 ? 1 : Math.max(1, Math.floor(limit / desiredPoints));
   const centerX = rect.x + rect.w / 2;
   const centerY = rect.y + rect.h / 2;
   const radius = rect.w * 0.485;
   let avgL = 0;
   let avgR = 0;
-  const smooth = smoothing || 0.28;
+  let velL = 0;
+  let velR = 0;
+  const spring = smooth * 0.8;
+  const friction = 0.82 + (smooth * 0.1);
   const safeZoom = Math.max(0.05, zoom || 0.7);
   const scale = radius * safeZoom;
   const points = [];
   for (let i = 0; i < limit; i += step) {
     const l = leftSamples[i] || 0;
     const r = rightSamples[i] || 0;
-    avgL += (l - avgL) * smooth;
-    avgR += (r - avgR) * smooth;
+    if (smooth <= 0.02) {
+      avgL = l;
+      avgR = r;
+    } else {
+      velL += (l - avgL) * spring;
+      velR += (r - avgR) * spring;
+      velL *= friction;
+      velR *= friction;
+      avgL += velL;
+      avgR += velR;
+    }
     const xRaw = centerX + avgL * scale;
     const yRaw = centerY - avgR * scale;
+    const quantize = theme.quantize || theme.yQuantize;
     points.push({
-      x: theme.yQuantize ? Math.round(xRaw / theme.yQuantize) * theme.yQuantize : xRaw,
-      y: theme.yQuantize ? Math.round(yRaw / theme.yQuantize) * theme.yQuantize : yRaw,
+      x: quantize ? Math.round(xRaw / quantize) * quantize : xRaw,
+      y: quantize ? Math.round(yRaw / quantize) * quantize : yRaw,
     });
   }
   ctx.save();
-  ctx.beginPath();
-  ctx.rect(rect.x, rect.y, rect.w, rect.h);
-  ctx.clip();
   ctx.strokeStyle = theme.traceA;
   ctx.shadowColor = theme.glow;
   ctx.shadowBlur = theme.blur * glowScale;
@@ -1229,6 +1282,16 @@ function drawVectorscopeTrace(ctx, leftSamples, rightSamples, rect, theme, preci
     else ctx.lineTo(points[i].x, points[i].y);
   }
   ctx.stroke();
+
+  if (!theme.isLCD) {
+    ctx.globalAlpha = 0.08 * glowScale;
+    ctx.fillStyle = theme.glow;
+    ctx.shadowBlur = 0;
+    for (let i = 0; i < points.length; i += 2) {
+      ctx.fillRect(points[i].x - 0.75, points[i].y - 0.75, 1.5, 1.5);
+    }
+  }
+
   ctx.restore();
 }
 
@@ -1246,7 +1309,7 @@ function drawScopeNoise(ctx, w, h, theme, noiseScale = 1) {
 
 function drawScopeOverlay(ctx, w, h, theme) {
   ctx.save();
-  if (theme.fontMode !== "dot") {
+  if (!theme.isLCD && theme.fontMode !== "dot") {
     for (let y = 0; y < h; y += 3) {
       ctx.fillStyle = theme.scanline;
       ctx.fillRect(0, y, w, 1);
@@ -1254,7 +1317,7 @@ function drawScopeOverlay(ctx, w, h, theme) {
   }
   const vignette = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.1, w / 2, h / 2, Math.max(w, h) * 0.65);
   vignette.addColorStop(0, "rgba(255,255,255,0)");
-  vignette.addColorStop(1, theme.fontMode === "dot" ? "rgba(0,0,0,0.12)" : "rgba(0,0,0,0.34)");
+  vignette.addColorStop(1, theme.isLCD || theme.fontMode === "dot" ? "rgba(0,0,0,0.12)" : "rgba(0,0,0,0.34)");
   ctx.fillStyle = vignette;
   ctx.fillRect(0, 0, w, h);
   ctx.restore();
@@ -1277,40 +1340,45 @@ function drawVectorscopeLabels(ctx, {
   const bottomMidLeft = formatScopeChannelInfo(sampleRate, fftSize);
   const bottomCenter = `${side || "A"} ${formatScopeClock(positionSec)}`;
   const bottomRight = "L+R";
+  const rightMargin = 104;
+  const effectiveW = w - rightMargin;
+
   if (theme.fontMode === "dot") {
     drawBitmapText(ctx, topLeft, 12, 8, { color: theme.text, align: "left", baseline: "top", scale: 1.5, gap: 1 });
-    drawBitmapText(ctx, topCenter, w / 2, 8, { color: theme.labelAccent, align: "center", baseline: "top", scale: 1.8, gap: 1 });
-    drawBitmapText(ctx, "AUTO", w - 12, 8, { color: theme.text, align: "right", baseline: "top", scale: 1.8, gap: 1 });
+    drawBitmapText(ctx, topCenter, effectiveW / 2, 8, { color: theme.labelAccent, align: "center", baseline: "top", scale: 1.8, gap: 1 });
+    drawBitmapText(ctx, "AUTO", effectiveW - 6, 8, { color: theme.text, align: "right", baseline: "top", scale: 1.8, gap: 1 });
     drawBitmapText(ctx, bottomLeft, 12, h - 8, { color: theme.text, align: "left", baseline: "bottom", scale: 1.8, gap: 1 });
     drawBitmapText(ctx, bottomMidLeft, 58, h - 8, { color: theme.text, align: "left", baseline: "bottom", scale: 1.8, gap: 1 });
-    drawBitmapText(ctx, bottomCenter, w / 2, h - 8, { color: theme.labelAccent, align: "center", baseline: "bottom", scale: 1.8, gap: 1 });
-    drawBitmapText(ctx, bottomRight, w - 12, h - 8, { color: theme.text, align: "right", baseline: "bottom", scale: 1.8, gap: 1 });
+    drawBitmapText(ctx, bottomCenter, effectiveW / 2, h - 8, { color: theme.labelAccent, align: "center", baseline: "bottom", scale: 1.8, gap: 1 });
+    drawBitmapText(ctx, bottomRight, effectiveW - 6, h - 8, { color: theme.text, align: "right", baseline: "bottom", scale: 1.8, gap: 1 });
     return;
   }
+  const labelFont = theme.isLCD ? LCD_FONT : FONT;
+  const labelFontSize = theme.isLCD ? 16 : 11;
   ctx.save();
-  ctx.font = `11px ${FONT}`;
+  ctx.font = `${labelFontSize}px ${labelFont}`;
   ctx.fillStyle = theme.text;
   ctx.textBaseline = "top";
   ctx.fillText(topLeft, 12, 8);
   ctx.textAlign = "center";
   ctx.fillStyle = theme.labelAccent;
-  ctx.fillText(topCenter, w / 2, 8);
+  ctx.fillText(topCenter, effectiveW / 2, 8);
   ctx.textAlign = "right";
   ctx.fillStyle = theme.text;
-  ctx.fillText("Auto", w - 12, 8);
+  ctx.fillText("Auto", effectiveW - 6, 8);
   ctx.textAlign = "left";
   ctx.textBaseline = "bottom";
   ctx.fillText(bottomLeft, 12, h - 8);
   ctx.fillText(bottomMidLeft, 54, h - 8);
   ctx.textAlign = "center";
-  ctx.fillText(bottomCenter, w / 2, h - 8);
+  ctx.fillText(bottomCenter, effectiveW / 2, h - 8);
   ctx.textAlign = "right";
-  ctx.fillText(bottomRight, w - 12, h - 8);
+  ctx.fillText(bottomRight, effectiveW - 6, h - 8);
   ctx.restore();
 }
 
 function drawBitmapText(ctx, text, x, y, { color, align = "left", baseline = "top", scale = 1.8, gap = 1 }) {
-  const chars = String(text).toUpperCase().split("");
+  const chars = String(text).split("");
   const glyphW = 5;
   const glyphH = 7;
   const advance = glyphW + gap;
@@ -1324,7 +1392,7 @@ function drawBitmapText(ctx, text, x, y, { color, align = "left", baseline = "to
   ctx.save();
   ctx.fillStyle = color;
   chars.forEach((char, index) => {
-    const glyph = BITMAP_FONT[char] || BITMAP_FONT[" "];
+    const glyph = BITMAP_FONT[char] || BITMAP_FONT[char.toUpperCase()] || BITMAP_FONT[" "];
     for (let py = 0; py < glyphH; py++) {
       const row = glyph[py] || "00000";
       for (let px = 0; px < glyphW; px++) {
