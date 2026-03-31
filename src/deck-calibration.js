@@ -1,3 +1,6 @@
+import { buildFrequencyGridHz } from "./modules/player-profile/frequency-grid.js";
+import { smoothLogCurve } from "./modules/player-profile/response-curve.js";
+
 const TWO_PI = Math.PI * 2;
 
 export const RESPONSE_MEASUREMENT_SPEC = {
@@ -10,6 +13,9 @@ export const RESPONSE_MEASUREMENT_SPEC = {
   startHz: 20,
   endHz: 18000,
   amplitude: 0.72,
+  pointsPerOctave: 24,
+  smoothingOctaves: 1 / 12,
+  correctionLimitDb: 12,
 };
 
 export const TRANSPORT_MEASUREMENT_SPEC = {
@@ -150,6 +156,24 @@ export function monoFromAudioBuffer(audioBuffer) {
   return mono;
 }
 
+function stereoFromAudioBuffer(audioBuffer) {
+  const channels = Math.max(1, audioBuffer.numberOfChannels || 1);
+  const left = audioBuffer.getChannelData(0).slice();
+  const right = audioBuffer.getChannelData(Math.min(1, channels - 1)).slice();
+  return {
+    left,
+    right,
+    sampleRate: audioBuffer.sampleRate,
+  };
+}
+
+function averageStereo(left, right) {
+  const length = Math.min(left.length, right.length);
+  const mono = new Float32Array(length);
+  for (let i = 0; i < length; i++) mono[i] = (left[i] + right[i]) * 0.5;
+  return mono;
+}
+
 export function resampleLinear(input, fromRate, toRate) {
   if (fromRate === toRate) return input.slice();
   const ratio = toRate / fromRate;
@@ -235,17 +259,31 @@ function detectSyncPair(signal, measurement, options = {}) {
   return { start, end };
 }
 
-function sliceAndNormalizeMain(signal, measurement, options = {}) {
+function detectMainBounds(signal, measurement, options = {}) {
   const sr = measurement.spec.sampleRate;
   const { start, end } = detectSyncPair(signal, measurement, options);
   const detectedMainStart = start.pos + measurement.syncStart.length + Math.round(measurement.spec.gapSec * sr);
   const detectedMainEnd = end.pos - Math.round(measurement.spec.gapSec * sr);
-  const detectedLength = Math.max(1, detectedMainEnd - detectedMainStart);
-  const main = signal.slice(detectedMainStart, detectedMainEnd);
+  return { startSample: detectedMainStart, endSample: detectedMainEnd };
+}
+
+function normalizeMainSlice(signal, measurement, startSample, endSample) {
+  const sr = measurement.spec.sampleRate;
+  const detectedLength = Math.max(1, endSample - startSample);
+  const main = signal.slice(startSample, endSample);
   const normalized = resampleLinear(main, sr, sr * (measurement.mainLength / detectedLength));
   const fixed = new Float32Array(measurement.mainLength);
   fixed.set(normalized.subarray(0, Math.min(measurement.mainLength, normalized.length)));
-  return { main: fixed, startSample: detectedMainStart, endSample: detectedMainEnd };
+  return fixed;
+}
+
+function sliceAndNormalizeMain(signal, measurement, options = {}) {
+  const bounds = detectMainBounds(signal, measurement, options);
+  return {
+    main: normalizeMainSlice(signal, measurement, bounds.startSample, bounds.endSample),
+    startSample: bounds.startSample,
+    endSample: bounds.endSample,
+  };
 }
 
 export function generateTestTapeProgram(spec = TEST_TAPE_PROGRAM_SPEC) {
@@ -293,56 +331,72 @@ function goertzelMagnitude(data, center, length, freqHz, sampleRate) {
   return Math.sqrt(Math.max(power, 1e-18));
 }
 
-function smoothLogSeries(values) {
-  const out = new Array(values.length).fill(0);
-  for (let i = 0; i < values.length; i++) {
-    let sum = 0;
-    let count = 0;
-    for (let j = Math.max(0, i - 2); j <= Math.min(values.length - 1, i + 2); j++) {
-      sum += values[j];
-      count += 1;
-    }
-    out[i] = sum / Math.max(1, count);
-  }
-  return out;
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
 }
 
-function analyseResponseMono(mono, measurement, detectOptions = {}) {
+function buildResponseFrequencies(measurement) {
+  return buildFrequencyGridHz(
+    measurement.spec.startHz,
+    measurement.spec.endHz,
+    measurement.spec.pointsPerOctave || 24,
+  );
+}
+
+function analyseResponseChannel(main, measurement, frequenciesHz) {
   const sr = measurement.spec.sampleRate;
-  const { main, startSample, endSample } = sliceAndNormalizeMain(mono, measurement, detectOptions);
-  const points = 72;
-  const freqs = [];
   const measuredDb = [];
   const correctionDb = [];
-  for (let i = 0; i < points; i++) {
-    const ratio = i / Math.max(1, points - 1);
-    const freq = measurement.spec.startHz * Math.pow(measurement.spec.endHz / measurement.spec.startHz, ratio);
+  for (const freq of frequenciesHz) {
     const t = Math.log(freq / measurement.spec.startHz) / Math.log(measurement.spec.endHz / measurement.spec.startHz);
     const center = Math.round(t * (measurement.mainLength - 1));
-    const cycles = Math.max(8, Math.min(64, Math.round((sr / Math.max(freq, 1)) * 10)));
+    const cycles = Math.max(8, Math.min(96, Math.round((sr / Math.max(freq, 1)) * 10)));
     const refMag = goertzelMagnitude(measurement.referenceMain, center, cycles, freq, sr);
     const recMag = goertzelMagnitude(main, center, cycles, freq, sr);
     const response = 20 * Math.log10((recMag + 1e-12) / (refMag + 1e-12));
-    freqs.push(freq);
     measuredDb.push(response);
     correctionDb.push(-response);
   }
-  const smoothedMeasured = smoothLogSeries(measuredDb);
-  const smoothedCorrection = smoothLogSeries(correctionDb).map((value) => Math.max(-12, Math.min(12, value)));
+  const smoothedMeasured = smoothLogCurve(
+    frequenciesHz,
+    measuredDb,
+    measurement.spec.smoothingOctaves || (1 / 12),
+  );
+  const smoothedCorrection = smoothLogCurve(
+    frequenciesHz,
+    correctionDb,
+    measurement.spec.smoothingOctaves || (1 / 12),
+  ).map((value) => clamp(value, -(measurement.spec.correctionLimitDb || 12), measurement.spec.correctionLimitDb || 12));
+  return {
+    measuredDb: smoothedMeasured,
+    correctionDb: smoothedCorrection,
+  };
+}
+
+function analyseResponseStereo(stereo, measurement, detectOptions = {}) {
+  const syncMono = averageStereo(stereo.left, stereo.right);
+  const { startSample, endSample } = detectMainBounds(syncMono, measurement, detectOptions);
+  const frequenciesHz = buildResponseFrequencies(measurement);
+  const leftMain = normalizeMainSlice(stereo.left, measurement, startSample, endSample);
+  const rightMain = normalizeMainSlice(stereo.right, measurement, startSample, endSample);
+  const left = analyseResponseChannel(leftMain, measurement, frequenciesHz);
+  const right = analyseResponseChannel(rightMain, measurement, frequenciesHz);
   return {
     kind: "response",
-    sampleRate: sr,
+    sampleRate: measurement.spec.sampleRate,
     measuredAt: new Date().toISOString(),
     startSample,
     endSample,
-    frequenciesHz: freqs,
-    measuredDb: smoothedMeasured,
-    correctionDb: smoothedCorrection,
+    frequenciesHz,
+    channels: {
+      L: left,
+      R: right,
+    },
     profile: {
       version: 1,
       type: "side.deck-calibration",
       createdAt: new Date().toISOString(),
-      sampleRate: sr,
+      sampleRate: measurement.spec.sampleRate,
       stimulus: {
         kind: "log-sweep",
         startHz: measurement.spec.startHz,
@@ -350,8 +404,8 @@ function analyseResponseMono(mono, measurement, detectOptions = {}) {
         durationSec: measurement.spec.mainSec,
       },
       channels: {
-        L: { frequenciesHz: freqs, correctionDb: smoothedCorrection },
-        R: { frequenciesHz: freqs, correctionDb: smoothedCorrection },
+        L: { frequenciesHz, correctionDb: left.correctionDb },
+        R: { frequenciesHz, correctionDb: right.correctionDb },
       },
     },
   };
@@ -359,8 +413,11 @@ function analyseResponseMono(mono, measurement, detectOptions = {}) {
 
 export function analyseResponseMeasurement(audioBuffer, measurement = generateResponseMeasurement()) {
   const sr = measurement.spec.sampleRate;
-  const mono = resampleLinear(monoFromAudioBuffer(audioBuffer), audioBuffer.sampleRate, sr);
-  return analyseResponseMono(mono, measurement);
+  const stereo = stereoFromAudioBuffer(audioBuffer);
+  return analyseResponseStereo({
+    left: resampleLinear(stereo.left, stereo.sampleRate, sr),
+    right: resampleLinear(stereo.right, stereo.sampleRate, sr),
+  }, measurement);
 }
 
 function estimateFrequencyFromZeroCrossings(data, sampleRate) {
@@ -418,7 +475,11 @@ export function analyseTransportMeasurement(audioBuffer, measurement = generateT
 export function analyseTestTapeProgram(audioBuffer, program = generateTestTapeProgram()) {
   const sr = program.sampleRate;
   const mono = resampleLinear(monoFromAudioBuffer(audioBuffer), audioBuffer.sampleRate, sr);
-  const response = analyseResponseMono(mono, program.response);
+  const stereo = stereoFromAudioBuffer(audioBuffer);
+  const response = analyseResponseStereo({
+    left: resampleLinear(stereo.left, stereo.sampleRate, sr),
+    right: resampleLinear(stereo.right, stereo.sampleRate, sr),
+  }, program.response);
   const expectedTransportStart = response.startSample
     + program.response.expectedTotal
     + Math.round(program.spec.interSegmentSec * sr);

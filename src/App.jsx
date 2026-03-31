@@ -1747,6 +1747,8 @@ export default function CassetteTool() {
     exportCompileLoadableProfile,
     exportCompileResultJson,
     exportCompileResultText,
+    loadFullResProfile,
+    exportFullResProfile,
   } = usePlayerProfile({ showToast, downloadBlob, encodeWAV, decodeExternalAudioFile, setProcessing, setProcMsg, onLoadCalibrationProfile });
 
 
@@ -2802,6 +2804,7 @@ export default function CassetteTool() {
               {ActiveToolPluginComponent && <ActiveToolPluginComponent
                 lang={lang}
                 processing={processing}
+                procMsg={procMsg}
                 captureName={deckCalCaptureName}
                 responseAnalysis={responseAnalysis}
                 transportAnalysis={transportAnalysis}
@@ -2855,6 +2858,8 @@ export default function CassetteTool() {
                 onExportCompileLoadProfile={exportCompileLoadableProfile}
                 onExportCompileText={exportCompileResultText}
                 onExportCompileJson={exportCompileResultJson}
+                onLoadFullResProfile={loadFullResProfile}
+                onExportFullResProfile={exportFullResProfile}
               />}
             </div>
           </div>

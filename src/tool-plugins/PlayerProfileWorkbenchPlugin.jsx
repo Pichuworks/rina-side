@@ -5,6 +5,7 @@ export const PLAYER_PROFILE_WORKBENCH_PLUGIN_ID = "player-profile-workbench";
 const LABELS = {
   "zh-CN": {
     title: "播放器听感测量 & EQ 匹配",
+    descTitle: "工具说明",
     desc: "测量播放器的频率响应，然后——让它趋向平直，或者模仿另一台设备的声音。",
     probeTitle: "测试信号法",
     probeDesc: "用标准测试信号来精确测量。精度最高，但需要专门录一次。",
@@ -76,6 +77,11 @@ const LABELS = {
     curveLegendCorrected: "修正后听感",
     exportText: "导出文本",
     exportJson: "导出 JSON",
+    loadFullRes: "加载全分辨率补偿",
+    exportFullRes: "导出全分辨率补偿档案",
+    fullResHint: "不受 EQ 频段限制，精度最高。适合不能调 EQ 的设备——把补偿烧进导出音频里。",
+    analysisProgress: "分析进度",
+    profileResult: "测量结果",
     invalidNames: "文件名格式不对",
     duplicateSource: "重复的原曲",
     duplicateRecorded: "重复的内录",
@@ -88,6 +94,7 @@ const LABELS = {
   },
   en: {
     title: "Player Response & EQ Matching",
+    descTitle: "Tool Description",
     desc: "Measure player frequency response and compute EQ to make A sound like B.",
     probeTitle: "Probe Profile",
     probeDesc: "Precise measurement using a standard test signal. High accuracy, but requires a dedicated recording.",
@@ -159,6 +166,11 @@ const LABELS = {
     curveLegendCorrected: "Corrected Response",
     exportText: "Export Text",
     exportJson: "Export JSON",
+    loadFullRes: "Load Full-Res Correction",
+    exportFullRes: "Export Full-Res Correction",
+    fullResHint: "No EQ band quantization — highest precision. For devices without adjustable EQ — bake the correction into exported audio.",
+    analysisProgress: "Analysis Progress",
+    profileResult: "Result",
     invalidNames: "Invalid filenames",
     duplicateSource: "Duplicate source keys",
     duplicateRecorded: "Duplicate recorded keys",
@@ -171,6 +183,7 @@ const LABELS = {
   },
   ja: {
     title: "プレイヤー周波数応答 & EQ マッチング",
+    descTitle: "ツール説明",
     desc: "probe/song profile を生成し、A に EQ モデルを付与し、A が B を模擬する EQ を生成します。",
     probeTitle: "Probe Profile",
     probeDesc: "標準テスト信号で精密測定。精度は高いですが、専用の録音が必要です。",
@@ -242,6 +255,11 @@ const LABELS = {
     curveLegendCorrected: "補正後プロファイル",
     exportText: "テキスト出力",
     exportJson: "JSON 出力",
+    loadFullRes: "フル解像度補正を読込",
+    exportFullRes: "フル解像度補正を書出し",
+    fullResHint: "EQ 帯域の制約なし。最高精度。EQ 非搭載デバイス向け——補正を書き出し音声に焼き込みます。",
+    analysisProgress: "分析進捗",
+    profileResult: "測定結果",
     invalidNames: "規則外ファイル名",
     duplicateSource: "重複した原曲キー",
     duplicateRecorded: "重複した回録キー",
@@ -446,6 +464,9 @@ export function PlayerProfileWorkbenchPlugin(props) {
     onExportCompileLoadProfile,
     onExportCompileText,
     onExportCompileJson,
+    onLoadFullResProfile,
+    onExportFullResProfile,
+    procMsg,
   } = props;
 
   const t = LABELS[lang] || LABELS.en;
@@ -461,6 +482,29 @@ export function PlayerProfileWorkbenchPlugin(props) {
   const [gainStepDb, setGainStepDb] = useState("1");
   const [minStep, setMinStep] = useState("-12");
   const [maxStep, setMaxStep] = useState("12");
+  const [selectedPreset, setSelectedPreset] = useState("car16");
+
+  const EQ_PRESETS = useMemo(() => [
+    { id: "car16", label: lang === "ja" ? "車載 16 バンド" : lang === "en" ? "Car 16-band" : "车机 16 段", bands: "31,46,63,125,230,400,630,810,1000,2000,4000,6000,8000,12000,14000,16000", step: "1", min: "-12", max: "12" },
+    { id: "sony10", label: "Sony 10 段", bands: "31,62,125,250,500,1000,2000,4000,8000,16000", step: "1", min: "-10", max: "10" },
+    { id: "pcm_d100", label: "Sony PCM-D100", bands: "400,1000,2500,6300,16000", step: "1", min: "-3", max: "3" },
+    { id: "icd_sx2000", label: "Sony ICD-SX2000", bands: "100,300,1000,3000,10000", step: "1", min: "-3", max: "3" },
+    { id: "rockbox_peq", label: "Rockbox PEQ 10 段", bands: "60,150,400,1000,2500,4000,6000,8000,12000,16000", step: "0.1", min: "-24", max: "24" },
+    { id: "cayin_n3u", label: "Cayin N3 Ultra PEQ", bands: "60,150,400,1000,2500,4000,6000,8000,12000,16000", step: "0.1", min: "-12", max: "12" },
+    { id: "generic15", label: lang === "ja" ? "汎用 15 段" : lang === "en" ? "Generic 15-band" : "通用 15 段", bands: "25,40,63,100,160,250,400,630,1000,1600,2500,4000,6300,10000,16000", step: "1", min: "-12", max: "12" },
+    { id: "generic20", label: lang === "ja" ? "汎用 20 段" : lang === "en" ? "Generic 20-band" : "通用 20 段", bands: "25,31,40,50,63,80,100,125,160,200,250,315,400,500,630,800,1000,1250,2000,4000", step: "0.5", min: "-12", max: "12" },
+    { id: "custom", label: lang === "ja" ? "カスタム" : lang === "en" ? "Custom" : "自定义", bands: "", step: "1", min: "-12", max: "12" },
+  ], [lang]);
+
+  const applyPreset = (presetId) => {
+    setSelectedPreset(presetId);
+    const preset = EQ_PRESETS.find((p) => p.id === presetId);
+    if (!preset || presetId === "custom") return;
+    setCustomBandsText(preset.bands);
+    setGainStepDb(preset.step);
+    setMinStep(preset.min);
+    setMaxStep(preset.max);
+  };
 
   const compileSummary = useMemo(() => {
     if (!compileResult?.ok) return null;
@@ -477,7 +521,7 @@ export function PlayerProfileWorkbenchPlugin(props) {
   return (
     <>
       <div>
-        <div style={{ fontSize: 13, fontWeight: 600, color: "var(--accent-ink)", marginBottom: 6 }}>{t.title}</div>
+        <div style={{ fontSize: 13, fontWeight: 600, color: "var(--accent-ink)", marginBottom: 6 }}>{t.descTitle}</div>
         <div style={{ fontSize: 13, lineHeight: 1.8, color: "var(--text-dim)" }}>{t.desc}</div>
       </div>
 
@@ -512,7 +556,7 @@ export function PlayerProfileWorkbenchPlugin(props) {
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px,1fr))", gap: 8 }}>
           {statBox(t.probeCapture, probeCaptureName || t.idle)}
-          {statBox(t.probeTitle, probeProfile?.name || t.idle)}
+          {probeProfile && statBox(t.profileResult, probeProfile.name)}
         </div>
       </div>
 
@@ -550,12 +594,17 @@ export function PlayerProfileWorkbenchPlugin(props) {
           <button onClick={() => onBuildSongProfile(songProfileName)} disabled={processing || !songPairCount || !!songPairError} style={actionBtnStyle(true)}>{t.generateSongProfile}</button>
           <button onClick={onSaveSongProfile} disabled={!songProfile} style={actionBtnStyle()}>{t.saveSongProfile}</button>
         </div>
+        {processing && procMsg && (
+          <div style={{ padding: "8px 12px", borderRadius: 8, background: "var(--accent-dim)", fontSize: 12, color: "var(--accent-ink)" }}>
+            {procMsg}
+          </div>
+        )}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px,1fr))", gap: 8 }}>
           {statBox(t.refCount, String(songRefNames?.length || 0))}
           {statBox(t.recCount, String(songRecNames?.length || 0))}
           {statBox(t.pairCount, String(songPairCount || 0))}
-          {statBox(t.pairError, songPairError || t.none)}
-          {statBox(t.songTitle, songProfile?.name || t.idle)}
+          {statBox(t.pairError, songPairError === "" ? "✓" : (songPairError || t.none))}
+          {songProfile && statBox(t.profileResult, songProfile.name)}
         </div>
         {!!songPairError && (
           <div style={{ padding: "10px 12px", border: "1px solid var(--border)", borderRadius: 8, background: "var(--bg)" }}>
@@ -620,7 +669,18 @@ export function PlayerProfileWorkbenchPlugin(props) {
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px,1fr))", gap: 8 }}>
           {statBox(t.eqBaseProfile, eqBaseProfileName || t.idle)}
-          {statBox(t.eqBandPreset, t.car16Band)}
+        </div>
+        <div>
+          {fieldLabel(t.eqBandPreset)}
+          <select
+            value={selectedPreset}
+            onChange={(event) => applyPreset(event.target.value)}
+            style={{ ...inputStyle(), cursor: "pointer" }}
+          >
+            {EQ_PRESETS.map((p) => (
+              <option key={p.id} value={p.id}>{p.label}</option>
+            ))}
+          </select>
         </div>
         <div>
           {fieldLabel(t.customBands)}
@@ -728,6 +788,21 @@ export function PlayerProfileWorkbenchPlugin(props) {
           <button onClick={onExportCompileLoadProfile} disabled={!compileResult?.ok} style={actionBtnStyle()}>{t.exportLoadProfile}</button>
           <button onClick={onExportCompileText} disabled={!compileResult} style={actionBtnStyle()}>{t.exportText}</button>
           <button onClick={onExportCompileJson} disabled={!compileResult} style={actionBtnStyle()}>{t.exportJson}</button>
+        </div>
+        <div style={{ padding: "10px 12px", border: "1px solid var(--border)", borderRadius: 8, background: "var(--bg-deep)" }}>
+          <div style={{ fontSize: 11, color: "var(--text-dim)", marginBottom: 6 }}>{t.fullResHint}</div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button
+              onClick={onLoadFullResProfile}
+              disabled={!compilerProfileAName || (compilerTargetMode === "profile" && !compilerProfileBName)}
+              style={actionBtnStyle()}
+            >{t.loadFullRes}</button>
+            <button
+              onClick={onExportFullResProfile}
+              disabled={!compilerProfileAName || (compilerTargetMode === "profile" && !compilerProfileBName)}
+              style={actionBtnStyle()}
+            >{t.exportFullRes}</button>
+          </div>
         </div>
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px,1fr))", gap: 8 }}>
           {statBox(t.eqAdjustableProfile, compilerProfileAName || t.idle)}

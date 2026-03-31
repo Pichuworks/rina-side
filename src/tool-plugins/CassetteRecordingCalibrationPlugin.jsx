@@ -131,6 +131,15 @@ export function CassetteRecordingCalibrationPlugin({
   const t = LABELS[lang] || LABELS.en;
   const isSelfScenario = activeScenario === "self";
   const isRecording = recordingKind === "program";
+  const responsePreviewStride = responseAnalysis
+    ? Math.max(1, Math.ceil(responseAnalysis.frequenciesHz.length / 18))
+    : 1;
+  const responsePreviewIndices = responseAnalysis
+    ? responseAnalysis.frequenciesHz.reduce((indices, _, index, array) => {
+      if (index % responsePreviewStride === 0 || index === array.length - 1) indices.push(index);
+      return indices;
+    }, [])
+    : [];
   // help text selected by scenario
 
   return (
@@ -288,13 +297,16 @@ export function CassetteRecordingCalibrationPlugin({
         <div style={{ padding: "12px 14px", border: "1px solid var(--border)", borderRadius: 10, background: "var(--bg-card)" }}>
           <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>{t.responseTitle}</div>
           <div style={{ fontSize: 11, color: "var(--text-dim)", marginBottom: 6 }}>{t.correctionPoints}</div>
-          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))", gap: 6 }}>
-            {responseAnalysis.frequenciesHz.filter((_, index) => index % 8 === 0).map((freq, index) => {
-              const actualIndex = index * 8;
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 6 }}>
+            {responsePreviewIndices.map((actualIndex) => {
+              const freq = responseAnalysis.frequenciesHz[actualIndex];
               return (
                 <div key={freq} style={{ padding: "8px 10px", border: "1px solid var(--border)", borderRadius: 8, background: "var(--bg-deep)" }}>
                   <div style={{ fontSize: 11, color: "var(--text-dim)" }}>{Math.round(freq)} Hz</div>
-                  <div style={{ fontSize: 14 }}>{responseAnalysis.correctionDb[actualIndex].toFixed(1)} dB</div>
+                  <div style={{ fontSize: 13, lineHeight: 1.7 }}>
+                    <div>L {responseAnalysis.channels.L.correctionDb[actualIndex].toFixed(1)} dB</div>
+                    <div>R {responseAnalysis.channels.R.correctionDb[actualIndex].toFixed(1)} dB</div>
+                  </div>
                 </div>
               );
             })}

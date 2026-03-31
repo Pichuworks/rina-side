@@ -113,7 +113,7 @@ function shiftToCausal(data) {
   return out;
 }
 
-export function buildLinearPhaseImpulse(profile, sampleRate, fftSize = 1024) {
+export function buildLinearPhaseImpulse(profile, sampleRate, fftSize = 2048) {
   const leftSpectrum = buildHermitianSpectrum(profile, sampleRate, "L", fftSize);
   const rightSpectrum = buildHermitianSpectrum(profile, sampleRate, "R", fftSize);
   const left = shiftToCausal(inverseRealDft(leftSpectrum));

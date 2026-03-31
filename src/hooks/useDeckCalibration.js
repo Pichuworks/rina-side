@@ -36,30 +36,61 @@ export default function useDeckCalibration({ T, showToast, downloadBlob, encodeW
     setDeckCalProgramManifestName("");
   }, []);
 
+  const adjustResponseChannelWithBaseline = useCallback((analysisChannel, baselineChannel, frequenciesHz, channel) => {
+    if (!analysisChannel?.measuredDb?.length || !baselineChannel?.frequenciesHz?.length || !baselineChannel?.referenceDb?.length) {
+      throw new Error(`Baseline response data is invalid for channel ${channel}`);
+    }
+    const baselineProfile = {
+      channels: {
+        [channel]: {
+          frequenciesHz: baselineChannel.frequenciesHz,
+          correctionDb: baselineChannel.referenceDb,
+        },
+      },
+    };
+    const measuredDb = frequenciesHz.map((freq, index) => (
+      analysisChannel.measuredDb[index] - getProfileCorrectionDb(baselineProfile, freq, channel)
+    ));
+    const correctionDb = frequenciesHz.map((freq, index) => (
+      analysisChannel.correctionDb[index] + getProfileCorrectionDb(baselineProfile, freq, channel)
+    ));
+    return { measuredDb, correctionDb };
+  }, []);
+
   const applyProgramManifestToResponse = useCallback((analysis, manifest) => {
     const baseline = manifest?.baselines?.response;
-    if (!baseline?.frequenciesHz?.length) return analysis;
-    const adjustedMeasuredDb = analysis.frequenciesHz.map((freq, index) => (
-      analysis.measuredDb[index] - getProfileCorrectionDb({ channels: { L: { frequenciesHz: baseline.frequenciesHz, correctionDb: baseline.referenceDb } } }, freq, "L")
-    ));
-    const adjustedCorrectionDb = analysis.frequenciesHz.map((freq, index) => (
-      analysis.correctionDb[index] + getProfileCorrectionDb({ channels: { L: { frequenciesHz: baseline.frequenciesHz, correctionDb: baseline.referenceDb } } }, freq, "L")
-    ));
+    if (!baseline?.channels?.L || !baseline?.channels?.R) {
+      throw new Error("Baseline response data is invalid");
+    }
+    const adjustedLeft = adjustResponseChannelWithBaseline(
+      analysis.channels?.L,
+      baseline.channels.L,
+      analysis.frequenciesHz,
+      "L",
+    );
+    const adjustedRight = adjustResponseChannelWithBaseline(
+      analysis.channels?.R,
+      baseline.channels.R,
+      analysis.frequenciesHz,
+      "R",
+    );
     return {
       ...analysis,
-      measuredDb: adjustedMeasuredDb,
-      correctionDb: adjustedCorrectionDb,
+      channels: {
+        L: adjustedLeft,
+        R: adjustedRight,
+      },
       manifestName: manifest.name,
       profile: {
         ...analysis.profile,
         sourceManifest: { name: manifest.name, createdAt: manifest.createdAt },
         channels: {
-          L: { frequenciesHz: analysis.frequenciesHz, correctionDb: adjustedCorrectionDb },
-          R: { frequenciesHz: analysis.frequenciesHz, correctionDb: adjustedCorrectionDb },
+          L: { frequenciesHz: analysis.frequenciesHz, correctionDb: adjustedLeft.correctionDb },
+          R: { frequenciesHz: analysis.frequenciesHz, correctionDb: adjustedRight.correctionDb },
         },
       },
     };
-  }, []);
+  }, [adjustResponseChannelWithBaseline]);
 
   const applyProgramManifestToTransport = useCallback((analysis, manifest) => {
     const baseline = manifest?.baselines?.transport;
@@ -183,8 +214,16 @@ export default function useDeckCalibration({ T, showToast, downloadBlob, encodeW
       },
       baselines: {
         response: {
-          frequenciesHz: responseAnalysis.frequenciesHz,
-          referenceDb: responseAnalysis.measuredDb,
+          channels: {
+            L: {
+              frequenciesHz: responseAnalysis.frequenciesHz,
+              referenceDb: responseAnalysis.channels.L.measuredDb,
+            },
+            R: {
+              frequenciesHz: responseAnalysis.frequenciesHz,
+              referenceDb: responseAnalysis.channels.R.measuredDb,
+            },
+          },
         },
         transport: {
           nominalOnTapeToneHz: transportAnalysis.meanHz,

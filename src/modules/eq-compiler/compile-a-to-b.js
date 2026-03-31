@@ -192,3 +192,38 @@ export function compileEqAToFlat(profileA) {
   const normalizedA = loadAndNormalizeProfile(profileA);
   return solveAgainstTarget(normalizedA, buildFlatStereoTarget(normalizedA.frequencyGridHz.length));
 }
+
+/**
+ * Compute raw full-resolution delta between two profiles — no EQ model needed.
+ * Returns a correction curve: when baked into audio and played through device A,
+ * the listener hears device B's frequency character.
+ *
+ * correction[i] = responseB[i] - responseA[i]
+ */
+export function computeFullResolutionDelta(profileA, profileB) {
+  const normalizedA = loadAndNormalizeProfile(profileA);
+  const normalizedB = loadAndNormalizeProfile(profileB, normalizedA.frequencyGridHz);
+  const grid = normalizedA.frequencyGridHz;
+  const correctionL = grid.map((_, i) => (normalizedB.responseDb.L[i] || 0) - (normalizedA.responseDb.L[i] || 0));
+  const correctionR = grid.map((_, i) => (normalizedB.responseDb.R[i] || 0) - (normalizedA.responseDb.R[i] || 0));
+  return {
+    frequencyGridHz: [...grid],
+    correctionDb: { L: correctionL, R: correctionR },
+    sourceLabel: normalizedA.name || "A",
+    targetLabel: normalizedB.name || "B",
+  };
+}
+
+export function computeFullResolutionFlat(profileA) {
+  const normalizedA = loadAndNormalizeProfile(profileA);
+  const grid = normalizedA.frequencyGridHz;
+  // correction = flat(0) - responseA = -responseA
+  const correctionL = grid.map((_, i) => -(normalizedA.responseDb.L[i] || 0));
+  const correctionR = grid.map((_, i) => -(normalizedA.responseDb.R[i] || 0));
+  return {
+    frequencyGridHz: [...grid],
+    correctionDb: { L: correctionL, R: correctionR },
+    sourceLabel: normalizedA.name || "A",
+    targetLabel: "Flat",
+  };
+}

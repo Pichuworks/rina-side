@@ -10,6 +10,8 @@ import {
   serializeProfileJson,
   compileEqAToB,
   compileEqAToFlat,
+  computeFullResolutionDelta,
+  computeFullResolutionFlat,
 } from "../modules/index.js";
 import { normalizeCalibrationProfile } from "../calibration-profile.js";
 
@@ -445,6 +447,51 @@ export default function usePlayerProfile({ showToast, downloadBlob, encodeWAV, d
     showToast("Compile result text exported");
   }, [compilerProfileAName, compilerProfileBName, downloadBlob, playerEqCompileResult, showToast]);
 
+  // ── Full-resolution correction (no EQ quantization) ────────
+
+  const buildFullResProfile = useCallback(() => {
+    try {
+      let delta;
+      if (compilerTargetMode === "flat") {
+        if (!compilerProfileA) { showToast("需要先导入设备频响", 5000); return null; }
+        delta = computeFullResolutionFlat(compilerProfileA);
+      } else {
+        if (!compilerProfileA || !compilerProfileB) { showToast("需要设备频响和目标频响", 5000); return null; }
+        delta = computeFullResolutionDelta(compilerProfileA, compilerProfileB);
+      }
+      const profile = normalizeCalibrationProfile({
+        type: "deck.playback-correction-profile",
+        name: `${delta.sourceLabel} -> ${delta.targetLabel} (full-res)`,
+        createdAt: new Date().toISOString(),
+        channels: {
+          L: { frequenciesHz: delta.frequencyGridHz, correctionDb: delta.correctionDb.L },
+          R: { frequenciesHz: delta.frequencyGridHz, correctionDb: delta.correctionDb.R },
+        },
+      });
+      return profile;
+    } catch (err) {
+      showToast(`全分辨率补偿档案生成失败: ${err.message}`, 5000);
+      return null;
+    }
+  }, [compilerProfileA, compilerProfileB, compilerTargetMode, showToast]);
+
+  const loadFullResProfile = useCallback(() => {
+    const profile = buildFullResProfile();
+    if (!profile) return;
+    onLoadCalibrationProfile(profile);
+    showToast("全分辨率补偿档案已加载到试听");
+  }, [buildFullResProfile, onLoadCalibrationProfile, showToast]);
+
+  const exportFullResProfile = useCallback(() => {
+    const profile = buildFullResProfile();
+    if (!profile) return;
+    downloadBlob(
+      new Blob([JSON.stringify(profile, null, 2)], { type: "application/json" }),
+      `${profile.name || "full-res-correction"}.json`,
+    );
+    showToast("全分辨率补偿档案已导出");
+  }, [buildFullResProfile, downloadBlob, showToast]);
+
   return {
     // Probe
     probeCaptureName,
@@ -491,5 +538,8 @@ export default function usePlayerProfile({ showToast, downloadBlob, encodeWAV, d
     exportCompileLoadableProfile,
     exportCompileResultJson,
     exportCompileResultText,
+    // Full-resolution correction
+    loadFullResProfile,
+    exportFullResProfile,
   };
 }
