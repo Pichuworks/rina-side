@@ -7,19 +7,15 @@ import SideWaveform from "./SideWaveform.jsx";
 import SideSpectrogram from "./SideSpectrogram.jsx";
 import { TOOL_PLUGINS } from "./tool-plugins/index.js";
 import {
-  RESPONSE_MEASUREMENT_SPEC,
-  TRANSPORT_MEASUREMENT_SPEC,
-  TEST_TAPE_PROGRAM_SPEC,
-  generateTestTapeProgram,
-  analyseTestTapeProgram,
-} from "./deck-calibration.js";
-import {
   normalizeCalibrationProfile,
   buildLinearPhaseImpulse,
   invertCalibrationProfile,
-  getProfileCorrectionDb,
   profileSignature,
 } from "./calibration-profile.js";
+import { APP_VERSION, APP_GITHUB, LANGS, I18N, t, RINA_SMILE } from "./i18n.js";
+import useSignalOutput, { SIGNAL_OUTPUT_PRESETS } from "./hooks/useSignalOutput.js";
+import useDeckCalibration from "./hooks/useDeckCalibration.js";
+import usePlayerProfile from "./hooks/usePlayerProfile.js";
 
 // ═══════════════════════════════════════════════════════════════
 // SIDE — Sequential Interleaved Dubbing Engine
@@ -28,426 +24,11 @@ import {
 // by 天使天才天王寺璃奈 (Angel, Genius, Tennoji Rina)
 // ═══════════════════════════════════════════════════════════════
 
-const APP_VERSION = "0.9 Release Candidate II";
-const APP_GITHUB = "https://github.com/Pichuworks/rina-side";
 
-// ── i18n ─────────────────────────────────────────────────────
-const LANGS = { "zh-CN": { label: "简体中文" }, ja: { label: "日本語" }, en: { label: "EN" } };
-
-const I18N = {
-  toolSignalOutput: { "zh-CN": "校准信号输出", ja: "校正信号出力", en: "Calibration Signal Output" },
-  toolSignalOutputCardDesc: { "zh-CN": "用于录音电平与高频校准的信号输出", ja: "録音レベルと高域校正用の信号出力", en: "Signal output for rec level and HF calibration" },
-  toolSignalOutputDesc: {
-    "zh-CN": "同一时刻只输出一个校准信号。每种信号都对应明确的频率与电平规则，输出始终为双声道同相信号。",
-    ja: "同時に出力できる校正信号は 1 つだけです。各信号には明確な周波数とレベル規則があり、出力は常にデュアルモノです。",
-    en: "Only one calibration signal can be output at a time. Each signal has a specific frequency and level rule, and output is always dual mono.",
-  },
-  toolDeckRecCal: { "zh-CN": "卡座录制校准", ja: "デッキ録音校正", en: "Deck Recording Calibration" },
-  toolDeckRecCalCardDesc: { "zh-CN": "扫频校准、频响分析与 wow/flutter 诊断", ja: "スイープ校正、周波数応答解析、wow/flutter 診断", en: "Sweep calibration, response analysis, and wow/flutter diagnostics" },
-  toolDeckRecCalDesc: {
-    "zh-CN": "这个模块用于完成卡座完整录放链路的校准。它会生成扫频、分析回采结果、计算频响偏移，并提供速度偏差与 wow/flutter 诊断入口。",
-    ja: "このモジュールはデッキの録再チェーン全体を校正します。スイープ生成、録り戻し解析、周波数応答偏差の算出、速度偏差と wow/flutter 診断を扱います。",
-    en: "This module calibrates the full deck record/play chain: sweep generation, return analysis, response deviation estimation, and speed plus wow/flutter diagnostics.",
-  },
-  toolDeckRecCalResponseTitle: { "zh-CN": "频响校准", ja: "周波数応答校正", en: "Response Calibration" },
-  toolDeckRecCalResponseDesc: {
-    "zh-CN": "生成参考扫频，导入回采结果后计算录放链路的频响偏移，并生成可加载到试听和导出的校准 profile。",
-    ja: "基準スイープを生成し、録り戻し結果から録再チェーンの周波数偏差を算出して、試聴と書き出しに適用できる校正 profile を生成します。",
-    en: "Generate reference sweeps, analyse return captures, and build a calibration profile for preview and export.",
-  },
-  toolDeckRecCalResponseFocusTitle: { "zh-CN": "频响校准流程", ja: "周波数応答校正フロー", en: "Response Calibration Flow" },
-  toolDeckRecCalResponseFocusDesc: {
-    "zh-CN": "这一支会生成参考扫频、导入回采结果、计算频响偏移，并最终生成可加载到试听与导出的校准 profile。",
-    ja: "この系統では基準スイープ生成、録り戻し結果の読込、周波数応答偏差の算出、そして試聴と書き出しに適用できる校正 profile の生成を行います。",
-    en: "This path generates reference sweeps, imports return captures, estimates response deviation, and produces a calibration profile for preview and export.",
-  },
-  toolDeckRecCalResponseWorkflowDesc: {
-    "zh-CN": "本机模式：导出参考扫频，录到空白带后自录自放，生成本机校准 Profile，并可保存频响基线 Manifest。测试带模式：加载频响基线 Manifest，导入其它设备回放结果，生成该设备的校准 Profile。",
-    ja: "1. 基準スイープを生成して書き出す。2. 録り戻しファイルまたはブラウザ録音を取り込む。3. 周波数応答偏差を計算して校正 profile を生成する。",
-    en: "1. Generate and export reference sweeps. 2. Import return captures or record in-browser. 3. Estimate response deviation and generate a calibration profile.",
-  },
-  toolDeckRecCalTransportTitle: { "zh-CN": "走带诊断", ja: "走行診断", en: "Transport Diagnostics" },
-  toolDeckRecCalTransportDesc: {
-    "zh-CN": "通过 3150 Hz 等测试音分析走带偏快、偏慢、wow/flutter 与稳定性问题。该路径只给诊断结果，不生成静态 EQ 修正。",
-    ja: "3150 Hz などのテストトーンから速度ずれ、wow/flutter、安定性の問題を解析します。この経路は診断専用で、静的 EQ 補正は生成しません。",
-    en: "Use 3150 Hz and related test tones to analyse speed error, wow/flutter, and stability. This path is diagnostic-only and does not generate static EQ correction.",
-  },
-  toolDeckRecCalTransportFocusTitle: { "zh-CN": "走带诊断流程", ja: "走行診断フロー", en: "Transport Diagnostic Flow" },
-  toolDeckRecCalTransportFocusDesc: {
-    "zh-CN": "这一支使用恒定测试音分析走带偏快、偏慢、wow/flutter 和稳定性问题，只输出诊断结果，不生成 EQ 修正文件。",
-    ja: "この系統では一定トーンを用いて速度ずれ、wow/flutter、安定性の問題を解析し、診断結果のみを出力します。EQ 補正ファイルは生成しません。",
-    en: "This path uses constant test tones to analyse speed error, wow/flutter, and stability. It produces diagnostics only and does not generate an EQ correction file.",
-  },
-  toolDeckRecCalTransportWorkflowDesc: {
-    "zh-CN": "本机模式：导出 3150 Hz，录到空白带后自录自放，输出本机速度偏差与 wow/flutter，并可保存走带基线 Manifest。测试带模式：加载走带基线 Manifest，导入其它设备回放结果，输出相对诊断结果。",
-    ja: "1. 3150 Hz などのテストトーンを生成して書き出す。2. 録り戻しファイルまたはブラウザ録音を取り込む。3. 速度偏差と wow/flutter の診断結果を出力する。",
-    en: "1. Generate and export 3150 Hz and related test tones. 2. Import return captures or record in-browser. 3. Produce speed and wow/flutter diagnostics.",
-  },
-  toolDeckRecCalWorkflowTitle: { "zh-CN": "预定工作流", ja: "予定ワークフロー", en: "Planned Workflow" },
-  toolDeckRecCalWorkflowDesc: {
-    "zh-CN": "1. 生成并导出参考扫频。2. 导入回录文件或网页录音。3. 生成校准 profile 或输出走带诊断结果。",
-    ja: "1. 基準スイープを生成して書き出す。2. 録り戻しファイルまたはブラウザ録音を取り込む。3. 校正 profile か走行診断結果を生成する。",
-    en: "1. Generate and export reference sweeps. 2. Import return captures or record in-browser. 3. Produce a calibration profile or transport diagnostic report.",
-  },
-  toolDeckRecCalProgramTitle: { "zh-CN": "测试带程序", ja: "テストテーププログラム", en: "Test Tape Program" },
-  toolDeckRecCalProgramFocusTitle: { "zh-CN": "单次导出 / 单次分析", ja: "単一書き出し / 単一解析", en: "Single Export / Single Analysis" },
-  toolDeckRecCalProgramFocusDesc: {
-    "zh-CN": "导出一条包含扫频与 3150 Hz 的测试带程序；导入一次完整回录后，同时得到频响校准结果和走带诊断结果。",
-    ja: "スイープと 3150 Hz を含む 1 本のテストテーププログラムを書き出し、完全な録り戻しを 1 回取り込むだけで周波数校正結果と走行診断結果を同時に得ます。",
-    en: "Export one test tape program containing the sweep and 3150 Hz; after importing one full return capture, produce both response calibration and transport diagnostics together.",
-  },
-  toolDeckRecCalProgramWorkflowDesc: {
-    "zh-CN": "本机模式：导出测试带程序，录到空白带后自录自放，生成本机校准 Profile，并保存测试带程序 Manifest。测试带模式：加载测试带程序 Manifest，导入其它设备回放结果，生成该设备的频响校准结果和走带诊断结果。",
-    ja: "本機モード: テストテーププログラムを書き出し、空テープへ録音して自己録再し、本機の校正 Profile とテストテーププログラム Manifest を生成します。テストテープモード: テストテーププログラム Manifest を読み込み、他機の再生結果を取り込んで、その機器の周波数校正結果と走行診断結果を生成します。",
-    en: "Self-deck mode: export the test tape program, record it to a blank tape, play it back on the same deck, generate this deck's calibration profile, and save the test tape program manifest. Test-tape mode: load the test tape program manifest, import another device's playback capture, and generate both response calibration and transport diagnostics for that device.",
-  },  toolExportRef: { "zh-CN": "导出参考信号", ja: "基準信号を書き出す", en: "Export Reference Signal" },
-  toolImportCapture: { "zh-CN": "导入回录文件", ja: "録り戻しファイルを読み込む", en: "Import Return Capture" },
-  toolStartRecord: { "zh-CN": "开始网页录音", ja: "ブラウザ録音を開始", en: "Start In-Browser Recording" },
-  toolStopRecord: { "zh-CN": "停止网页录音", ja: "ブラウザ録音を停止", en: "Stop In-Browser Recording" },
-  toolAnalyseNow: { "zh-CN": "生成结果", ja: "結果を生成", en: "Generate Result" },
-  toolSaveProfile: { "zh-CN": "保存校准 Profile", ja: "校正 Profile を保存", en: "Save Calibration Profile" },
-  toolRefSweepLabel: { "zh-CN": "参考扫频", ja: "基準スイープ", en: "Reference Sweep" },
-  toolRefToneLabel: { "zh-CN": "测试音", ja: "テストトーン", en: "Test Tone" },
-  toolCaptureReady: { "zh-CN": "已载入回采结果", ja: "録り戻し結果を読み込み済み", en: "Return capture loaded" },
-  toolCaptureMissing: { "zh-CN": "还没有回采结果", ja: "録り戻し結果がまだありません", en: "No return capture yet" },
-  toolRecordingBusy: { "zh-CN": "网页录音中", ja: "ブラウザ録音中", en: "Recording in browser" },
-  toolResponseResultTitle: { "zh-CN": "频响结果", ja: "周波数応答結果", en: "Response Result" },
-  toolTransportResultTitle: { "zh-CN": "走带诊断结果", ja: "走行診断結果", en: "Transport Result" },
-  toolMeanFreq: { "zh-CN": "平均频率", ja: "平均周波数", en: "Mean Frequency" },
-  toolSpeedError: { "zh-CN": "速度偏差", ja: "速度偏差", en: "Speed Error" },
-  toolWowFlutterRms: { "zh-CN": "Wow/Flutter RMS", ja: "Wow/Flutter RMS", en: "Wow/Flutter RMS" },
-  toolWowFlutterPk: { "zh-CN": "Wow/Flutter 峰峰值", ja: "Wow/Flutter P-P", en: "Wow/Flutter Peak-to-Peak" },
-  toolReferenceWowFloor: { "zh-CN": "参考带 W/F 底噪", ja: "基準テープ W/F フロア", en: "Reference W/F Floor" },
-  toolTopCorrection: { "zh-CN": "校准点", ja: "校正ポイント", en: "Correction Points" },
-  toolRefExported: { "zh-CN": "测试带程序已导出", ja: "テストテーププログラムを書き出しました", en: "Test tape program exported" },
-  toolProfileSaved: { "zh-CN": "校准 Profile 已保存", ja: "校正 Profile を保存しました", en: "Calibration profile saved" },
-  toolCaptureImported: { "zh-CN": "回录文件已导入", ja: "録り戻しファイルを読み込みました", en: "Return capture imported" },
-  toolRecordUnavailable: { "zh-CN": "当前浏览器不支持网页录音", ja: "このブラウザでは録音を利用できません", en: "This browser does not support in-browser recording" },
-  toolRecordFailed: { "zh-CN": "网页录音失败", ja: "ブラウザ録音に失敗しました", en: "In-browser recording failed" },
-  calibrationProfile: { "zh-CN": "校准 Profile", ja: "校正 Profile", en: "Calibration Profile" },
-  loadCalibrationProfile: { "zh-CN": "加载校准 Profile", ja: "校正 Profile を読込", en: "Load Calibration Profile" },
-  clearCalibrationProfile: { "zh-CN": "清除校准 Profile", ja: "校正 Profile を解除", en: "Clear Calibration Profile" },
-  noCalibrationProfile: { "zh-CN": "未加载", ja: "未読込", en: "Not loaded" },
-  applyCalibrationPreview: { "zh-CN": "试听 EQ", ja: "試聴 EQ", en: "Preview EQ" },
-  applyCalibrationExport: { "zh-CN": "导出 EQ", ja: "書出 EQ", en: "Export EQ" },
-  calibrationProfileLoaded: { "zh-CN": "校准 Profile 已加载", ja: "校正 Profile を読み込みました", en: "Calibration profile loaded" },
-  calibrationProfileCleared: { "zh-CN": "校准 Profile 已清除", ja: "校正 Profile を解除しました", en: "Calibration profile cleared" },
-  calibrationProfileLoadFailed: { "zh-CN": "校准 Profile 加载失败", ja: "校正 Profile の読込に失敗しました", en: "Failed to load calibration profile" },
-  toolLoadResponseManifest: { "zh-CN": "加载频响基线 Manifest", ja: "周波数基線 Manifest を読込", en: "Load Response Baseline Manifest" },
-  toolClearResponseManifest: { "zh-CN": "清除频响基线 Manifest", ja: "周波数基線 Manifest を解除", en: "Clear Response Baseline Manifest" },
-  toolResponseManifestMissing: { "zh-CN": "未加载频响基线 Manifest", ja: "周波数基線 Manifest 未読込", en: "No response baseline manifest loaded" },
-  toolResponseManifestReady: { "zh-CN": "已加载频响基线 Manifest", ja: "周波数基線 Manifest 読込済", en: "Response baseline manifest loaded" },
-  toolLoadTransportManifest: { "zh-CN": "加载走带基线 Manifest", ja: "走行基線 Manifest を読込", en: "Load Transport Baseline Manifest" },
-  toolClearTransportManifest: { "zh-CN": "清除走带基线 Manifest", ja: "走行基線 Manifest を解除", en: "Clear Transport Baseline Manifest" },
-  toolTransportManifestMissing: { "zh-CN": "未加载走带基线 Manifest", ja: "走行基線 Manifest 未読込", en: "No transport baseline manifest loaded" },
-  toolTransportManifestReady: { "zh-CN": "已加载走带基线 Manifest", ja: "走行基線 Manifest 読込済", en: "Transport baseline manifest loaded" },
-    toolManifestImported: { "zh-CN": "测试带程序 Manifest 已加载", ja: "テストテーププログラム Manifest を読み込みました", en: "Test tape program manifest loaded" },
-  toolLoadProgramManifest: { "zh-CN": "加载测试带程序 Manifest", ja: "テストテーププログラム Manifest を読み込む", en: "Load Test Tape Program Manifest" },
-  toolClearProgramManifest: { "zh-CN": "清除测试带程序 Manifest", ja: "テストテーププログラム Manifest を解除", en: "Clear Test Tape Program Manifest" },
-  toolProgramManifestMissing: { "zh-CN": "未加载测试带程序 Manifest", ja: "テストテーププログラム Manifest 未読込", en: "No test tape program manifest loaded" },
-  toolProgramManifestReady: { "zh-CN": "已加载测试带程序 Manifest", ja: "テストテーププログラム Manifest 読込済み", en: "Test tape program manifest loaded" },
-  toolScenarioSelfDeck: { "zh-CN": "本机校准/诊断", ja: "本機校正/診断", en: "Self Deck Calibration" },
-  toolScenarioSelfDeckDesc: { "zh-CN": "只有空白带和本卡座时，导出整条测试带程序，自录自放后同时完成本机校准和走带诊断", ja: "空テープと本機だけでテストテーププログラム全体を書き出し、自己録再後に本機校正と走行診断を同時に行う", en: "With only a blank tape and this deck, export the full test tape program and use self record/play to run both calibration and transport diagnostics together" },
-  toolScenarioTestTape: { "zh-CN": "自制测试带测其它设备", ja: "自作テストテープで他機測定", en: "Measure Other Devices With Your Tape" },
-  toolScenarioTestTapeDesc: { "zh-CN": "加载本机保存的测试带程序 Manifest，导入其它卡座/随身听对整条程序的回放结果并做相对分析", ja: "本機で保存したテストテーププログラム Manifest を読み込み、他機のプログラム全体の再生結果を相対分析", en: "Load the saved test tape program manifest, import another deck or portable player's full-program playback capture, and analyse it relative to your tape" },
-  toolSaveResponseBaseline: { "zh-CN": "保存频响基线 Manifest", ja: "周波数基線 Manifest を保存", en: "Save Response Baseline Manifest" },
-  toolSaveTransportBaseline: { "zh-CN": "保存走带基线 Manifest", ja: "走行基線 Manifest を保存", en: "Save Transport Baseline Manifest" },
-    toolExportProgram: { "zh-CN": "导出测试带程序", ja: "テストテーププログラムを書き出す", en: "Export Test Tape Program" },
-  toolSaveProgramManifest: { "zh-CN": "保存测试带程序 Manifest", ja: "テストテーププログラム Manifest を保存", en: "Save Test Tape Program Manifest" },
-  toolBaselineSaved: { "zh-CN": "测试带程序 Manifest 已保存", ja: "テストテーププログラム Manifest を保存しました", en: "Test tape program manifest saved" },
-    toolHelpTitle: { "zh-CN": "操作路径", ja: "操作手順", en: "Workflow Help" },
-  toolSelfProgramHelp: { "zh-CN": "只有空白带和本卡座时：点“导出测试带程序”，把整条程序录到空白带；再用同一台卡座回放并导入回录/网页录音；点“生成结果”；同时得到本机频响校准结果和走带诊断结果；点“保存校准 Profile”得到本机补偿文件；点“保存测试带程序 Manifest”得到这盒测试带给其它设备使用的基线。", ja: "空テープと本機だけの場合: 「テストテーププログラムを書き出す」を押して全プログラムを空テープへ録音し、同じデッキで再生して録り戻し/ブラウザ録音を取り込み、「結果を生成」を押す。これで本機の周波数校正結果と走行診断結果を同時に得る。「校正 Profile を保存」で本機補正用ファイル、「テストテーププログラム Manifest を保存」で他機測定用の基線を保存する。", en: "With only a blank tape and this deck: click Export Test Tape Program, record the full program to the blank tape, then play it back on the same deck and import the return capture or browser recording. Click Generate Result to produce both response calibration and transport diagnostics together. Save Calibration Profile for this deck's correction file, and save Test Tape Program Manifest as the baseline for measuring other devices." },
-  toolTestTapeProgramHelp: { "zh-CN": "这盒带已经由本机录好时：进入“自制测试带测其它设备”；加载“测试带程序 Manifest”；导入其它卡座/随身听播放这盒带得到的完整回录结果；点“生成结果”；同时得到该设备的频响校准结果和走带诊断结果；需要补偿文件时点“保存校准 Profile”。", ja: "このテープを本機で録音済みの場合: 「自作テストテープで他機測定」に入り、「テストテーププログラム Manifest」を読み込み、他機がこのテープを再生した完全な録り戻し結果を取り込んで「結果を生成」を押す。これでその機器の周波数校正結果と走行診断結果を同時に得る。補正ファイルが必要なら「校正 Profile を保存」を押す。", en: "When this tape has already been recorded on your deck: enter Measure Other Devices With Your Tape, load the Test Tape Program Manifest, import the full playback capture from the other deck or portable player, and click Generate Result. This produces both response calibration and transport diagnostics for that device together. If you need a correction file, click Save Calibration Profile." },
-  toolSelfResponseHelp: { "zh-CN": "只有空白带和本卡座时：导出参考扫频，录到空白带；再用同一台卡座回放并导入回录/网页录音；点“生成结果”；点“保存校准 Profile”得到本机补偿文件；点“保存频响基线 Manifest”得到这盒测试带的频响基线。", ja: "空テープと本機だけの場合: 基準スイープを書き出して録音し、同じデッキで再生して録り戻し/ブラウザ録音を取り込み、「結果を生成」を押す。「校正 Profile を保存」で本機補正用ファイル、「周波数基線 Manifest を保存」でこのテストテープの基線を保存する。", en: "With only a blank tape and this deck: export the reference sweep, record it, play it back on the same deck, import the capture, then generate the result. Save Calibration Profile for this deck, and save Response Baseline Manifest for this test tape." },
-  toolSelfTransportHelp: { "zh-CN": "只有空白带和本卡座时：导出 3150 Hz，录到空白带；再用同一台卡座回放并导入回录/网页录音；点“生成结果”；输出本机速度偏差和 wow/flutter；点“保存走带基线 Manifest”得到这盒测试带的走带基线。", ja: "空テープと本機だけの場合: 3150 Hz を書き出して録音し、同じデッキで再生して録り戻し/ブラウザ録音を取り込み、「結果を生成」を押す。本機の速度偏差と wow/flutter を表示し、「走行基線 Manifest を保存」でこのテストテープの走行基線を保存する。", en: "With only a blank tape and this deck: export 3150 Hz, record it, play it back on the same deck, import the capture, and generate the result. This reports this deck's speed error and wow/flutter; save Transport Baseline Manifest for this test tape." },
-  toolTestTapeResponseHelp: { "zh-CN": "这盒带已经由本机录好时：进入“自制测试带测其它设备 -> 频响校准”；加载“频响基线 Manifest”；导入其它卡座/随身听播放这盒带得到的回录结果；点“生成结果”；点“保存校准 Profile”得到该设备的相对校准文件。", ja: "このテープを本機で録音済みの場合: 「自作テストテープで他機測定 -> 周波数校正」に入り、「周波数基線 Manifest」を読み込み、他機の再生結果を取り込んで「結果を生成」を押す。「校正 Profile を保存」でその機器用の相対校正ファイルを保存する。", en: "When this tape was recorded on your deck: go to Measure Other Devices -> Response Calibration, load the Response Baseline Manifest, import the other deck's playback capture, generate the result, then save Calibration Profile for that device." },
-  toolTestTapeTransportHelp: { "zh-CN": "这盒带已经由本机录好时：进入“自制测试带测其它设备 -> 走带诊断”；加载“走带基线 Manifest”；导入其它卡座/随身听播放这盒带得到的回录结果；点“生成结果”；输出该设备相对这盒测试带基线的速度偏差和 wow/flutter 诊断。", ja: "このテープを本機で録音済みの場合: 「自作テストテープで他機測定 -> 走行診断」に入り、「走行基線 Manifest」を読み込み、他機の再生結果を取り込んで「結果を生成」を押す。その機器の相対的な速度偏差と wow/flutter を表示する。", en: "When this tape was recorded on your deck: go to Measure Other Devices -> Transport Diagnostics, load the Transport Baseline Manifest, import the other device's playback capture, and generate the result. This reports relative speed error and wow/flutter against your tape baseline." },
-  appTitle: { "zh-CN": "SIDE — 磁带转录引擎", ja: "SIDE — 磁帯転写エンジン", en: "SIDE — Cassette Dubbing Engine" },
-  appSubtitle: { "zh-CN": "阿佐谷202室 · 磁带转录工具", ja: "阿佐ヶ谷202号室 · 磁帯転写ツール", en: "Asagaya Room 202 · Cassette Transcription Tool" },
-  appVersion: { "zh-CN": `Ver ${APP_VERSION} · by 天使天才天王寺璃奈`, ja: `Ver ${APP_VERSION} · by 天使天才天王寺璃奈`, en: `Ver ${APP_VERSION} · by Angel, Genius, Tennoji Rina` },
-  tapeSpec: { "zh-CN": "磁带规格", ja: "テープ規格", en: "Tape Format" },
-  tapeCustom: { "zh-CN": "自定义", ja: "カスタム", en: "Custom" },
-  minPerSide: { "zh-CN": "分钟/面", ja: "min/面", en: "min/side" },
-  tapeType: { "zh-CN": "磁带类型", ja: "テープ種類", en: "Tape Type" },
-  recLevel: { "zh-CN": "录音电平", ja: "録音レベル", en: "Rec Level" },
-  defaultGap: { "zh-CN": "默认曲间间隔", ja: "デフォルト曲間", en: "Default Track Gap" },
-  normalize: { "zh-CN": "响度归一化", ja: "ラウドネス正規化", en: "Loudness Normalization" },
-  normPeak: { "zh-CN": "峰值", ja: "ピーク", en: "Peak" },
-  normRms: { "zh-CN": "均方根", ja: "RMS", en: "RMS" },
-  normOff: { "zh-CN": "关闭", ja: "OFF", en: "OFF" },
-  tailFill: { "zh-CN": "尾部静音填充", ja: "末尾無音パディング", en: "Tail Silence Padding" },
-  tailMargin: { "zh-CN": "尾部预留余量", ja: "末尾マージン", en: "Tail Margin Reserve" },
-  smartGap: { "zh-CN": "智能间隔检测", ja: "スマートギャップ検出", en: "Smart Gap Detection" },
-  smartGapDesc: { "zh-CN": "分析音轨首尾静音，自动计算最优间隔", ja: "トラック先頭/末尾の無音を解析し最適ギャップを自動算出", en: "Analyze head/tail silence of tracks to compute optimal gaps" },
-  addFiles: { "zh-CN": "添加文件", ja: "ファイル追加", en: "Add Files" },
-  autoDistribute: { "zh-CN": "自动分面", ja: "自動振り分け", en: "Auto Distribute" },
-  exportSide: { "zh-CN": "导出", ja: "書出し", en: "Export" },
-  importPlaylist: { "zh-CN": "导入歌单", ja: "プレイリスト読込", en: "Import Playlist" },
-  exportPlaylist: { "zh-CN": "导出歌单", ja: "プレイリスト保存", en: "Export Playlist" },
-  dropHere: { "zh-CN": "将音频文件拖放至此处", ja: "ここにオーディオファイルをドロップ", en: "Drop audio files here" },
-  dropHint: { "zh-CN": "或点击上方按钮选择文件", ja: "または上のボタンでファイルを選択", en: "or use the button above to browse" },
-  tracks: { "zh-CN": "曲", ja: "曲", en: " tracks" },
-  exceeded: { "zh-CN": "超出", ja: "超過", en: "over" },
-  remaining: { "zh-CN": "剩余", ja: "残り", en: "left" },
-  moveUp: { "zh-CN": "上移", ja: "上へ", en: "Move up" },
-  moveDown: { "zh-CN": "下移", ja: "下へ", en: "Move down" },
-  moveToSide: { "zh-CN": "移至 SIDE", ja: "SIDE へ移動", en: "Move to SIDE" },
-  deleteTrack: { "zh-CN": "删除音轨", ja: "トラック削除", en: "Delete track" },
-  gap: { "zh-CN": "间隔", ja: "ギャップ", en: "gap" },
-  resetGap: { "zh-CN": "重置", ja: "リセット", en: "reset" },
-  tipSampleRate: { "zh-CN": "采样率", ja: "サンプルレート", en: "Sample rate" },
-  tipBitDepth: { "zh-CN": "位深", ja: "ビット深度", en: "Bit depth" },
-  tipChannels: { "zh-CN": "声道数", ja: "チャンネル数", en: "Channels" },
-  tipPeakLevel: { "zh-CN": "峰值电平", ja: "ピークレベル", en: "Peak level" },
-  tipHeadSilence: { "zh-CN": "音轨头部静音", ja: "トラック先頭の無音", en: "Head silence" },
-  tipTailSilence: { "zh-CN": "音轨尾部静音", ja: "トラック末尾の無音", en: "Tail silence" },
-  tapeTypeNote: { "zh-CN": "影响归一化目标电平", ja: "正規化ターゲットレベルに影響", en: "Affects normalization target level" },
-  appTagline: { "zh-CN": "……把声音编译进磁带里。", ja: "……音をテープにコンパイルする。", en: "…compile your sound into tape." },
-  decoding: { "zh-CN": "解码中", ja: "デコード中", en: "Decoding" },
-  w1Decrypting: { "zh-CN": "W1 解封装中", ja: "W1 展開中", en: "Unwrapping W1" },
-  w1DecryptFailed: {
-    "zh-CN": "W1 文件解封装失败",
-    ja: "W1 ファイルの展開に失敗しました",
-    en: "Failed to unwrap W1 file",
-  },
-  rendering: { "zh-CN": "离线渲染中", ja: "オフラインレンダリング中", en: "Offline rendering" },
-  encoding: { "zh-CN": "WAV 编码中", ja: "WAVエンコード中", en: "Encoding WAV" },
-  total: { "zh-CN": "共计", ja: "計", en: "Total" },
-  tape: { "zh-CN": "磁带", ja: "テープ", en: "Tape" },
-  type: { "zh-CN": "类型", ja: "種類", en: "Type" },
-  playlistExported: { "zh-CN": "歌单已导出", ja: "プレイリストを保存しました", en: "Playlist exported" },
-  playlistImportNoAudio: { "zh-CN": "歌单已加载（含占位曲目）。请重新添加对应音频文件，系统会自动按文件名匹配。", ja: "プレイリストを読み込みました（プレースホルダあり）。対応するオーディオファイルを再追加してください。", en: "Playlist loaded (with placeholders). Re-add audio files — they will auto-match by filename." },
-  stubsHydrated: { "zh-CN": "个 stub 音轨已匹配到音频文件", ja: "個のstubトラックにオーディオを紐付けました", en: "stub track(s) matched to audio" },
-  exportHasStubs: { "zh-CN": "当前面包含未匹配音频的 stub 音轨，导出时将跳过这些音轨。确定继续？", ja: "この面には未マッチングのstubトラックがあります。書出し時にスキップされます。続行しますか？", en: "This side contains stub tracks without audio. They will be skipped during export. Continue?" },
-  sampleRate: { "zh-CN": "采样率", ja: "サンプルレート", en: "Sample Rate" },
-  bitDepth: { "zh-CN": "位深", ja: "ビット深度", en: "Bit Depth" },
-  play: { "zh-CN": "试听", ja: "試聴", en: "Preview" },
-  stop: { "zh-CN": "停止", ja: "停止", en: "Stop" },
-  pause: { "zh-CN": "暂停", ja: "一時停止", en: "Pause" },
-  resume: { "zh-CN": "继续", ja: "再開", en: "Resume" },
-  nowPlaying: { "zh-CN": "正在播放", ja: "再生中", en: "Now playing" },
-  previewWave: { "zh-CN": "波形", ja: "波形", en: "Wave" },
-  previewSpectrogram: { "zh-CN": "声谱图", ja: "スペクトログラム", en: "Spectrogram" },
-  stubLabel: { "zh-CN": "占位曲目", ja: "プレースホルダ", en: "placeholder" },
-  clearSide: { "zh-CN": "清空当前面", ja: "この面をクリア", en: "Clear this side" },
-  clearAll: { "zh-CN": "清空全部", ja: "全てクリア", en: "Clear all" },
-  resampleWarn: { "zh-CN": "以下音轨将被降采样", ja: "以下のトラックはダウンサンプリングされます", en: "The following tracks will be downsampled" },
-  bitDepthWarn: { "zh-CN": "以下音轨将发生位深转换", ja: "以下のトラックはビット深度変換されます", en: "The following tracks will change bit depth" },
-  prevTrack: { "zh-CN": "上一曲", ja: "前の曲", en: "Previous" },
-  nextTrack: { "zh-CN": "下一曲", ja: "次の曲", en: "Next" },
-  playlistImportError: { "zh-CN": "歌单文件解析失败", ja: "プレイリスト解析エラー", en: "Failed to parse playlist" },
-  effectiveCapacity: { "zh-CN": "有效容量", ja: "実効容量", en: "Effective capacity" },
-  help: { "zh-CN": "帮助", ja: "ヘルプ", en: "Help" },
-  tools: { "zh-CN": "工具", ja: "ツール", en: "Tools" },
-  theme: { "zh-CN": "主题配色", ja: "テーマ配色", en: "Theme" },
-  about: { "zh-CN": "关于", ja: "About", en: "About" },
-  toolDescTitle: { "zh-CN": "工具说明", ja: "ツール説明", en: "Tool Description" },
-  toolRecCal: { "zh-CN": "录制校准", ja: "録音キャリブレーション", en: "Recording Calibration" },
-  toolRecCalCardDesc: { "zh-CN": "录音电平与高频校准", ja: "録音レベルと高域校正", en: "Rec level and HF calibration" },
-  toolRecCalDesc: {
-    "zh-CN": "同一时刻只输出一个校准信号。每种信号都对应一个明确的频率和电平规则，输出统一为双声道同相信号。",
-    ja: "同時に出力する校正信号は 1 つだけです。各信号には明確な周波数とレベル規則があり、出力は常にデュアルモノです。",
-    en: "Only one calibration signal can be output at a time. Each signal has a specific frequency and level rule, and output is always dual mono.",
-  },
-  toolSelectedSide: { "zh-CN": "校准 SIDE", ja: "校正 SIDE", en: "Calibration Side" },
-  toolSignalPick: { "zh-CN": "校准信号", ja: "校正信号", en: "Calibration Signal" },
-  toolSignalFreq: { "zh-CN": "输出信号", ja: "出力信号", en: "Output Signal" },
-  toolSignalLevel: { "zh-CN": "输出电平", ja: "出力レベル", en: "Output Level" },
-  toolSignalSource: { "zh-CN": "电平依据", ja: "レベル根拠", en: "Level Source" },
-  toolStereoMode: { "zh-CN": "声道方式", ja: "チャンネル方式", en: "Channel Mode" },
-  toolStereoDualMono: { "zh-CN": "双声道同相（dual mono）", ja: "デュアルモノ", en: "Dual mono" },
-  toolSignalRecBalance: { "zh-CN": "REC LEVEL / BALANCE", ja: "REC LEVEL / BALANCE", en: "REC LEVEL / BALANCE" },
-  toolSignalRecBalanceDesc: {
-    "zh-CN": "1kHz 中频参考音。REC LEVEL 用它对准最终节目峰值；BALANCE 也用同一个信号，因为左右输入必须完全一致。",
-    ja: "1kHz の中域基準音です。REC LEVEL は最終プログラムピーク基準、BALANCE も同一入力が必要なので同じ信号を使います。",
-    en: "A 1 kHz mid-band reference. REC LEVEL uses it against the final program peak, and BALANCE uses the same signal because L/R input must remain identical.",
-  },
-  toolSignalCal: { "zh-CN": "CAL", ja: "CAL", en: "CAL" },
-  toolSignalCalDesc: {
-    "zh-CN": "1kHz 固定参考音。它不跟节目走，只跟当前磁带类型的目标录音电平走。",
-    ja: "1kHz の固定基準音です。プログラムには追従せず、現在のテープ種別の録音目標レベルだけを使います。",
-    en: "A fixed 1 kHz reference tone. It does not follow program material, only the current tape type's recording target.",
-  },
-  toolSignalBias: { "zh-CN": "BIAS / REC EQ", ja: "BIAS / REC EQ", en: "BIAS / REC EQ" },
-  toolSignalBiasDesc: {
-    "zh-CN": "10kHz 高频测试音，电平比当前目标录音电平低 20dB。这个信号同时覆盖 BIAS 和 REC EQ 的观察场景。",
-    ja: "10kHz の高域テストトーンで、現在の録音目標レベルより 20dB 低く設定します。BIAS と REC EQ の確認を同じ信号で兼用します。",
-    en: "A 10 kHz high-frequency tone set 20 dB below the current recording target. The same signal is shared for both bias and REC EQ checks.",
-  },
-  toolSignalRecEq: { "zh-CN": "REC EQ", ja: "REC EQ", en: "REC EQ" },
-  toolSignalRecEqDesc: {
-    "zh-CN": "10kHz 高频测试音，电平同样比当前目标录音电平低 20dB，用于观察录音端高频响应。",
-    ja: "10kHz の高域テストトーンで、同じく現在の録音目標レベルより 20dB 低く、録音側の高域応答を確認します。",
-    en: "A 10 kHz high-frequency tone, also 20 dB below the current recording target, used to inspect recording HF response.",
-  },
-  toolProgramPeakSource: { "zh-CN": "所选 SIDE 的最终节目峰值", ja: "選択 SIDE の最終プログラムピーク", en: "Selected side's final program peak" },
-  toolTapeTargetSource: { "zh-CN": "当前磁带类型的目标录音电平", ja: "現在のテープ種別の録音目標レベル", en: "Current tape type recording target" },
-  toolHighFreqSource: {
-    "zh-CN": "当前磁带类型目标录音电平下移 20dB 的高频测试电平",
-    ja: "現在のテープ種別の録音目標レベルから 20dB 下げた高域テストレベル",
-    en: "High-frequency test level set 20 dB below the current tape type recording target",
-  },
-  toolStart: { "zh-CN": "开始输出", ja: "出力開始", en: "Start Output" },
-  toolStop: { "zh-CN": "停止输出", ja: "出力停止", en: "Stop Output" },
-  ctlSim: { "zh-CN": "模拟", ja: "モデリング", en: "Simulation" },
-  ctlDeck: { "zh-CN": "卡座", ja: "デッキ", en: "Deck" },
-  ctlTone: { "zh-CN": "音色", ja: "音色", en: "Tone" },
-  ctlTube: { "zh-CN": "管级", ja: "真空管", en: "Tube" },
-  ctlVinylEra: { "zh-CN": "年代", ja: "年代", en: "Era" },
-  ctlCrackle: { "zh-CN": "爆豆", ja: "ポップ", en: "Crackle" },
-  // ── 介质模拟 short labels ──────────────────────────────────
-  simStateOffShort: { "zh-CN": "关闭", ja: "OFF", en: "OFF" },
-  simStateTapeIShort: { "zh-CN": "一类带", ja: "TYPE I", en: "Type I" },
-  simStateTapeIIShort: { "zh-CN": "二类带", ja: "TYPE II", en: "Type II" },
-  simStateTapeIVShort: { "zh-CN": "四类带", ja: "TYPE IV", en: "Type IV" },
-  simStateVinylShort: { "zh-CN": "黑胶", ja: "VINYL", en: "Vinyl" },
-  // ── 介质模拟 tooltips ─────────────────────────────────────
-  simStateOffTip: {
-    "zh-CN": "关闭介质模拟，输出干净的数字信号。",
-    ja: "媒体シミュレーションを無効にします。クリーンなデジタル出力になります。",
-    en: "No medium simulation. Output is clean digital.",
-  },
-  simStateTapeITip: {
-    "zh-CN": "模拟 Type I 普通偏磁磁带的频响特性——高频自然滚降、轻微饱和感。",
-    ja: "Type I ノーマルバイアスの周波数特性を再現します。高域の自然なロールオフと軽い飽和感。",
-    en: "Simulates Type I normal-bias tape — gentle high-frequency roll-off and light saturation.",
-  },
-  simStateTapeIITip: {
-    "zh-CN": "模拟 Type II 铬带的频响特性——高频延伸更好，噪底更低，质感更亮。",
-    ja: "Type II クロームバイアスの特性。高域の伸びが良く、ノイズフロアが低め。",
-    en: "Simulates Type II chrome-bias tape — extended highs, lower noise floor, slightly brighter character.",
-  },
-  simStateTapeIVTip: {
-    "zh-CN": "模拟 Type IV 金属带的频响特性——动态更宽，高频清晰度最佳，录音电平更高。",
-    ja: "Type IV メタルテープの特性。ダイナミクスが広く、高域の鮮明さと高い録音レベルが特徴。",
-    en: "Simulates Type IV metal tape — widest dynamic range, clearest highs, highest recording level.",
-  },
-  simStateVinylTip: {
-    "zh-CN": "模拟黑胶唱片的回放特性——RIAA 均衡曲线、内圈失真与轻微的机械质感。",
-    ja: "レコード再生の特性を再現。RIAA EQ カーブ、内周歪み、軽微な機械感。",
-    en: "Simulates vinyl playback — RIAA EQ curve, inner-groove distortion, and subtle mechanical character.",
-  },
-  // ── 卡座 short labels ──────────────────────────────────────
-  deckStateOffShort: { "zh-CN": "关闭", ja: "OFF", en: "OFF" },
-  deckStatePortableShort: { "zh-CN": "随身", ja: "携帯", en: "PORT" },
-  deckState2HeadShort: { "zh-CN": "2磁头", ja: "2ヘッド", en: "2HD" },
-  deckState3HeadShort: { "zh-CN": "3磁头", ja: "3ヘッド", en: "3HD" },
-  // ── 卡座 tooltips ──────────────────────────────────────────
-  deckStateOffTip: {
-    "zh-CN": "关闭卡座模拟，不附加 transport 特性。",
-    ja: "デッキシミュレーションを無効にします。",
-    en: "No deck simulation applied.",
-  },
-  deckStatePortableTip: {
-    "zh-CN": "随身听级别的 transport——轻微的速度波动（wow/flutter）、较窄的频率响应和左右串音。",
-    ja: "ポータブルプレイヤー相当の transport。速度変動（wow/flutter）、帯域の狭さ、チャンネル間クロストークが出ます。",
-    en: "Portable player transport — subtle wow/flutter, narrower bandwidth, and channel crosstalk.",
-  },
-  deckState2HeadTip: {
-    "zh-CN": "高端二磁头卡座的 transport——速度稳定性好，频率响应宽，整体更干净。",
-    ja: "高級 2 ヘッドデッキの transport。速度安定性が高く、帯域が広い。",
-    en: "High-end 2-head deck transport — stable speed, wide bandwidth, cleaner overall.",
-  },
-  deckState3HeadTip: {
-    "zh-CN": "高端三磁头卡座的 transport——最佳速度稳定性与分离度，接近开盘机的精度。",
-    ja: "高級 3 ヘッドデッキの transport。最高の速度安定性とチャンネルセパレーション。オープンリールに近い精度。",
-    en: "High-end 3-head deck transport — best speed stability and separation, approaching open-reel precision.",
-  },
-  // ── 音色 short labels ──────────────────────────────────────
-  toneStateDefaultShort: { "zh-CN": "中性", ja: "中立", en: "Neutral" },
-  toneStateCoolShort: { "zh-CN": "冷色", ja: "クール", en: "Cool" },
-  toneStateWarmShort: { "zh-CN": "暖色", ja: "ウォーム", en: "Warm" },
-  // ── 音色 tooltips ──────────────────────────────────────────
-  toneStateDefaultTip: {
-    "zh-CN": "中性频谱，不对高低频做额外的倾向性处理。",
-    ja: "中立的な周波数特性。高域・低域への追加の色付けはありません。",
-    en: "Neutral frequency response. No additional spectral coloring.",
-  },
-  toneStateCoolTip: {
-    "zh-CN": "偏冷——高频稍亮，低中频收紧，整体通透感更强。",
-    ja: "クール寄り。高域が少し開き、低中域が引き締まります。",
-    en: "Cool tilt — slightly brighter highs, tighter low-mids, more open overall.",
-  },
-  toneStateWarmTip: {
-    "zh-CN": "偏暖——低中频更厚实，高频收敛，听感更柔和沉稳。",
-    ja: "ウォーム寄り。低中域が厚くなり、高域がなだらかになります。",
-    en: "Warm tilt — fuller low-mids, softer highs, rounder and more settled sound.",
-  },
-  // ── 电子管 short labels ────────────────────────────────────
-  tubeStateOffShort: { "zh-CN": "关闭", ja: "OFF", en: "OFF" },
-  tubeStateOnShort: { "zh-CN": "电子管", ja: "真空管", en: "Tube" },
-  // ── 电子管 tooltips ────────────────────────────────────────
-  tubeStateOffTip: {
-    "zh-CN": "关闭电子管前级模拟。",
-    ja: "真空管プリアンプのシミュレーションを無効にします。",
-    en: "No tube preamp stage applied.",
-  },
-  tubeStateOnTip: {
-    "zh-CN": "加入轻微的电子管饱和——极轻的谐波着色与高频圆润感，是那种听不出来但去掉就会少点什么的效果。",
-    ja: "軽微な真空管飽和を加えます。わずかな倍音の色付けと高域の丸み。消すとなぜか物足りなくなる、あの感じ。",
-    en: "Adds subtle tube saturation — light harmonic coloring and high-frequency rounding. You might not notice it, but you'd miss it if it were gone.",
-  },
-  // ── 黑胶年代 short labels ──────────────────────────────────
-  vinylEraModernShort: { "zh-CN": "现代", ja: "現代", en: "Modern" },
-  vinylEraClassicShort: { "zh-CN": "经典", ja: "定番", en: "Classic" },
-  vinylEraVintageShort: { "zh-CN": "复古", ja: "旧式", en: "Vintage" },
-  vinylEraEffectShort: { "zh-CN": "效果", ja: "効果", en: "Effect" },
-  // ── 黑胶年代 tooltips ──────────────────────────────────────
-  vinylEraModernTip: {
-    "zh-CN": "现代黑胶：宽频响、低噪底，内圈失真轻微，听感干净。",
-    ja: "現代盤の再生特性。広い帯域、低ノイズ、内周歪みは控えめ。",
-    en: "Modern vinyl — wide bandwidth, low noise, minimal inner-groove distortion.",
-  },
-  vinylEraClassicTip: {
-    "zh-CN": "经典黑胶：适度的高频滚降与唱片磨损感，是大多数人印象里的黑胶声。",
-    ja: "定番のレコード再生。適度な高域減衰と盤面の経年感。多くの人が思い浮かべるレコードサウンド。",
-    en: "Classic vinyl — moderate high-frequency roll-off and record wear. The sound most people picture when they think 'vinyl'.",
-  },
-  vinylEraVintageTip: {
-    "zh-CN": "复古黑胶：更早的高频衰减、更明显的磨损颗粒感、更窄的立体声分离度。",
-    ja: "古いレコードの再生特性。高域の早い減衰、強めの経年劣化感、狭いステレオ分離。",
-    en: "Vintage vinyl — earlier high-frequency roll-off, stronger surface wear character, narrower stereo separation.",
-  },
-  vinylEraEffectTip: {
-    "zh-CN": "重度效果档：夸张的带宽限制、磨损噪声与机械伪声，适合刻意追求老旧质感的场合。",
-    ja: "エフェクト用途の強め設定。帯域制限・磨耗ノイズ・機械的なアーティファクトが強調されます。意図的なレトロ感が欲しいときに。",
-    en: "Heavy effect mode — exaggerated bandwidth loss, surface noise, and mechanical artifacts. For when you want it to sound deliberately old.",
-  },
-  // ── 爆豆 short labels ──────────────────────────────────────
-  crackleStateOffShort: { "zh-CN": "爆豆关", ja: "POP OFF", en: "CRK OFF" },
-  crackleStateLowShort: { "zh-CN": "爆豆低", ja: "POP LOW", en: "CRK LOW" },
-  crackleStateMidShort: { "zh-CN": "爆豆中", ja: "POP MID", en: "CRK MID" },
-  crackleStateHighShort: { "zh-CN": "爆豆高", ja: "POP HI", en: "CRK HI" },
-  // ── 爆豆 tooltips ──────────────────────────────────────────
-  crackleStateOffTip: {
-    "zh-CN": "关闭 click/pop 噪声层。",
-    ja: "クリック/ポップノイズ層を無効にします。",
-    en: "No click/pop noise layer.",
-  },
-  crackleStateLowTip: {
-    "zh-CN": "低密度的唱针爆豆声——偶尔的轻微 click，听起来像保养良好的老唱片。",
-    ja: "低密度のスクラッチ/クリックノイズ。たまに軽いクリックが入る程度。手入れされた古盤の雰囲気。",
-    en: "Low-density crackle — occasional light clicks, like a well-kept old record.",
-  },
-  crackleStateMidTip: {
-    "zh-CN": "中等密度的爆豆声——明显但不刺耳，日常播放老唱片的质感。",
-    ja: "中密度のスクラッチ/クリック。気にはなるが耳障りではない、普段使いの古盤感。",
-    en: "Medium-density crackle — present but not distracting. Sounds like an everyday old record.",
-  },
-  crackleStateHighTip: {
-    "zh-CN": "高密度的爆豆声——持续的噪声与 pop，像一张从二手店买来、没有好好保管过的黑胶。",
-    ja: "高密度のスクラッチ/クリック。持続的なノイズとポップ音。中古店で状態の悪い盤を買ってきたような感じ。",
-    en: "High-density crackle — continuous noise and pops, like a second-hand record that's had a rough life.",
-  },
-};
-
-function t(key, lang) { const e = I18N[key]; return e ? (e[lang] || e["zh-CN"] || key) : key; }
 function themeName(key, lang) {
   const names = THEME_NAMES[key];
   return names ? (names[lang] || names["zh-CN"] || key) : key;
 }
-const RINA_SMILE = "[^_^]";
-
 // ── Constants ────────────────────────────────────────────────
 // ── Character Themes ────────────────────────────────────────
 const THEMES = {
@@ -735,14 +316,6 @@ const VINYL_CRACKLE_PROFILES = {
 const DEFAULT_GAP = 3.0;
 const SILENCE_THRESHOLD = 0.005;
 const SILENCE_MIN_DUR = 0.3;
-const CALIBRATION_FREQ_HZ = 1000;
-const CALIBRATION_HIGH_FREQ_HZ = 10000;
-const CALIBRATION_HF_OFFSET_DB = -20;
-const SIGNAL_OUTPUT_PRESETS = [
-  { id: "rec_level_balance", nameKey: "toolSignalRecBalance", descKey: "toolSignalRecBalanceDesc" },
-  { id: "cal", nameKey: "toolSignalCal", descKey: "toolSignalCalDesc" },
-  { id: "bias", nameKey: "toolSignalBias", descKey: "toolSignalBiasDesc" },
-];
 
 // ── Audio helpers ────────────────────────────────────────────
 function encodeWAV(ab, bitsPerSample = 16) {
@@ -1619,6 +1192,11 @@ const HeaderControls = React.memo(function HeaderControls({ lang, setLang, theme
                     <p><b>// 波形 / 声谱图</b><br />
                       每一面下方可以切换显示静态波形或 FFT 声谱图。<br />
                       声谱图的纵轴是对数频率。颜色深浅对应电平强度。</p>
+                    <p><b>// 工具</b><br />
+                      点击头栏的工具按钮打开工具面板，里面有三个独立模块。<br />
+                      <b>校准信号输出</b>：输出标准频率的正弦波，用于调节卡座的录音电平和 BIAS。选择信号类型后点「开始输出」，卡座进入录音状态后调节电平表到目标位置。<br />
+                      <b>卡座录制校准</b>：用扫频和 3150 Hz 测试音一次性完成频响校准和走带诊断。「校准本卡座」模式是自录自放后生成校准文件；「用这盒带测其它机器」模式可以把已录好的校准带拿去别的设备播放，导入回录做对比分析。<br />
+                      <b>播放器频响 & EQ 匹配</b>：测量两台播放设备的频率响应，自动算出让 A 听起来像 B 的 EQ 参数。支持标准探针精确测量和歌曲对比两种方式。</p>
                   </div>
                   <p style={{ fontSize: 11, color: "var(--text-dim)", textAlign: "right", marginTop: 4 }}>
                     ……把声音编译进磁带里。 {RINA_SMILE}<br />
@@ -1669,6 +1247,11 @@ const HeaderControls = React.memo(function HeaderControls({ lang, setLang, theme
                     <p><b>// 波形 / スペクトログラム</b><br />
                       各面の下に静的波形または FFT スペクトログラムを切り替えて表示できます。<br />
                       スペクトログラムの縦軸は対数周波数スケールです。色の濃淡がレベルに対応しています。</p>
+                    <p><b>// ツール</b><br />
+                      ヘッダーのツールボタンからツールパネルを開けます。3 つのモジュールがあります。<br />
+                      <b>校正信号出力</b>：標準周波数の正弦波を出力し、デッキの録音レベルと BIAS を調整します。信号の種類を選んで「出力開始」を押し、デッキ側のメーターを見ながら調整してください。<br />
+                      <b>デッキ録音キャリブレーション</b>：スイープと 3150 Hz テストトーンで周波数応答と走行診断を一度に実行します。「このデッキを校正」モードは自己録再で校正ファイルを生成。「このテープで他機を測定」モードは録音済みのキャリブレーションテープを別のデバイスで再生し、比較分析を行います。<br />
+                      <b>プレイヤー周波数応答 & EQ マッチング</b>：2 台の再生デバイスの周波数応答を測定し、A を B に近づける EQ パラメータを自動算出します。標準プローブによる精密測定と、楽曲比較による測定の 2 方式に対応しています。</p>
                   </div>
                   <p style={{ fontSize: 11, color: "var(--text-dim)", textAlign: "right", marginTop: 4 }}>
                     ……音をテープにコンパイルする。 {RINA_SMILE}<br />
@@ -1719,6 +1302,11 @@ const HeaderControls = React.memo(function HeaderControls({ lang, setLang, theme
                     <p><b>// Waveform / Spectrogram</b><br />
                       Each side can display a static waveform or an FFT spectrogram below the track list.<br />
                       The spectrogram's vertical axis is logarithmic frequency. Color intensity maps to level.</p>
+                    <p><b>// Tools</b><br />
+                      Open the tools panel from the header. There are three independent modules.<br />
+                      <b>Calibration Signal Output</b>: Outputs a reference sine wave for adjusting your deck's recording level and bias. Pick a signal type, click Start, and adjust the deck while monitoring its meters.<br />
+                      <b>Deck Recording Calibration</b>: Uses a sweep and a 3150 Hz test tone to perform response calibration and transport diagnostics in one pass. "Calibrate This Deck" mode records and plays back on the same deck to generate a correction file. "Test Other Devices With This Tape" mode plays the recorded calibration tape on another device and analyses the difference.<br />
+                      <b>Player Response & EQ Matching</b>: Measures the frequency response of two playback devices and automatically computes the EQ needed to make device A sound like device B. Supports both precise probe measurement and song-based comparison.</p>
                   </div>
                   <p style={{ fontSize: 11, color: "var(--text-dim)", textAlign: "right", marginTop: 4 }}>
                     …compile your sound into tape. {RINA_SMILE}<br />
@@ -1835,31 +1423,40 @@ export default function CassetteTool() {
   const [ffmpegStatus, setFfmpegStatus] = useState("idle"); // idle | loading | ready | unavailable
   const [showTools, setShowTools] = useState(false);
   const [activeTool, setActiveTool] = useState("signal-output");
-  const [calibrationSide, setCalibrationSide] = useState("A");
-  const [signalOutputType, setSignalOutputType] = useState("rec_level_balance");
-  const [signalOutputRunning, setSignalOutputRunning] = useState(false);
   const [loadedCalibrationProfile, setLoadedCalibrationProfile] = useState(null);
   const [loadedCalibrationProfileName, setLoadedCalibrationProfileName] = useState("");
   const [applyCalibrationPreview, setApplyCalibrationPreview] = useState(true);
   const [applyCalibrationExport, setApplyCalibrationExport] = useState(true);
-  const [deckCalProgramManifest, setDeckCalProgramManifest] = useState(null);
-  const [deckCalProgramManifestName, setDeckCalProgramManifestName] = useState("");
-  const [deckCalRecordingKind, setDeckCalRecordingKind] = useState("");
-  const [deckCalCapture, setDeckCalCapture] = useState(null);
-  const [deckCalCaptureName, setDeckCalCaptureName] = useState("");
-  const [responseAnalysis, setResponseAnalysis] = useState(null);
-  const [transportAnalysis, setTransportAnalysis] = useState(null);
 
   const acRef = useRef(null);
   const fileRef = useRef(null);
   const plRef = useRef(null);
   const calibrationProfileRef = useRef(null);
-  const signalOutputRef = useRef({ osc: null, gain: null, merger: null });
-  const deckCalRecordRef = useRef({ recorder: null, stream: null, chunks: [], kind: "" });
   const correctionImpulseCacheRef = useRef(new Map());
   const trackOutputStatsCacheRef = useRef(new Map());
 
   const showToast = useCallback((m, d = 4000) => { setToast(m); setTimeout(() => setToast(null), d); }, []);
+
+  const downloadBlob = useCallback((blob, filename) => {
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = filename;
+    a.click();
+    URL.revokeObjectURL(url);
+  }, []);
+
+  const buildPreviewGains = useCallback((audioTracks) => {
+    const gains = audioTracks.map(() => 1.0);
+    if (normalizeMode === "peak") {
+      const tl = Math.pow(10, targetDb / 20);
+      audioTracks.forEach((t, i) => { gains[i] = t.peak > 0 ? tl / t.peak : 1.0; });
+    } else if (normalizeMode === "rms") {
+      const avg = audioTracks.reduce((s, t) => s + t.rms, 0) / audioTracks.length;
+      audioTracks.forEach((t, i) => { gains[i] = t.rms > 0 ? avg / t.rms : 1.0; });
+    }
+    return gains;
+  }, [normalizeMode, targetDb]);
   const getAC = useCallback(() => {
     if (!acRef.current) {
       const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
@@ -2034,23 +1631,6 @@ export default function CassetteTool() {
     return hasLossless ? 24 : 16;
   }, [exportBits]);
 
-  const stopSignalOutput = useCallback(() => {
-    const signalOutput = signalOutputRef.current;
-    if (signalOutput.osc) {
-      signalOutput.osc.onended = null;
-      try { signalOutput.osc.stop(); } catch { }
-    }
-    [signalOutput.osc, signalOutput.gain, signalOutput.merger].forEach((node) => {
-      try { node?.disconnect(); } catch { }
-    });
-    signalOutputRef.current = { osc: null, gain: null, merger: null };
-    setSignalOutputRunning(false);
-  }, []);
-
-  useEffect(() => {
-    if (!showTools) stopSignalOutput();
-  }, [showTools, stopSignalOutput]);
-
 
   // Compute effective gap for a track (considering smartGap)
   const getGap = useCallback((tr, nextTr) => {
@@ -2089,6 +1669,87 @@ export default function CassetteTool() {
       return await ctx.decodeAudioData(wavBuf.slice(0));
     }
   }, [T, ffmpegStatus, getAC]);
+
+  // ── Tool hooks ────────────────────────────────────────────
+  const {
+    calibrationSide, setCalibrationSide,
+    signalOutputType, setSignalOutputType,
+    signalOutputRunning,
+    resolveSignalOutput,
+    startSignalOutput,
+    stopSignalOutput,
+    signalOutputRef,
+  } = useSignalOutput({ getAC, stopPlaybackRef, tracks, buildPreviewGains, targetDb, showTools });
+
+  const {
+    deckCalProgramManifestName,
+    deckCalRecordingKind,
+    deckCalCaptureName,
+    responseAnalysis,
+    transportAnalysis,
+    deckCalRecordRef,
+    loadDeckCalProgramManifestFile,
+    clearDeckCalProgramManifest,
+    exportTestTapeProgram,
+    importDeckCalCaptureFile,
+    startDeckCalRecording,
+    stopDeckCalRecording,
+    analyseDeckCalCapture,
+    saveResponseProfile,
+    saveDeckCalProgramManifest,
+  } = useDeckCalibration({ T, showToast, downloadBlob, encodeWAV, decodeExternalAudioFile, setProcessing, setProcMsg, showTools });
+
+  const onLoadCalibrationProfile = useCallback((profile) => {
+    setLoadedCalibrationProfile(profile);
+    setLoadedCalibrationProfileName(profile.name);
+    setApplyCalibrationPreview(true);
+    setApplyCalibrationExport(true);
+    correctionImpulseCacheRef.current.clear();
+  }, []);
+
+  const {
+    probeCaptureName,
+    playerProbeProfile,
+    exportPlayerProbe,
+    importPlayerProbeCaptureFile,
+    buildPlayerProbeProfile,
+    savePlayerProbeProfile,
+    songReferenceTracks,
+    songRecordedTracks,
+    songPairCount,
+    songPairError,
+    songPairingDetails,
+    songPairPreview,
+    songAnalysisFailedPairs,
+    playerSongProfile,
+    importSongFiles,
+    buildPlayerSongProfile,
+    savePlayerSongProfile,
+    eqWorkbenchBaseProfileName,
+    playerEqReadyProfile,
+    useProbeAsEqBase,
+    useSongAsEqBase,
+    importEqBaseProfileFile,
+    buildFixedEqWorkbenchProfile,
+    saveEqReadyProfile,
+    compilerProfileAName,
+    compilerProfileBName,
+    compilerTargetMode,
+    playerEqCompileResult,
+    compileLoadableProfile,
+    importCompilerProfileFile,
+    useEqReadyAsCompilerA,
+    useProbeAsCompilerB,
+    useSongAsCompilerB,
+    changeCompilerTargetMode,
+    compilePlayerProfiles,
+    loadCompileResultProfile,
+    exportCompileLoadableProfile,
+    exportCompileResultJson,
+    exportCompileResultText,
+  } = usePlayerProfile({ showToast, downloadBlob, encodeWAV, decodeExternalAudioFile, setProcessing, setProcMsg, onLoadCalibrationProfile });
+
+
 
   // ── File loading ─────────────────────────────────────────
   const loadFiles = useCallback(async (files, side) => {
@@ -2806,98 +2467,6 @@ export default function CassetteTool() {
   }, [stopSignalOutput]);
 
   // ── Sub-components ───────────────────────────────────────
-  const buildPreviewGains = useCallback((audioTracks) => {
-    const gains = audioTracks.map(() => 1.0);
-    if (normalizeMode === "peak") {
-      const tl = Math.pow(10, targetDb / 20);
-      audioTracks.forEach((t, i) => { gains[i] = t.peak > 0 ? tl / t.peak : 1.0; });
-    } else if (normalizeMode === "rms") {
-      const avg = audioTracks.reduce((s, t) => s + t.rms, 0) / audioTracks.length;
-      audioTracks.forEach((t, i) => { gains[i] = t.rms > 0 ? avg / t.rms : 1.0; });
-    }
-    return gains;
-  }, [normalizeMode, targetDb]);
-
-  const resolveSignalOutput = useCallback((signalType, side) => {
-    const sideTracks = tracks.filter((track) => track.side === side && track.audioBuffer);
-    const gains = buildPreviewGains(sideTracks);
-    const programPeak = sideTracks.reduce((maxPeak, track, index) => (
-      Math.max(maxPeak, (track.peak || 0) * (gains[index] || 1))
-    ), 0);
-    if (signalType === "rec_level_balance") {
-      if (programPeak > 0) {
-        return {
-          side,
-          signalType,
-          freqHz: CALIBRATION_FREQ_HZ,
-          amplitude: programPeak,
-          levelDb: toDb(programPeak),
-          sourceKey: "toolProgramPeakSource",
-        };
-      }
-      const targetAmp = Math.pow(10, targetDb / 20);
-      return {
-        side,
-        signalType,
-        freqHz: CALIBRATION_FREQ_HZ,
-        amplitude: targetAmp,
-        levelDb: targetDb,
-        sourceKey: "toolTapeTargetSource",
-      };
-    }
-    if (signalType === "cal") {
-      const targetAmp = Math.pow(10, targetDb / 20);
-      return {
-        side,
-        signalType,
-        freqHz: CALIBRATION_FREQ_HZ,
-        amplitude: targetAmp,
-        levelDb: targetDb,
-        sourceKey: "toolTapeTargetSource",
-      };
-    }
-    const hfLevelDb = targetDb + CALIBRATION_HF_OFFSET_DB;
-    const hfAmp = Math.pow(10, hfLevelDb / 20);
-    return {
-      side,
-      signalType,
-      freqHz: CALIBRATION_HIGH_FREQ_HZ,
-      amplitude: hfAmp,
-      levelDb: hfLevelDb,
-      sourceKey: "toolHighFreqSource",
-    };
-  }, [buildPreviewGains, targetDb, tracks]);
-
-  const startSignalOutput = useCallback(async () => {
-    stopPlayback();
-    stopSignalOutput();
-    const ctx = getAC();
-    if (ctx.state === "suspended") await ctx.resume();
-    const signal = resolveSignalOutput(signalOutputType, calibrationSide);
-    const osc = ctx.createOscillator();
-    osc.type = "sine";
-    osc.frequency.value = signal.freqHz;
-    const gain = ctx.createGain();
-    gain.gain.value = signal.amplitude;
-    const merger = ctx.createChannelMerger(2);
-    osc.connect(gain);
-    gain.connect(merger, 0, 0);
-    gain.connect(merger, 0, 1);
-    merger.connect(ctx.destination);
-    osc.start();
-    signalOutputRef.current = { osc, gain, merger };
-    setSignalOutputRunning(true);
-  }, [calibrationSide, signalOutputType, getAC, resolveSignalOutput, stopSignalOutput, stopPlayback]);
-
-  const downloadBlob = useCallback((blob, filename) => {
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-    a.download = filename;
-    a.click();
-    URL.revokeObjectURL(url);
-  }, []);
-
   const loadCalibrationProfileFile = useCallback(async (file) => {
     if (!file) return;
     try {
@@ -2921,193 +2490,6 @@ export default function CassetteTool() {
     correctionImpulseCacheRef.current.clear();
     showToast(T("calibrationProfileCleared"));
   }, [T, showToast]);
-
-  const loadDeckCalProgramManifestFile = useCallback(async (file) => {
-    if (!file) return;
-    try {
-      const raw = JSON.parse(await file.text());
-      if (raw?.type !== "side.test-tape-program-manifest") throw new Error("Not a test tape program manifest");
-      setDeckCalProgramManifest(raw);
-      setDeckCalProgramManifestName(file.name);
-      showToast(T("toolManifestImported"));
-    } catch (err) {
-      showToast(`${T("playlistImportError")}: ${err.message}`, 5000);
-    }
-  }, [T, showToast]);
-
-  const clearDeckCalProgramManifest = useCallback(() => {
-    setDeckCalProgramManifest(null);
-    setDeckCalProgramManifestName("");
-  }, []);
-
-  const applyProgramManifestToResponse = useCallback((analysis, manifest) => {
-    const baseline = manifest?.baselines?.response;
-    if (!baseline?.frequenciesHz?.length) return analysis;
-    const adjustedMeasuredDb = analysis.frequenciesHz.map((freq, index) => (
-      analysis.measuredDb[index] - getProfileCorrectionDb({ channels: { L: { frequenciesHz: baseline.frequenciesHz, correctionDb: baseline.referenceDb } } }, freq, "L")
-    ));
-    const adjustedCorrectionDb = analysis.frequenciesHz.map((freq, index) => (
-      analysis.correctionDb[index] + getProfileCorrectionDb({ channels: { L: { frequenciesHz: baseline.frequenciesHz, correctionDb: baseline.referenceDb } } }, freq, "L")
-    ));
-    return {
-      ...analysis,
-      measuredDb: adjustedMeasuredDb,
-      correctionDb: adjustedCorrectionDb,
-      manifestName: manifest.name,
-      profile: {
-        ...analysis.profile,
-        sourceManifest: {
-          name: manifest.name,
-          createdAt: manifest.createdAt,
-        },
-        channels: {
-          L: { frequenciesHz: analysis.frequenciesHz, correctionDb: adjustedCorrectionDb },
-          R: { frequenciesHz: analysis.frequenciesHz, correctionDb: adjustedCorrectionDb },
-        },
-      },
-    };
-  }, []);
-
-  const applyProgramManifestToTransport = useCallback((analysis, manifest) => {
-    const baseline = manifest?.baselines?.transport;
-    if (!baseline?.nominalOnTapeToneHz) return analysis;
-    const nominalHz = baseline.nominalOnTapeToneHz;
-    return {
-      ...analysis,
-      nominalHz,
-      speedErrorPercent: ((analysis.meanHz - nominalHz) / nominalHz) * 100,
-      writerWowFlutterFloorPercentRms: baseline.wowFlutterFloorPercentRms || 0,
-      manifestName: manifest.name,
-    };
-  }, []);
-
-  const exportTestTapeProgram = useCallback(async () => {
-    const program = generateTestTapeProgram(TEST_TAPE_PROGRAM_SPEC);
-    downloadBlob(encodeWAV(program.bufferLike, 24), "deck-cal-test-tape-program.wav");
-    showToast(T("toolRefExported"));
-  }, [T, downloadBlob, showToast]);
-
-  const importDeckCalCaptureFile = useCallback(async (file) => {
-    if (!file) return;
-    setProcessing(true);
-    try {
-      const ab = await decodeExternalAudioFile(file);
-      setDeckCalCapture(ab);
-      setDeckCalCaptureName(file.name);
-      setResponseAnalysis(null);
-      setTransportAnalysis(null);
-      showToast(T("toolCaptureImported"));
-    } catch (err) {
-      showToast(`${T("playlistImportError")}: ${err.message}`, 5000);
-    } finally {
-      setProcessing(false);
-      setProcMsg("");
-    }
-  }, [T, decodeExternalAudioFile, showToast]);
-
-  const startDeckCalRecording = useCallback(async (kind) => {
-    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
-      showToast(T("toolRecordUnavailable"), 5000);
-      return;
-    }
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          channelCount: 2,
-          echoCancellation: false,
-          noiseSuppression: false,
-          autoGainControl: false,
-        },
-      });
-      const mimeType = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus"].find((type) => MediaRecorder.isTypeSupported(type)) || "";
-      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
-      const chunks = [];
-      recorder.ondataavailable = (event) => {
-        if (event.data?.size) chunks.push(event.data);
-      };
-      recorder.onstop = async () => {
-        const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
-        const ext = recorder.mimeType?.includes("ogg") ? "ogg" : "webm";
-        const file = new File([blob], `${kind}-capture.${ext}`, { type: blob.type });
-        setDeckCalRecordingKind("");
-        stream.getTracks().forEach((track) => track.stop());
-        deckCalRecordRef.current = { recorder: null, stream: null, chunks: [], kind: "" };
-        await importDeckCalCaptureFile(file);
-      };
-      recorder.start();
-      deckCalRecordRef.current = { recorder, stream, chunks, kind };
-      setDeckCalRecordingKind(kind);
-    } catch (err) {
-      console.error(err);
-      showToast(`${T("toolRecordFailed")}: ${err.message}`, 5000);
-    }
-  }, [T, importDeckCalCaptureFile, showToast]);
-
-  const stopDeckCalRecording = useCallback(() => {
-    const active = deckCalRecordRef.current;
-    if (active.recorder && active.recorder.state !== "inactive") active.recorder.stop();
-  }, []);
-
-  useEffect(() => {
-    if (!showTools && deckCalRecordingKind) stopDeckCalRecording();
-  }, [deckCalRecordingKind, showTools, stopDeckCalRecording]);
-
-  const analyseDeckCalCapture = useCallback((scenario = "self") => {
-    if (!deckCalCapture) return;
-    try {
-      const rawResult = analyseTestTapeProgram(deckCalCapture, generateTestTapeProgram(TEST_TAPE_PROGRAM_SPEC));
-      const shouldApplyManifest = scenario === "test-tape" && deckCalProgramManifest;
-      const nextResponse = shouldApplyManifest ? applyProgramManifestToResponse(rawResult.response, deckCalProgramManifest) : rawResult.response;
-      const nextTransport = shouldApplyManifest ? applyProgramManifestToTransport(rawResult.transport, deckCalProgramManifest) : rawResult.transport;
-      setResponseAnalysis(nextResponse);
-      setTransportAnalysis(nextTransport);
-    } catch (err) {
-      showToast(`Test tape analysis failed: ${err.message}`, 5000);
-    }
-  }, [applyProgramManifestToResponse, applyProgramManifestToTransport, deckCalCapture, deckCalProgramManifest, showToast]);
-
-  const saveResponseProfile = useCallback(() => {
-    if (!responseAnalysis?.profile) return;
-    const blob = new Blob([JSON.stringify(responseAnalysis.profile, null, 2)], { type: "application/json" });
-    downloadBlob(blob, "deck-calibration-profile.json");
-    showToast(T("toolProfileSaved"));
-  }, [T, downloadBlob, responseAnalysis, showToast]);
-
-  const saveDeckCalProgramManifest = useCallback(() => {
-    if (!responseAnalysis || !transportAnalysis) return;
-    const manifest = {
-      version: 1,
-      type: "side.test-tape-program-manifest",
-      name: "Self Deck Test Tape Program",
-      createdAt: new Date().toISOString(),
-      program: {
-        sampleRate: TEST_TAPE_PROGRAM_SPEC.sampleRate,
-        interSegmentSec: TEST_TAPE_PROGRAM_SPEC.interSegmentSec,
-        response: {
-          startHz: RESPONSE_MEASUREMENT_SPEC.startHz,
-          endHz: RESPONSE_MEASUREMENT_SPEC.endHz,
-          durationSec: RESPONSE_MEASUREMENT_SPEC.mainSec,
-        },
-        transport: {
-          toneHz: TRANSPORT_MEASUREMENT_SPEC.toneHz,
-          durationSec: TRANSPORT_MEASUREMENT_SPEC.mainSec,
-        },
-      },
-      baselines: {
-        response: {
-          frequenciesHz: responseAnalysis.frequenciesHz,
-          referenceDb: responseAnalysis.measuredDb,
-        },
-        transport: {
-          nominalOnTapeToneHz: transportAnalysis.meanHz,
-          wowFlutterFloorPercentRms: transportAnalysis.wowFlutterPercentRms || 0,
-          speedOffsetPercent: transportAnalysis.speedErrorPercent || 0,
-        },
-      },
-    };
-    downloadBlob(new Blob([JSON.stringify(manifest, null, 2)], { type: "application/json" }), "self-test-tape-program.manifest.json");
-    showToast(T("toolBaselineSaved"));
-  }, [T, downloadBlob, responseAnalysis, showToast, transportAnalysis]);
 
   const renderCapBar = (used, total, eff, side) => {
     const hardOver = used > total, softOver = !hardOver && used > eff;
@@ -3300,6 +2682,8 @@ export default function CassetteTool() {
   const signalOutput = resolveSignalOutput(signalOutputType, calibrationSide);
   const activePlugin = TOOL_PLUGINS.find((plugin) => plugin.id === activeTool);
   const ActiveToolPluginComponent = activePlugin?.Component;
+  const getPluginTitle = useCallback((plugin) => plugin.title?.[lang] || (plugin.titleKey ? T(plugin.titleKey) : plugin.id), [T, lang]);
+  const getPluginDesc = useCallback((plugin) => plugin.desc?.[lang] || (plugin.descKey ? T(plugin.descKey) : ""), [T, lang]);
 
   return (
     <div style={{
@@ -3343,10 +2727,12 @@ export default function CassetteTool() {
               {TOOL_PLUGINS.map((plugin) => (
                 <button key={plugin.id} onClick={() => setActiveTool(plugin.id)} style={{
                   width: "100%", border: "1px solid var(--border)", borderRadius: 10, padding: "12px 14px", cursor: "pointer", textAlign: "left",
-                  background: activeTool === plugin.id ? "var(--accent-dim)" : "var(--bg)", color: activeTool === plugin.id ? "var(--accent-ink)" : "var(--text)"
+                  background: activeTool === plugin.id ? "var(--accent-dim)" : "var(--bg)",
+                  color: activeTool === plugin.id ? "var(--accent-ink)" : "var(--text)",
+                  marginBottom: 8,
                 }}>
-                  <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>{T(plugin.titleKey)}</div>
-                  <div style={{ fontSize: 11, lineHeight: 1.6, color: "var(--text-dim)" }}>{T(plugin.descKey)}</div>
+                  <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4 }}>{getPluginTitle(plugin)}</div>
+                  <div style={{ fontSize: 11, lineHeight: 1.6, color: "var(--text-dim)" }}>{getPluginDesc(plugin)}</div>
                 </button>
               ))}
             </div>
@@ -3414,7 +2800,7 @@ export default function CassetteTool() {
                 </div>
               </>}
               {ActiveToolPluginComponent && <ActiveToolPluginComponent
-                T={T}
+                lang={lang}
                 processing={processing}
                 captureName={deckCalCaptureName}
                 responseAnalysis={responseAnalysis}
@@ -3430,6 +2816,45 @@ export default function CassetteTool() {
                 onAnalyseCapture={analyseDeckCalCapture}
                 onSaveResponseProfile={saveResponseProfile}
                 onSaveProgramManifest={saveDeckCalProgramManifest}
+                probeCaptureName={probeCaptureName}
+                probeProfile={playerProbeProfile}
+                songRefNames={songReferenceTracks.map((track) => track.name)}
+                songRecNames={songRecordedTracks.map((track) => track.name)}
+                songPairCount={songPairCount}
+                songPairError={songPairError}
+                songPairingDetails={songPairingDetails}
+                songPairPreview={songPairPreview}
+                songAnalysisFailedPairs={songAnalysisFailedPairs}
+                songProfile={playerSongProfile}
+                eqBaseProfileName={eqWorkbenchBaseProfileName}
+                eqReadyProfile={playerEqReadyProfile}
+                compilerProfileAName={compilerProfileAName}
+                compilerProfileBName={compilerProfileBName}
+                compilerTargetMode={compilerTargetMode}
+                compileResult={playerEqCompileResult}
+                compileLoadProfileName={compileLoadableProfile?.name || ""}
+                onExportProbe={exportPlayerProbe}
+                onImportProbeCapture={importPlayerProbeCaptureFile}
+                onBuildProbeProfile={buildPlayerProbeProfile}
+                onSaveProbeProfile={savePlayerProbeProfile}
+                onImportSongFiles={importSongFiles}
+                onBuildSongProfile={buildPlayerSongProfile}
+                onSaveSongProfile={savePlayerSongProfile}
+                onUseProbeAsEqBase={useProbeAsEqBase}
+                onUseSongAsEqBase={useSongAsEqBase}
+                onImportEqBaseProfile={importEqBaseProfileFile}
+                onBuildFixedEqModel={buildFixedEqWorkbenchProfile}
+                onSaveEqReadyProfile={saveEqReadyProfile}
+                onImportCompilerProfile={importCompilerProfileFile}
+                onUseEqReadyAsCompilerA={useEqReadyAsCompilerA}
+                onUseProbeAsCompilerB={useProbeAsCompilerB}
+                onUseSongAsCompilerB={useSongAsCompilerB}
+                onSetCompilerTargetMode={changeCompilerTargetMode}
+                onCompileProfiles={compilePlayerProfiles}
+                onLoadCompileProfile={loadCompileResultProfile}
+                onExportCompileLoadProfile={exportCompileLoadableProfile}
+                onExportCompileText={exportCompileResultText}
+                onExportCompileJson={exportCompileResultJson}
               />}
             </div>
           </div>

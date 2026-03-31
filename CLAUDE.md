@@ -13,15 +13,55 @@ Cassette tape preparation tool. Browser-only, no backend.
 ## Project Structure
 ```
 src/
-  App.jsx          — main component: all state, UI, audio pipeline, themes, i18n
+  App.jsx          — main component: core state, UI, audio pipeline, themes
+  i18n.js          — all user-facing strings, t() helper, APP_VERSION
   Player.jsx       — preview transport (timeline, seekbar, meter modes)
   SideWaveform.jsx — static per-side waveform canvas (pre-downsampled peak pairs)
   SideSpectrogram.jsx — per-side FFT spectrogram canvas (log-freq, level-mapped)
   Icons.jsx        — inline SVG icon components, no external font dependency
   ffmpeg-helper.js — lazy ffmpeg.wasm loader, WAV transcode, format detection
+  w1-helper.js     — Web Audio utility functions
+  calibration-profile.js — calibration profile I/O
+  deck-calibration.js — signal generation, sync detection, response/transport analysis
+  hooks/
+    useSignalOutput.js    — calibration signal output state + callbacks
+    useDeckCalibration.js — deck recording calibration state + callbacks
+    usePlayerProfile.js   — player profile & EQ matching state + callbacks
+  tool-plugins/
+    index.js       — plugin registry
+    CassetteRecordingCalibrationPlugin.jsx — deck calibration UI (self-contained LABELS)
+    PlayerProfileWorkbenchPlugin.jsx — player profile & EQ matching UI (self-contained LABELS)
+  modules/
+    player-profile/ — player frequency response profiling
+    probe-profile/  — probe-based measurement
+    program-profile/ — song-based measurement (track pairing, alignment, transfer)
+    eq-model/       — EQ model schema and measurement
+    eq-compiler/    — A→B EQ compilation (delta, solve, fit)
 ```
 
-Everything except the canvas components and ffmpeg helper lives in `App.jsx`.
+## Architecture
+
+### i18n
+All user-facing strings are in `i18n.js`. Access via `T("key")` inside the main component
+(bound to current `lang` state). Tool plugins use their own self-contained `LABELS` objects
+instead of the global `T()` — each plugin resolves labels via `LABELS[lang] || LABELS.en`.
+
+Help modal content is hardcoded JSX per locale (not in `I18N`) — search for `showHelp` to find it.
+
+### Tool hooks
+Tool-related state and logic is extracted into three custom hooks in `src/hooks/`:
+
+| Hook | Owns | Receives |
+|------|------|----------|
+| `useSignalOutput` | calibration side, signal type, running state, start/stop/resolve | `getAC`, `stopPlaybackRef`, `tracks`, `buildPreviewGains`, `targetDb`, `showTools` |
+| `useDeckCalibration` | manifest, capture, recording, analysis state + all callbacks | `T`, `showToast`, `downloadBlob`, `encodeWAV`, `decodeExternalAudioFile`, `setProcessing`, `setProcMsg`, `showTools` |
+| `usePlayerProfile` | probe/song/EQ/compiler state + all callbacks | `showToast`, `downloadBlob`, `encodeWAV`, `decodeExternalAudioFile`, `setProcessing`, `setProcMsg`, `onLoadCalibrationProfile` |
+
+The main component passes shared functions into hooks as parameters. Hooks return state values
+and callbacks that the main component forwards to tool plugins as props.
+
+`loadCompileResultProfile` (in usePlayerProfile) needs to write to the main component's calibration
+profile state — this is handled via an `onLoadCalibrationProfile` callback passed from the parent.
 
 ## Audio Pipeline
 
@@ -66,11 +106,9 @@ Current groups: `""` (default) · `liella` · `ngo` · `mygo` · `mujica` · `su
 
 ## i18n
 
-All user-facing strings are in the `I18N` object at the top of `App.jsx`.  
+All user-facing strings are in `src/i18n.js` (extracted from App.jsx).  
 Three locales: `zh-CN` · `ja` · `en`  
-Access via `T("key")` inside the component (bound to current `lang` state).
-
-Help modal content is hardcoded JSX per locale (not in `I18N`) — search for `showHelp` to find it.
+Access via `T("key")` inside the main component. Tool plugins use self-contained `LABELS` — see Architecture section above.
 
 ## Key State
 

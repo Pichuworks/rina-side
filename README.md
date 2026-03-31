@@ -20,7 +20,7 @@ Arrange tracks onto Sides A and B, preview with medium simulation, then export d
 **Preview**
 - Full-side timeline playback with gaps, gain, and padding applied
 - Seekbar + track boundary markers, pause / resume / prev / next
-- Meter: VFD peak · VU needle · FFT spectrum (segmented) · Waveform
+- Meter: VFD peak · VU needle · FFT spectrum (segmented) · Waveform · Oscilloscope
 - Per-side static waveform overview (downsampled peak pairs)
 - Per-side FFT spectrogram (log frequency axis, level-mapped color)
 
@@ -31,6 +31,11 @@ Arrange tracks onto Sides A and B, preview with medium simulation, then export d
 - Tube: Subtle harmonic coloring and high-frequency rounding
 - Era (vinyl): Modern / Classic / Vintage / Effect wear and roll-off
 - Crackle (vinyl): Low / Mid / High density click/pop surface noise
+
+**Tools**
+- Calibration Signal Output: reference tones (1 kHz / 10 kHz) for adjusting deck rec level, balance, and bias
+- Deck Recording Calibration: log sweep + 3150 Hz test tone in a single calibration signal — self-record/playback produces both frequency response correction and transport (speed error / wow & flutter) diagnostics; saved baseline enables testing other devices with the same tape
+- Player Response & EQ Matching: probe-based or song-based frequency response profiling of playback devices, with automatic A→B EQ compilation (fixed-band graphic EQ)
 
 **Other**
 - Playlist I/O: JSON export and import with filename-based auto-hydration

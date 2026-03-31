@@ -243,9 +243,8 @@ function sliceAndNormalizeMain(signal, measurement, options = {}) {
   const detectedLength = Math.max(1, detectedMainEnd - detectedMainStart);
   const main = signal.slice(detectedMainStart, detectedMainEnd);
   const normalized = resampleLinear(main, sr, sr * (measurement.mainLength / detectedLength));
-  const resampled = resampleLinear(normalized, sr, sr);
   const fixed = new Float32Array(measurement.mainLength);
-  fixed.set(resampled.subarray(0, Math.min(measurement.mainLength, resampled.length)));
+  fixed.set(normalized.subarray(0, Math.min(measurement.mainLength, normalized.length)));
   return { main: fixed, startSample: detectedMainStart, endSample: detectedMainEnd };
 }
 
@@ -254,10 +253,10 @@ export function generateTestTapeProgram(spec = TEST_TAPE_PROGRAM_SPEC) {
   const transport = generateTransportMeasurement(spec.transport);
   const sr = spec.sampleRate;
   const inter = Math.round(spec.interSegmentSec * sr);
-  const total = response.length + inter + transport.length;
+  const total = response.mono.length + inter + transport.mono.length;
   const mono = new Float32Array(total);
   mono.set(response.mono, 0);
-  mono.set(transport.mono, response.length + inter);
+  mono.set(transport.mono, response.mono.length + inter);
   return {
     kind: "test-tape-program",
     spec,
@@ -268,9 +267,9 @@ export function generateTestTapeProgram(spec = TEST_TAPE_PROGRAM_SPEC) {
     transport,
     segments: {
       responseStart: 0,
-      responseLength: response.length,
-      transportStart: response.length + inter,
-      transportLength: transport.length,
+      responseLength: response.mono.length,
+      transportStart: response.mono.length + inter,
+      transportLength: transport.mono.length,
     },
   };
 }
