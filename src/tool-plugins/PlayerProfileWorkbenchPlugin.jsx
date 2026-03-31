@@ -1,4 +1,6 @@
 import React, { useMemo, useRef, useState } from "react";
+import { ReportCard } from "./ReportCard.jsx";
+import { generatePlayerProfileReport, generateEqCompileReport } from "../modules/report/report-generator.js";
 
 export const PLAYER_PROFILE_WORKBENCH_PLUGIN_ID = "player-profile-workbench";
 
@@ -33,7 +35,7 @@ const LABELS = {
     analysisFailedTitle: "分析时跳过的曲目",
     eqTitle: "设备 EQ 建模",
     eqDesc: "告诉系统你的设备能调哪些频段、每档多少 dB，就能帮你算出最优 EQ。",
-    eqAutoQHint: "频段宽度已内置，不需要填 Q 值。",
+    eqAutoQHint: "留空则根据频段间距自动计算 Q 值。如需手动指定（例如 PEQ），请填入数值。",
     useProbeAsBase: "用测试信号法的结果",
     useSongAsBase: "用曲目对比法的结果",
     importBaseProfile: "导入已有测量结果",
@@ -54,6 +56,13 @@ const LABELS = {
     targetMode: "目标",
     targetProfile: "模仿另一台设备",
     targetFlat: "趋向平直",
+    sourceA: "设备频响（A）",
+    sourceB: "目标频响（B）",
+    sourceImportFile: "导入文件",
+    sourceUseEq: "用 EQ 模型",
+    sourceUseProbe: "用测试信号法",
+    sourceUseSong: "用曲目对比法",
+    compileActions: "计算与导出",
     importAProfile: "导入设备频响",
     importBProfile: "导入目标频响",
     useEqAsA: "用上面的 EQ 模型",
@@ -122,7 +131,7 @@ const LABELS = {
     analysisFailedTitle: "Tracks skipped during analysis",
     eqTitle: "A EQ Model",
     eqDesc: "Set the adjustable EQ range for device A. Currently supports fixed-band graphic EQ.",
-    eqAutoQHint: "Band width is built in. Q is not required in the default flow.",
+    eqAutoQHint: "Leave empty to auto-calculate Q from band spacing. For PEQ, enter a value (e.g. 1.0).",
     useProbeAsBase: "Use Probe as A Default Profile",
     useSongAsBase: "Use Song as A Default Profile",
     importBaseProfile: "Import A Default Profile",
@@ -138,23 +147,30 @@ const LABELS = {
     maxStep: "Max Step",
     qValue: "Q",
     eqParamExplain: "These four values mean: gain per step, minimum step, maximum step, and band Q.",
-    compilerTitle: "A to B Compiler",
-    compilerDesc: "Import A and B response data, and automatically compute the EQ needed to make A sound like B.",
-    targetMode: "Target Mode",
-    targetProfile: "B Profile",
-    targetFlat: "Flat",
+    compilerTitle: "EQ Matching",
+    compilerDesc: "With frequency response data from your devices, the system computes the EQ to make A sound like B.",
+    targetMode: "Target",
+    targetProfile: "Match Another Device",
+    targetFlat: "Flatten",
+    sourceA: "Device Response (A)",
+    sourceB: "Target Response (B)",
+    sourceImportFile: "Import File",
+    sourceUseEq: "Use EQ Model",
+    sourceUseProbe: "Use Probe Result",
+    sourceUseSong: "Use Song Result",
+    compileActions: "Compute & Export",
     importAProfile: "Import A Profile",
     importBProfile: "Import B Profile",
     useEqAsA: "Use A Adjustable Profile",
     useProbeAsB: "Use Probe as B",
     useSongAsB: "Use Song as B",
-    compileNow: "Compile A->B EQ",
-    compileNowFlat: "Compile A->Flat EQ",
-    loadCompileProfile: "Load Preview Profile",
-    exportLoadProfile: "Export Load Profile",
-    profileA: "A Profile",
-    profileB: "Target Profile",
-    compileResult: "Compile Result",
+    compileNow: "Compute EQ",
+    compileNowFlat: "Compute Flat EQ",
+    loadCompileProfile: "Load to Preview",
+    exportLoadProfile: "Export Correction",
+    profileA: "Device (A)",
+    profileB: "Target (B)",
+    compileResult: "Result",
     fitScore: "Fit Score",
     usableBand: "Usable Band",
     eqSteps: "EQ Steps",
@@ -211,7 +227,7 @@ const LABELS = {
     analysisFailedTitle: "分析時にスキップされたトラック",
     eqTitle: "A の EQ Model",
     eqDesc: "A デバイスの EQ 調整範囲を設定します。現在は固定帯域 graphic EQ に対応しています。",
-    eqAutoQHint: "帯域幅はシステム内蔵です。通常フローでは Q の入力は不要です。",
+    eqAutoQHint: "空欄なら帯域間隔から Q を自動算出します。PEQ の場合は数値を入力（例: 1.0）。",
     useProbeAsBase: "Probe を A 基準プロファイルにする",
     useSongAsBase: "Song を A 基準プロファイルにする",
     importBaseProfile: "A 基準プロファイルを読み込む",
@@ -227,23 +243,30 @@ const LABELS = {
     maxStep: "最大 step",
     qValue: "Q",
     eqParamExplain: "この 4 つは順に、1 step の dB、最小 step、最大 step、band の Q を意味します。",
-    compilerTitle: "A 模擬 B Compiler",
-    compilerDesc: "A と B の周波数応答を取り込み、A を B に近づける EQ パラメータを自動算出します。",
-    targetMode: "目標モード",
-    targetProfile: "B Profile",
-    targetFlat: "Flat",
+    compilerTitle: "EQ マッチング",
+    compilerDesc: "デバイスの周波数応答データがあれば、A を B に近づける EQ を自動算出します。",
+    targetMode: "目標",
+    targetProfile: "他デバイスを模擬",
+    targetFlat: "Flat 化",
+    sourceA: "デバイス周波数応答 (A)",
+    sourceB: "目標周波数応答 (B)",
+    sourceImportFile: "ファイル読込",
+    sourceUseEq: "EQ モデルを使う",
+    sourceUseProbe: "テスト信号の結果",
+    sourceUseSong: "楽曲比較の結果",
+    compileActions: "算出と書き出し",
     importAProfile: "A Profile 読み込み",
     importBProfile: "B Profile 読み込み",
     useEqAsA: "A 調整可能プロファイルを使う",
     useProbeAsB: "Probe を B に使う",
     useSongAsB: "Song を B に使う",
-    compileNow: "A->B EQ 生成",
-    compileNowFlat: "A->Flat EQ 生成",
-    loadCompileProfile: "試聴用 Profile 読み込み",
-    exportLoadProfile: "読込用 Profile 書き出し",
-    profileA: "A Profile",
-    profileB: "目標プロファイル",
-    compileResult: "生成結果",
+    compileNow: "EQ 算出",
+    compileNowFlat: "Flat EQ 算出",
+    loadCompileProfile: "試聴に読込",
+    exportLoadProfile: "補正ファイル書出し",
+    profileA: "デバイス (A)",
+    profileB: "目標 (B)",
+    compileResult: "算出結果",
     fitScore: "適合度",
     usableBand: "有効帯域",
     eqSteps: "EQ 値",
@@ -456,8 +479,11 @@ export function PlayerProfileWorkbenchPlugin(props) {
     onSaveEqReadyProfile,
     onImportCompilerProfile,
     onUseEqReadyAsCompilerA,
+    onUseProbeAsCompilerA,
+    onUseSongAsCompilerA,
     onUseProbeAsCompilerB,
     onUseSongAsCompilerB,
+    onUseEqReadyAsCompilerB,
     onSetCompilerTargetMode,
     onCompileProfiles,
     onLoadCompileProfile,
@@ -482,18 +508,19 @@ export function PlayerProfileWorkbenchPlugin(props) {
   const [gainStepDb, setGainStepDb] = useState("1");
   const [minStep, setMinStep] = useState("-12");
   const [maxStep, setMaxStep] = useState("12");
+  const [qValue, setQValue] = useState("");
   const [selectedPreset, setSelectedPreset] = useState("car16");
 
   const EQ_PRESETS = useMemo(() => [
-    { id: "car16", label: lang === "ja" ? "車載 16 バンド" : lang === "en" ? "Car 16-band" : "车机 16 段", bands: "31,46,63,125,230,400,630,810,1000,2000,4000,6000,8000,12000,14000,16000", step: "1", min: "-12", max: "12" },
-    { id: "sony10", label: "Sony 10 段", bands: "31,62,125,250,500,1000,2000,4000,8000,16000", step: "1", min: "-10", max: "10" },
-    { id: "pcm_d100", label: "Sony PCM-D100", bands: "400,1000,2500,6300,16000", step: "1", min: "-3", max: "3" },
-    { id: "icd_sx2000", label: "Sony ICD-SX2000", bands: "100,300,1000,3000,10000", step: "1", min: "-3", max: "3" },
-    { id: "rockbox_peq", label: "Rockbox PEQ 10 段", bands: "60,150,400,1000,2500,4000,6000,8000,12000,16000", step: "0.1", min: "-24", max: "24" },
-    { id: "cayin_n3u", label: "Cayin N3 Ultra PEQ", bands: "60,150,400,1000,2500,4000,6000,8000,12000,16000", step: "0.1", min: "-12", max: "12" },
-    { id: "generic15", label: lang === "ja" ? "汎用 15 段" : lang === "en" ? "Generic 15-band" : "通用 15 段", bands: "25,40,63,100,160,250,400,630,1000,1600,2500,4000,6300,10000,16000", step: "1", min: "-12", max: "12" },
-    { id: "generic20", label: lang === "ja" ? "汎用 20 段" : lang === "en" ? "Generic 20-band" : "通用 20 段", bands: "25,31,40,50,63,80,100,125,160,200,250,315,400,500,630,800,1000,1250,2000,4000", step: "0.5", min: "-12", max: "12" },
-    { id: "custom", label: lang === "ja" ? "カスタム" : lang === "en" ? "Custom" : "自定义", bands: "", step: "1", min: "-12", max: "12" },
+    { id: "car16", label: lang === "ja" ? "車載 16 バンド" : lang === "en" ? "Car 16-band" : "车机 16 段", bands: "31,46,63,125,230,400,630,810,1000,2000,4000,6000,8000,12000,14000,16000", step: "1", min: "-12", max: "12", q: "" },
+    { id: "sony10", label: "Sony 10 段", bands: "31,62,125,250,500,1000,2000,4000,8000,16000", step: "1", min: "-10", max: "10", q: "" },
+    { id: "pcm_d100", label: "Sony PCM-D100", bands: "400,1000,2500,6300,16000", step: "1", min: "-3", max: "3", q: "" },
+    { id: "icd_sx2000", label: "Sony ICD-SX2000", bands: "100,300,1000,3000,10000", step: "1", min: "-3", max: "3", q: "" },
+    { id: "rockbox_peq", label: "Rockbox PEQ 10 段", bands: "60,150,400,1000,2500,4000,6000,8000,12000,16000", step: "0.1", min: "-24", max: "24", q: "1.0" },
+    { id: "cayin_n3u", label: "Cayin N3 Ultra PEQ", bands: "60,150,400,1000,2500,4000,6000,8000,12000,16000", step: "0.1", min: "-12", max: "12", q: "1.0" },
+    { id: "generic15", label: lang === "ja" ? "汎用 15 段" : lang === "en" ? "Generic 15-band" : "通用 15 段", bands: "25,40,63,100,160,250,400,630,1000,1600,2500,4000,6300,10000,16000", step: "1", min: "-12", max: "12", q: "" },
+    { id: "generic20", label: lang === "ja" ? "汎用 20 段" : lang === "en" ? "Generic 20-band" : "通用 20 段", bands: "25,31,40,50,63,80,100,125,160,200,250,315,400,500,630,800,1000,1250,2000,4000", step: "0.5", min: "-12", max: "12", q: "" },
+    { id: "custom", label: lang === "ja" ? "カスタム" : lang === "en" ? "Custom" : "自定义", bands: "", step: "1", min: "-12", max: "12", q: "" },
   ], [lang]);
 
   const applyPreset = (presetId) => {
@@ -504,6 +531,7 @@ export function PlayerProfileWorkbenchPlugin(props) {
     setGainStepDb(preset.step);
     setMinStep(preset.min);
     setMaxStep(preset.max);
+    setQValue(preset.q);
   };
 
   const compileSummary = useMemo(() => {
@@ -517,6 +545,19 @@ export function PlayerProfileWorkbenchPlugin(props) {
 
   const compileActionDisabled = processing || !compilerProfileAName || (compilerTargetMode === "profile" && !compilerProfileBName);
   const compileTargetName = compilerTargetMode === "flat" ? t.targetFlat : (compilerProfileBName || t.idle);
+
+  const probeReport = useMemo(
+    () => (probeProfile ? generatePlayerProfileReport(probeProfile, probeProfile.name, lang) : null),
+    [probeProfile, lang],
+  );
+  const songReport = useMemo(
+    () => (songProfile ? generatePlayerProfileReport(songProfile, songProfile.name, lang) : null),
+    [songProfile, lang],
+  );
+  const eqReport = useMemo(
+    () => (compileResult ? generateEqCompileReport(compileResult, compilerProfileAName, compilerProfileBName, lang) : null),
+    [compileResult, compilerProfileAName, compilerProfileBName, lang],
+  );
 
   return (
     <>
@@ -558,6 +599,7 @@ export function PlayerProfileWorkbenchPlugin(props) {
           {statBox(t.probeCapture, probeCaptureName || t.idle)}
           {probeProfile && statBox(t.profileResult, probeProfile.name)}
         </div>
+        {probeReport && <ReportCard summary={probeReport.summary} full={probeReport.full} accentLabel="璃奈" onSave={() => {}} />}
       </div>
 
       <div style={sectionStyle()}>
@@ -646,6 +688,7 @@ export function PlayerProfileWorkbenchPlugin(props) {
             </div>
           </div>
         )}
+        {songReport && <ReportCard summary={songReport.summary} full={songReport.full} accentLabel="璃奈" onSave={() => {}} />}
       </div>
 
       <div style={sectionStyle()}>
@@ -693,7 +736,7 @@ export function PlayerProfileWorkbenchPlugin(props) {
           />
           <div style={{ fontSize: 11, color: "var(--text-dim)", marginTop: 4 }}>{t.customBandsHint}</div>
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(120px,1fr))", gap: 8 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(100px,1fr))", gap: 8 }}>
           <div>
             {fieldLabel(t.gainStep)}
             <input value={gainStepDb} onChange={(event) => setGainStepDb(event.target.value)} style={inputStyle()} />
@@ -706,6 +749,10 @@ export function PlayerProfileWorkbenchPlugin(props) {
             {fieldLabel(t.maxStep)}
             <input value={maxStep} onChange={(event) => setMaxStep(event.target.value)} style={inputStyle()} />
           </div>
+          <div>
+            {fieldLabel(t.qValue)}
+            <input value={qValue} onChange={(event) => setQValue(event.target.value)} style={inputStyle()} placeholder="auto" />
+          </div>
         </div>
         <div style={{ fontSize: 11, color: "var(--text-dim)" }}>{t.eqAutoQHint}</div>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
@@ -715,6 +762,7 @@ export function PlayerProfileWorkbenchPlugin(props) {
               gainStepDb,
               minStep,
               maxStep,
+              qValue: qValue || "",
             })}
             disabled={!eqBaseProfileName || processing}
             style={actionBtnStyle(true)}
@@ -732,70 +780,77 @@ export function PlayerProfileWorkbenchPlugin(props) {
       <div style={sectionStyle()}>
         <div style={{ fontSize: 13, fontWeight: 600 }}>{t.compilerTitle}</div>
         <div style={{ fontSize: 12, lineHeight: 1.7, color: "var(--text-dim)" }}>{t.compilerDesc}</div>
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+
+        {/* ── Target mode toggle ─────────────────────────── */}
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
           <div style={{ fontSize: 11, color: "var(--text-dim)" }}>{t.targetMode}</div>
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            <button
-              onClick={() => onSetCompilerTargetMode("profile")}
-              style={actionBtnStyle(compilerTargetMode === "profile")}
-            >
-              {t.targetProfile}
-            </button>
-            <button
-              onClick={() => onSetCompilerTargetMode("flat")}
-              style={actionBtnStyle(compilerTargetMode === "flat")}
-            >
-              {t.targetFlat}
-            </button>
+          <div style={{ display: "flex", gap: 8 }}>
+            <button onClick={() => onSetCompilerTargetMode("profile")} style={actionBtnStyle(compilerTargetMode === "profile")}>{t.targetProfile}</button>
+            <button onClick={() => onSetCompilerTargetMode("flat")} style={actionBtnStyle(compilerTargetMode === "flat")}>{t.targetFlat}</button>
           </div>
         </div>
-        <input
-          ref={compilerARef}
-          type="file"
-          accept=".json,application/json"
-          style={{ display: "none" }}
-          onChange={(event) => {
-            const file = event.target.files?.[0];
-            if (file) onImportCompilerProfile("A", file);
-            event.target.value = "";
-          }}
-        />
-        <input
-          ref={compilerBRef}
-          type="file"
-          accept=".json,application/json"
-          style={{ display: "none" }}
-          onChange={(event) => {
-            const file = event.target.files?.[0];
-            if (file) onImportCompilerProfile("B", file);
-            event.target.value = "";
-          }}
-        />
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-          <button onClick={() => compilerARef.current?.click()} style={actionBtnStyle()}>{t.importAProfile}</button>
-          <button onClick={onUseEqReadyAsCompilerA} disabled={!eqReadyProfile} style={actionBtnStyle()}>{t.useEqAsA}</button>
+
+        <div style={{ borderTop: "1px solid var(--border)" }} />
+
+        {/* ── Source A / B boxes ──────────────────────────── */}
+        <input ref={compilerARef} type="file" accept=".json,application/json" style={{ display: "none" }}
+          onChange={(event) => { const file = event.target.files?.[0]; if (file) onImportCompilerProfile("A", file); event.target.value = ""; }} />
+        <input ref={compilerBRef} type="file" accept=".json,application/json" style={{ display: "none" }}
+          onChange={(event) => { const file = event.target.files?.[0]; if (file) onImportCompilerProfile("B", file); event.target.value = ""; }} />
+
+        <div style={{ display: "grid", gridTemplateColumns: compilerTargetMode === "profile" ? "1fr 1fr" : "1fr", gap: 10 }}>
+          {/* Source A */}
+          <div style={{ padding: "12px 14px", border: "1px solid var(--border)", borderRadius: 10, background: "var(--bg)" }}>
+            <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>{t.sourceA}</div>
+            <div style={{ fontSize: 12, color: "var(--accent-ink)", marginBottom: 8, minHeight: 18, wordBreak: "break-all" }}>{compilerProfileAName || t.idle}</div>
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+              <button onClick={() => compilerARef.current?.click()} style={actionBtnStyle()}>{t.sourceImportFile}</button>
+              <button onClick={onUseEqReadyAsCompilerA} disabled={!eqReadyProfile} style={actionBtnStyle()}>{t.sourceUseEq}</button>
+              <button onClick={onUseProbeAsCompilerA} disabled={!probeProfile} style={actionBtnStyle()}>{t.sourceUseProbe}</button>
+              <button onClick={onUseSongAsCompilerA} disabled={!songProfile} style={actionBtnStyle()}>{t.sourceUseSong}</button>
+            </div>
+          </div>
+
+          {/* Source B */}
           {compilerTargetMode === "profile" && (
-            <>
-              <button onClick={() => compilerBRef.current?.click()} style={actionBtnStyle()}>{t.importBProfile}</button>
-              <button onClick={onUseProbeAsCompilerB} disabled={!probeProfile} style={actionBtnStyle()}>{t.useProbeAsB}</button>
-              <button onClick={onUseSongAsCompilerB} disabled={!songProfile} style={actionBtnStyle()}>{t.useSongAsB}</button>
-            </>
+            <div style={{ padding: "12px 14px", border: "1px solid var(--border)", borderRadius: 10, background: "var(--bg)" }}>
+              <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>{t.sourceB}</div>
+              <div style={{ fontSize: 12, color: "var(--accent-ink)", marginBottom: 8, minHeight: 18, wordBreak: "break-all" }}>{compilerProfileBName || t.idle}</div>
+              <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                <button onClick={() => compilerBRef.current?.click()} style={actionBtnStyle()}>{t.sourceImportFile}</button>
+                <button onClick={onUseEqReadyAsCompilerB} disabled={!eqReadyProfile} style={actionBtnStyle()}>{t.sourceUseEq}</button>
+                <button onClick={onUseProbeAsCompilerB} disabled={!probeProfile} style={actionBtnStyle()}>{t.sourceUseProbe}</button>
+                <button onClick={onUseSongAsCompilerB} disabled={!songProfile} style={actionBtnStyle()}>{t.sourceUseSong}</button>
+              </div>
+            </div>
           )}
-          <button onClick={onCompileProfiles} disabled={compileActionDisabled} style={actionBtnStyle(true)}>
-            {compilerTargetMode === "flat" ? t.compileNowFlat : t.compileNow}
-          </button>
-          <button onClick={onLoadCompileProfile} disabled={!compileResult?.ok} style={actionBtnStyle()}>{t.loadCompileProfile}</button>
-          <button onClick={onExportCompileLoadProfile} disabled={!compileResult?.ok} style={actionBtnStyle()}>{t.exportLoadProfile}</button>
-          <button onClick={onExportCompileText} disabled={!compileResult} style={actionBtnStyle()}>{t.exportText}</button>
-          <button onClick={onExportCompileJson} disabled={!compileResult} style={actionBtnStyle()}>{t.exportJson}</button>
         </div>
-        <div style={{ padding: "10px 12px", border: "1px solid var(--border)", borderRadius: 8, background: "var(--bg-deep)" }}>
-          <div style={{ fontSize: 11, color: "var(--text-dim)", marginBottom: 6 }}>{t.fullResHint}</div>
+
+        <div style={{ borderTop: "1px solid var(--border)" }} />
+
+        {/* ── Compute & export (quantized EQ) ────────────── */}
+        <div style={{ padding: "12px 14px", border: "1px solid var(--border)", borderRadius: 10, background: "var(--bg)" }}>
+          <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>{t.compileActions}</div>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <button onClick={onCompileProfiles} disabled={compileActionDisabled} style={actionBtnStyle(true)}>
+              {compilerTargetMode === "flat" ? t.compileNowFlat : t.compileNow}
+            </button>
+            <button onClick={onLoadCompileProfile} disabled={!compileResult?.ok} style={actionBtnStyle()}>{t.loadCompileProfile}</button>
+            <button onClick={onExportCompileLoadProfile} disabled={!compileResult?.ok} style={actionBtnStyle()}>{t.exportLoadProfile}</button>
+            <button onClick={onExportCompileText} disabled={!compileResult} style={actionBtnStyle()}>{t.exportText}</button>
+            <button onClick={onExportCompileJson} disabled={!compileResult} style={actionBtnStyle()}>{t.exportJson}</button>
+          </div>
+        </div>
+
+        {/* ── Full-resolution correction ─────────────────── */}
+        <div style={{ padding: "12px 14px", border: "1px solid var(--border)", borderRadius: 10, background: "var(--bg)" }}>
+          <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4 }}>{t.loadFullRes}</div>
+          <div style={{ fontSize: 11, color: "var(--text-dim)", marginBottom: 8 }}>{t.fullResHint}</div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <button
               onClick={onLoadFullResProfile}
               disabled={!compilerProfileAName || (compilerTargetMode === "profile" && !compilerProfileBName)}
-              style={actionBtnStyle()}
+              style={actionBtnStyle(true)}
             >{t.loadFullRes}</button>
             <button
               onClick={onExportFullResProfile}
@@ -804,12 +859,10 @@ export function PlayerProfileWorkbenchPlugin(props) {
             >{t.exportFullRes}</button>
           </div>
         </div>
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px,1fr))", gap: 8 }}>
-          {statBox(t.eqAdjustableProfile, compilerProfileAName || t.idle)}
-          {statBox(t.targetMode, compilerTargetMode === "flat" ? t.targetFlat : t.targetProfile)}
-          {statBox(t.profileB, compileTargetName)}
-          {statBox(t.loadCompileProfile, compileLoadProfileName || t.idle)}
-        </div>
+
+        <div style={{ borderTop: "1px solid var(--border)" }} />
+
+        {/* ── Result ─────────────────────────────────────── */}
         <div style={{ padding: "12px", border: "1px solid var(--border)", borderRadius: 8, background: "var(--bg-deep)", display: "flex", flexDirection: "column", gap: 12 }}>
           <div style={{ fontSize: 11, color: "var(--text-dim)" }}>{t.compileResult}</div>
           {!compileResult && <div style={{ fontSize: 12 }}>{t.idle}</div>}
@@ -872,6 +925,7 @@ export function PlayerProfileWorkbenchPlugin(props) {
             </>
           )}
         </div>
+        {eqReport && <ReportCard summary={eqReport.summary} full={eqReport.full} accentLabel="璃奈" onSave={() => {}} />}
       </div>
     </>
   );

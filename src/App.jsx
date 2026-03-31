@@ -1194,9 +1194,13 @@ const HeaderControls = React.memo(function HeaderControls({ lang, setLang, theme
                       声谱图的纵轴是对数频率。颜色深浅对应电平强度。</p>
                     <p><b>// 工具</b><br />
                       点击头栏的工具按钮打开工具面板，里面有三个独立模块。<br />
-                      <b>校准信号输出</b>：输出标准频率的正弦波，用于调节卡座的录音电平和 BIAS。选择信号类型后点「开始输出」，卡座进入录音状态后调节电平表到目标位置。<br />
-                      <b>卡座录制校准</b>：用扫频和 3150 Hz 测试音一次性完成频响校准和走带诊断。「校准本卡座」模式是自录自放后生成校准文件；「用这盒带测其它机器」模式可以把已录好的校准带拿去别的设备播放，导入回录做对比分析。<br />
-                      <b>播放器频响 & EQ 匹配</b>：测量两台播放设备的频率响应，自动算出让 A 听起来像 B 的 EQ 参数。支持标准探针精确测量和歌曲对比两种方式。</p>
+                      <b>校准信号输出</b>：输出标准频率的正弦波，帮你调好卡座的录音电平和 BIAS。选好信号类型后点「开始输出」，看着卡座的电平表来调节。<br />
+                      <b>卡座录制校准</b>：用扫频和 3150 Hz 测试音给卡座做一次体检——频响校准和走带诊断一次搞定。「校准这台卡座」模式是自录自放；「用校准带测其它机器」可以把录好的校准带拿去别的设备回放做对比。<br />
+                      <b>播放器听感测量 & EQ 匹配</b>：两种方法测量播放器的频响——用测试信号（精度高）或曲目对比（方便）。测完之后，可以让系统算出 EQ 参数让设备 A 听起来像设备 B，也可以导出全分辨率补偿档案直接烧进音频里。</p>
+                    <p><b>// 校准档案</b><br />
+                      在主界面底部可以加载校准档案（从工具面板生成或导入）。<br />
+                      <b>试听 EQ</b>：开启后试听会实时应用频响补偿。<br />
+                      <b>导出 EQ</b>：开启后导出的 WAV 文件会烧入补偿 EQ。适合播放器不能调 EQ 的场景。</p>
                   </div>
                   <p style={{ fontSize: 11, color: "var(--text-dim)", textAlign: "right", marginTop: 4 }}>
                     ……把声音编译进磁带里。 {RINA_SMILE}<br />
@@ -1249,9 +1253,13 @@ const HeaderControls = React.memo(function HeaderControls({ lang, setLang, theme
                       スペクトログラムの縦軸は対数周波数スケールです。色の濃淡がレベルに対応しています。</p>
                     <p><b>// ツール</b><br />
                       ヘッダーのツールボタンからツールパネルを開けます。3 つのモジュールがあります。<br />
-                      <b>校正信号出力</b>：標準周波数の正弦波を出力し、デッキの録音レベルと BIAS を調整します。信号の種類を選んで「出力開始」を押し、デッキ側のメーターを見ながら調整してください。<br />
-                      <b>デッキ録音キャリブレーション</b>：スイープと 3150 Hz テストトーンで周波数応答と走行診断を一度に実行します。「このデッキを校正」モードは自己録再で校正ファイルを生成。「このテープで他機を測定」モードは録音済みのキャリブレーションテープを別のデバイスで再生し、比較分析を行います。<br />
-                      <b>プレイヤー周波数応答 & EQ マッチング</b>：2 台の再生デバイスの周波数応答を測定し、A を B に近づける EQ パラメータを自動算出します。標準プローブによる精密測定と、楽曲比較による測定の 2 方式に対応しています。</p>
+                      <b>校正信号出力</b>：標準周波数の正弦波を出力して、デッキの録音レベルと BIAS を調整します。信号の種類を選んで「出力開始」を押し、デッキのメーターを見ながら調整してください。<br />
+                      <b>デッキ録音キャリブレーション</b>：スイープと 3150 Hz テストトーンで周波数応答と走行診断を同時に実行します。「このデッキを校正」は自己録再で校正ファイルを生成。「このテープで他機を測定」は校正テープを別のデバイスで再生して比較します。<br />
+                      <b>プレイヤー聴感測定 & EQ マッチング</b>：テスト信号（高精度）または楽曲比較（手軽）の 2 方式で周波数応答を測定。EQ パラメータを自動算出して A を B に近づけたり、フル解像度の補正ファイルを音声に焼き込むこともできます。</p>
+                    <p><b>// 校正ファイル</b><br />
+                      メイン画面下部で校正ファイルを読み込めます（ツールパネルで生成・インポート）。<br />
+                      <b>試聴 EQ</b>：有効にすると試聴時にリアルタイムで周波数補正が適用されます。<br />
+                      <b>書出 EQ</b>：有効にすると書き出した WAV に補正 EQ が焼き込まれます。EQ 非搭載デバイス向け。</p>
                   </div>
                   <p style={{ fontSize: 11, color: "var(--text-dim)", textAlign: "right", marginTop: 4 }}>
                     ……音をテープにコンパイルする。 {RINA_SMILE}<br />
@@ -1304,9 +1312,13 @@ const HeaderControls = React.memo(function HeaderControls({ lang, setLang, theme
                       The spectrogram's vertical axis is logarithmic frequency. Color intensity maps to level.</p>
                     <p><b>// Tools</b><br />
                       Open the tools panel from the header. There are three independent modules.<br />
-                      <b>Calibration Signal Output</b>: Outputs a reference sine wave for adjusting your deck's recording level and bias. Pick a signal type, click Start, and adjust the deck while monitoring its meters.<br />
-                      <b>Deck Recording Calibration</b>: Uses a sweep and a 3150 Hz test tone to perform response calibration and transport diagnostics in one pass. "Calibrate This Deck" mode records and plays back on the same deck to generate a correction file. "Test Other Devices With This Tape" mode plays the recorded calibration tape on another device and analyses the difference.<br />
-                      <b>Player Response & EQ Matching</b>: Measures the frequency response of two playback devices and automatically computes the EQ needed to make device A sound like device B. Supports both precise probe measurement and song-based comparison.</p>
+                      <b>Calibration Signal Output</b>: Outputs a reference sine wave for adjusting your deck's recording level and bias. Pick a signal type, click Start, and adjust while watching the deck's meters.<br />
+                      <b>Deck Recording Calibration</b>: Uses a sweep and 3150 Hz test tone to run response calibration and transport diagnostics together. "Calibrate This Deck" records and plays back on the same deck. "Test Other Devices With This Tape" plays the calibration tape on another device for comparison.<br />
+                      <b>Player Response & EQ Matching</b>: Measures frequency response using a test signal (high precision) or song comparison (convenient). Then computes EQ to make device A sound like device B, or exports a full-resolution correction file to bake directly into audio.</p>
+                    <p><b>// Calibration Profile</b><br />
+                      Load a calibration profile at the bottom of the main screen (generated from the tools panel or imported).<br />
+                      <b>Preview EQ</b>: When enabled, frequency correction is applied in real time during preview.<br />
+                      <b>Export EQ</b>: When enabled, the exported WAV has the correction EQ baked in. Ideal for players with no adjustable EQ.</p>
                   </div>
                   <p style={{ fontSize: 11, color: "var(--text-dim)", textAlign: "right", marginTop: 4 }}>
                     …compile your sound into tape. {RINA_SMILE}<br />
@@ -1739,8 +1751,11 @@ export default function CassetteTool() {
     compileLoadableProfile,
     importCompilerProfileFile,
     useEqReadyAsCompilerA,
+    useProbeAsCompilerA,
+    useSongAsCompilerA,
     useProbeAsCompilerB,
     useSongAsCompilerB,
+    useEqReadyAsCompilerB,
     changeCompilerTargetMode,
     compilePlayerProfiles,
     loadCompileResultProfile,
@@ -2850,8 +2865,11 @@ export default function CassetteTool() {
                 onSaveEqReadyProfile={saveEqReadyProfile}
                 onImportCompilerProfile={importCompilerProfileFile}
                 onUseEqReadyAsCompilerA={useEqReadyAsCompilerA}
+                onUseProbeAsCompilerA={useProbeAsCompilerA}
+                onUseSongAsCompilerA={useSongAsCompilerA}
                 onUseProbeAsCompilerB={useProbeAsCompilerB}
                 onUseSongAsCompilerB={useSongAsCompilerB}
+                onUseEqReadyAsCompilerB={useEqReadyAsCompilerB}
                 onSetCompilerTargetMode={changeCompilerTargetMode}
                 onCompileProfiles={compilePlayerProfiles}
                 onLoadCompileProfile={loadCompileResultProfile}
@@ -3053,8 +3071,8 @@ export default function CassetteTool() {
           <button onClick={autoDistribute} style={btnS} disabled={processing || !tracks.length}><IconAutoAwesome size={16} /> {T("autoDistribute")}</button>
           <button onClick={() => plRef.current?.click()} style={btnS} disabled={processing}><IconFileOpen size={16} /> {T("importPlaylist")}</button>
           <button onClick={exportPL} style={btnS} disabled={processing || !tracks.length}><IconSave size={16} /> {T("exportPlaylist")}</button>
-          <button onClick={() => { if (tracks.some(t => t.side === activeTab)) setTracks(p => p.filter(t => t.side !== activeTab)); }} style={{ ...btnS, display: "flex", alignItems: "center", gap: 4 }} disabled={processing || !tracks.some(t => t.side === activeTab)}><IconClearSide size={14} />{T("clearSide")}</button>
-          <button onClick={() => { if (tracks.length > 0 && window.confirm(T("clearAll") + "?")) setTracks([]); }} style={{ ...btnS, display: "flex", alignItems: "center", gap: 4 }} disabled={processing || !tracks.length}><IconClearAll size={14} />{T("clearAll")}</button>
+          <button onClick={() => { if (tracks.some(t => t.side === activeTab) && window.confirm(T("clearSideConfirm").replace("{side}", activeTab))) setTracks(p => p.filter(t => t.side !== activeTab)); }} style={{ ...btnS, display: "flex", alignItems: "center", gap: 4 }} disabled={processing || !tracks.some(t => t.side === activeTab)}><IconClearSide size={14} />{T("clearSide")}</button>
+          <button onClick={() => { if (tracks.length > 0 && window.confirm(T("clearAllConfirm"))) setTracks([]); }} style={{ ...btnS, display: "flex", alignItems: "center", gap: 4 }} disabled={processing || !tracks.length}><IconClearAll size={14} />{T("clearAll")}</button>
         </div>
         <div className="actionBarPlayback">
           {playing ?

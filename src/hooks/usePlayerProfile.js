@@ -15,8 +15,6 @@ import {
 } from "../modules/index.js";
 import { normalizeCalibrationProfile } from "../calibration-profile.js";
 
-const DEFAULT_FIXED_BAND_Q = 1;
-
 export default function usePlayerProfile({ showToast, downloadBlob, encodeWAV, decodeExternalAudioFile, setProcessing, setProcMsg, onLoadCalibrationProfile }) {
   const [probeCaptureBuffer, setProbeCaptureBuffer] = useState(null);
   const [probeCaptureName, setProbeCaptureName] = useState("");
@@ -255,6 +253,22 @@ export default function usePlayerProfile({ showToast, downloadBlob, encodeWAV, d
     }
   }, [showToast]);
 
+/**
+ * Calculate optimal Q for a graphic EQ band based on spacing to neighbors.
+ * Uses the constant-Q relationship: Q = sqrt(2^N) / (2^N - 1)
+ * where N = bandwidth in octaves ≈ geometric mean of distance to neighbors.
+ */
+function autoQForBand(centerHz, sortedCenters, index) {
+  let octLo = 1, octHi = 1; // default 1 octave
+  if (index > 0) octLo = Math.abs(Math.log2(centerHz / sortedCenters[index - 1]));
+  if (index < sortedCenters.length - 1) octHi = Math.abs(Math.log2(sortedCenters[index + 1] / centerHz));
+  // Use the narrower of the two spacings (conservative)
+  const bwOct = Math.min(octLo, octHi);
+  if (bwOct <= 0.01) return 4; // fallback for extremely close bands
+  const ratio = Math.pow(2, bwOct);
+  return Math.max(0.3, Math.min(10, Math.sqrt(ratio) / (ratio - 1)));
+}
+
   const buildFixedEqWorkbenchProfile = useCallback((config) => {
     if (!eqWorkbenchBaseProfile) return;
     try {
@@ -263,23 +277,31 @@ export default function usePlayerProfile({ showToast, downloadBlob, encodeWAV, d
         .map((value) => Number(value.trim()))
         .filter((value) => Number.isFinite(value) && value > 0);
       if (!centers.length) throw new Error("No valid EQ band centers");
-      const uniqueCenters = [...new Set(centers)];
+      const uniqueCenters = [...new Set(centers)].sort((a, b) => a - b);
       const gainStepDb = Number(config.gainStepDb);
       const minStep = Number(config.minStep);
       const maxStep = Number(config.maxStep);
       if (!(gainStepDb > 0)) throw new Error("Invalid gain step");
-      if (!Number.isInteger(minStep) || !Number.isInteger(maxStep) || minStep > 0 || maxStep < 0) throw new Error("Invalid EQ step range");
+      // Allow fractional steps for PEQ (e.g. 0.1 dB)
+      const isFractionalStep = gainStepDb < 1;
+      if (!isFractionalStep && (!Number.isInteger(minStep) || !Number.isInteger(maxStep))) throw new Error("Invalid EQ step range");
+      if (minStep > 0 || maxStep < 0) throw new Error("Invalid EQ step range");
+
+      // Q: use user override if provided, otherwise auto-calculate per band
+      const userQ = config.qValue ? Number(config.qValue) : null;
+      const useAutoQ = !userQ || !Number.isFinite(userQ) || userQ <= 0;
+
       const eqModel = buildFixedBandEqModel({
         name: `${eqWorkbenchBaseProfile.name} Adjustable Model`,
-        bands: uniqueCenters.map((centerHz) => ({
+        bands: uniqueCenters.map((centerHz, idx) => ({
           id: `${centerHz}`,
           centerHz,
-          filterType: "peak",
-          q: DEFAULT_FIXED_BAND_Q,
+          filterType: config.filterTypes?.[idx] || "peak",
+          q: useAutoQ ? autoQForBand(centerHz, uniqueCenters, idx) : userQ,
           gainStepDb,
           minStep,
           maxStep,
-          integerOnly: true,
+          integerOnly: !isFractionalStep,
         })),
       });
       const nextProfile = attachEqModel({
@@ -287,7 +309,11 @@ export default function usePlayerProfile({ showToast, downloadBlob, encodeWAV, d
         name: `${eqWorkbenchBaseProfile.name} + Adjustable`,
       }, eqModel);
       setPlayerEqReadyProfile(nextProfile);
-      showToast("A adjustable profile generated");
+
+      // Report the auto-calculated Q for user reference
+      const qValues = eqModel.bands.map((b) => b.q.toFixed(2));
+      const qSummary = useAutoQ ? `（自动 Q: ${qValues[0]}~${qValues[qValues.length - 1]}）` : `（Q=${userQ}）`;
+      showToast(`EQ 模型已生成 ${qSummary}`);
     } catch (err) {
       showToast(`EQ model build failed: ${err.message}`, 5000);
     }
@@ -327,6 +353,20 @@ export default function usePlayerProfile({ showToast, downloadBlob, encodeWAV, d
     setPlayerEqCompileResult(null);
   }, [playerEqReadyProfile]);
 
+  const useProbeAsCompilerA = useCallback(() => {
+    if (!playerProbeProfile) return;
+    setCompilerProfileA(playerProbeProfile);
+    setCompilerProfileAName(playerProbeProfile.name);
+    setPlayerEqCompileResult(null);
+  }, [playerProbeProfile]);
+
+  const useSongAsCompilerA = useCallback(() => {
+    if (!playerSongProfile) return;
+    setCompilerProfileA(playerSongProfile);
+    setCompilerProfileAName(playerSongProfile.name);
+    setPlayerEqCompileResult(null);
+  }, [playerSongProfile]);
+
   const useProbeAsCompilerB = useCallback(() => {
     if (!playerProbeProfile) return;
     setCompilerProfileB(playerProbeProfile);
@@ -342,6 +382,14 @@ export default function usePlayerProfile({ showToast, downloadBlob, encodeWAV, d
     setCompilerTargetMode("profile");
     setPlayerEqCompileResult(null);
   }, [playerSongProfile]);
+
+  const useEqReadyAsCompilerB = useCallback(() => {
+    if (!playerEqReadyProfile) return;
+    setCompilerProfileB(playerEqReadyProfile);
+    setCompilerProfileBName(playerEqReadyProfile.name);
+    setCompilerTargetMode("profile");
+    setPlayerEqCompileResult(null);
+  }, [playerEqReadyProfile]);
 
   const changeCompilerTargetMode = useCallback((mode) => {
     setCompilerTargetMode(mode);
@@ -530,8 +578,11 @@ export default function usePlayerProfile({ showToast, downloadBlob, encodeWAV, d
     compileLoadableProfile,
     importCompilerProfileFile,
     useEqReadyAsCompilerA,
+    useProbeAsCompilerA,
+    useSongAsCompilerA,
     useProbeAsCompilerB,
     useSongAsCompilerB,
+    useEqReadyAsCompilerB,
     changeCompilerTargetMode,
     compilePlayerProfiles,
     loadCompileResultProfile,

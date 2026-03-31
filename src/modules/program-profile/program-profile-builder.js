@@ -1,19 +1,52 @@
 import { PROFILE_TYPE, PROFILE_VERSION, PROGRAM_KIND } from "../player-profile/constants.js";
 import { validateCanonicalProfile } from "../player-profile/validator.js";
 import { normalizeTrackPairs } from "./track-pairing.js";
-import { alignProgramPair, trimAlignedStereo } from "./program-alignment.js";
 import { aggregateProgramTracks } from "./program-aggregation.js";
-import { analyseProgramTransfer, extractProgramStereo } from "./program-transfer.js";
+
+/**
+ * Extract raw stereo Float32Arrays from an AudioBuffer.
+ * AudioBuffer cannot be posted to a Worker — raw typed arrays can.
+ */
+function extractRawStereo(audioBuffer) {
+  const ch = Math.max(1, audioBuffer.numberOfChannels || 1);
+  return {
+    left: audioBuffer.getChannelData(0).slice(),
+    right: audioBuffer.getChannelData(Math.min(1, ch - 1)).slice(),
+    sampleRate: audioBuffer.sampleRate,
+  };
+}
+
+/**
+ * Run a single pair through the Worker and return a Promise.
+ */
+function analysePairInWorker(worker, pair, id) {
+  return new Promise((resolve) => {
+    const handler = (event) => {
+      if (event.data.id !== id) return;
+      worker.removeEventListener("message", handler);
+      resolve(event.data);
+    };
+    worker.addEventListener("message", handler);
+
+    const ref = extractRawStereo(pair.referenceBuffer);
+    const rec = extractRawStereo(pair.recordedBuffer);
+
+    // Transfer the underlying ArrayBuffers so the copy is zero-cost
+    worker.postMessage(
+      { command: "analyse", id, title: pair.title, ref, rec },
+      [ref.left.buffer, ref.right.buffer, rec.left.buffer, rec.right.buffer],
+    );
+  });
+}
 
 /**
  * Build a program (song-based) player profile.
  *
- * Now async — yields main thread between pairs so the UI stays responsive.
- * Individual pair failures are collected instead of aborting the whole run.
+ * Heavy per-pair analysis runs in a Web Worker. The main thread stays
+ * responsive and reports progress via onProgress callback.
  *
  * @param {Array} trackPairs
  * @param {object} [options]
- * @param {string} [options.name]
  * @param {(progress: object) => void} [onProgress]
  * @returns {Promise<{profile: object, failedPairs: Array}>}
  */
@@ -23,36 +56,32 @@ export async function buildProgramProfile(trackPairs, options = {}, onProgress) 
   const validAnalyses = [];
   const failedPairs = [];
 
-  for (let i = 0; i < total; i++) {
-    const pair = normalizedPairs[i];
+  // Spin up a dedicated worker — terminated when we're done
+  const worker = new Worker(
+    new URL("../../workers/program-analysis.worker.js", import.meta.url),
+    { type: "module" },
+  );
 
-    onProgress?.({ phase: "analyzing", current: i + 1, total, title: pair.title });
+  try {
+    for (let i = 0; i < total; i++) {
+      const pair = normalizedPairs[i];
+      onProgress?.({ phase: "analyzing", current: i + 1, total, title: pair.title });
 
-    // Yield main thread so the browser can repaint & stay responsive
-    await new Promise((r) => setTimeout(r, 0));
+      const result = await analysePairInWorker(worker, pair, i);
 
-    try {
-      const referenceStereo = extractProgramStereo(pair.referenceBuffer);
-      const recordedStereo = extractProgramStereo(pair.recordedBuffer);
-      const alignment = alignProgramPair(referenceStereo, recordedStereo);
-      const trimmed = trimAlignedStereo(referenceStereo, recordedStereo, alignment.sampleOffset);
-      const analysis = analyseProgramTransfer(
-        { ...trimmed.reference, sampleRate: referenceStereo.sampleRate },
-        { ...trimmed.recorded, sampleRate: recordedStereo.sampleRate },
-      );
-      validAnalyses.push({
-        ...analysis,
-        title: pair.title,
-        alignmentScore: alignment.alignmentScore,
-      });
-    } catch (err) {
-      failedPairs.push({
-        title: pair.title,
-        error: err.message || err.code || "Unknown error",
-        code: err.code || null,
-        detail: err.detail || null,
-      });
+      if (result.ok) {
+        validAnalyses.push(result.result);
+      } else {
+        failedPairs.push({
+          title: pair.title,
+          error: result.error || "Unknown error",
+          code: result.code || null,
+          detail: result.detail || null,
+        });
+      }
     }
+  } finally {
+    worker.terminate();
   }
 
   if (!validAnalyses.length) {
@@ -66,7 +95,6 @@ export async function buildProgramProfile(trackPairs, options = {}, onProgress) 
   }
 
   onProgress?.({ phase: "aggregating" });
-  await new Promise((r) => setTimeout(r, 0));
 
   const aggregated = aggregateProgramTracks(validAnalyses);
   const profile = {

@@ -1,4 +1,6 @@
-import React, { useRef, useState } from "react";
+import React, { useRef, useState, useMemo } from "react";
+import { ReportCard } from "./ReportCard.jsx";
+import { generateDeckCalibrationReport } from "../modules/report/report-generator.js";
 
 export const CASSETTE_RECORDING_CALIBRATION_PLUGIN_ID = "deck-rec-cal";
 
@@ -140,6 +142,11 @@ export function CassetteRecordingCalibrationPlugin({
       return indices;
     }, [])
     : [];
+
+  const report = useMemo(
+    () => (responseAnalysis ? generateDeckCalibrationReport(responseAnalysis, transportAnalysis, lang) : null),
+    [responseAnalysis, transportAnalysis, lang],
+  );
   // help text selected by scenario
 
   return (
@@ -346,6 +353,15 @@ export function CassetteRecordingCalibrationPlugin({
             )}
           </div>
         </div>
+      )}
+
+      {report && (
+        <ReportCard
+          summary={report.summary}
+          full={report.full}
+          accentLabel="璃奈"
+          onSave={() => {}}
+        />
       )}
     </>
   );
