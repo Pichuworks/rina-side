@@ -1,5 +1,5 @@
 import React, { useState, useRef, useCallback, useMemo, useEffect } from "react";
-import { transcodeToWav, likelyNeedsTranscode } from "./ffmpeg-helper.js";
+import { decodeAudioFileToBufferLike, createAudioBufferFromBufferLike } from "./audio-buffer-like.js";
 import { extractW1Audio, isW1File } from "./w1-helper.js";
 import { IconAdd, IconAutoAwesome, IconFileOpen, IconSave, IconPlay, IconStop, IconExport, IconHelp, IconClearSide, IconClearAll, IconPalette, IconInfo, IconTool } from "./Icons.jsx";
 import Player from "./Player.jsx";
@@ -11,6 +11,9 @@ import {
   buildLinearPhaseImpulse,
   invertCalibrationProfile,
   profileSignature,
+  hasDynamicCalibrationProfile,
+  getProfileLevelCurves,
+  deriveCompensationProfile,
 } from "./calibration-profile.js";
 import { APP_VERSION, APP_GITHUB, LANGS, I18N, t, RINA_SMILE } from "./i18n.js";
 import useSignalOutput, { SIGNAL_OUTPUT_PRESETS } from "./hooks/useSignalOutput.js";
@@ -1199,8 +1202,10 @@ const HeaderControls = React.memo(function HeaderControls({ lang, setLang, theme
                       <b>播放器听感测量 & EQ 匹配</b>：两种方法测量播放器的频响——用测试信号（精度高）或曲目对比（方便）。测完之后，可以让系统算出 EQ 参数让设备 A 听起来像设备 B，也可以导出全分辨率补偿档案直接烧进音频里。</p>
                     <p><b>// 校准档案</b><br />
                       在主界面底部可以加载校准档案（从工具面板生成或导入）。<br />
-                      <b>试听 EQ</b>：开启后试听会实时应用频响补偿。<br />
-                      <b>导出 EQ</b>：开启后导出的 WAV 文件会烧入补偿 EQ。适合播放器不能调 EQ 的场景。</p>
+                      <b>试听 EQ 补偿</b>：开启后试听会实时应用频响补偿。<br />
+                      <b>试听清晰度补偿</b>：开启后试听会实时应用相位 / 瞬态补偿。<br />
+                      <b>导出 EQ 补偿</b>：开启后导出的 WAV 文件会烧入补偿 EQ。<br />
+                      <b>导出清晰度补偿</b>：开启后导出的 WAV 文件会烧入相位 / 瞬态补偿。</p>
                   </div>
                   <p style={{ fontSize: 11, color: "var(--text-dim)", textAlign: "right", marginTop: 4 }}>
                     ……把声音编译进磁带里。 {RINA_SMILE}<br />
@@ -1258,8 +1263,10 @@ const HeaderControls = React.memo(function HeaderControls({ lang, setLang, theme
                       <b>プレイヤー聴感測定 & EQ マッチング</b>：テスト信号（高精度）または楽曲比較（手軽）の 2 方式で周波数応答を測定。EQ パラメータを自動算出して A を B に近づけたり、フル解像度の補正ファイルを音声に焼き込むこともできます。</p>
                     <p><b>// 校正ファイル</b><br />
                       メイン画面下部で校正ファイルを読み込めます（ツールパネルで生成・インポート）。<br />
-                      <b>試聴 EQ</b>：有効にすると試聴時にリアルタイムで周波数補正が適用されます。<br />
-                      <b>書出 EQ</b>：有効にすると書き出した WAV に補正 EQ が焼き込まれます。EQ 非搭載デバイス向け。</p>
+                      <b>試聴 EQ 補正</b>：有効にすると試聴時にリアルタイムで周波数補正が適用されます。<br />
+                      <b>試聴 明瞭度補正</b>：有効にすると位相 / 瞬態補正が適用されます。<br />
+                      <b>書出 EQ 補正</b>：有効にすると書き出した WAV に EQ 補正が焼き込まれます。<br />
+                      <b>書出 明瞭度補正</b>：有効にすると書き出した WAV に位相 / 瞬態補正が焼き込まれます。</p>
                   </div>
                   <p style={{ fontSize: 11, color: "var(--text-dim)", textAlign: "right", marginTop: 4 }}>
                     ……音をテープにコンパイルする。 {RINA_SMILE}<br />
@@ -1317,8 +1324,10 @@ const HeaderControls = React.memo(function HeaderControls({ lang, setLang, theme
                       <b>Player Response & EQ Matching</b>: Measures frequency response using a test signal (high precision) or song comparison (convenient). Then computes EQ to make device A sound like device B, or exports a full-resolution correction file to bake directly into audio.</p>
                     <p><b>// Calibration Profile</b><br />
                       Load a calibration profile at the bottom of the main screen (generated from the tools panel or imported).<br />
-                      <b>Preview EQ</b>: When enabled, frequency correction is applied in real time during preview.<br />
-                      <b>Export EQ</b>: When enabled, the exported WAV has the correction EQ baked in. Ideal for players with no adjustable EQ.</p>
+                      <b>Preview EQ Compensation</b>: When enabled, frequency correction is applied in real time during preview.<br />
+                      <b>Preview Clarity Compensation</b>: When enabled, phase / transient correction is applied during preview.<br />
+                      <b>Export EQ Compensation</b>: When enabled, the exported WAV has the EQ correction baked in.<br />
+                      <b>Export Clarity Compensation</b>: When enabled, the exported WAV has the phase / transient correction baked in.</p>
                   </div>
                   <p style={{ fontSize: 11, color: "var(--text-dim)", textAlign: "right", marginTop: 4 }}>
                     …compile your sound into tape. {RINA_SMILE}<br />
@@ -1437,8 +1446,10 @@ export default function CassetteTool() {
   const [activeTool, setActiveTool] = useState("signal-output");
   const [loadedCalibrationProfile, setLoadedCalibrationProfile] = useState(null);
   const [loadedCalibrationProfileName, setLoadedCalibrationProfileName] = useState("");
-  const [applyCalibrationPreview, setApplyCalibrationPreview] = useState(true);
-  const [applyCalibrationExport, setApplyCalibrationExport] = useState(true);
+  const [applyCalibrationEqPreview, setApplyCalibrationEqPreview] = useState(true);
+  const [applyCalibrationEqExport, setApplyCalibrationEqExport] = useState(true);
+  const [applyCalibrationClarityPreview, setApplyCalibrationClarityPreview] = useState(true);
+  const [applyCalibrationClarityExport, setApplyCalibrationClarityExport] = useState(true);
 
   const acRef = useRef(null);
   const fileRef = useRef(null);
@@ -1500,14 +1511,6 @@ export default function CassetteTool() {
         return channels[channel] || channels[0];
       },
     };
-  }, []);
-
-  const createAudioBufferFromBufferLike = useCallback((ctx, bufferLike) => {
-    const buffer = ctx.createBuffer(bufferLike.numberOfChannels, bufferLike.length, bufferLike.sampleRate);
-    for (let channel = 0; channel < bufferLike.numberOfChannels; channel++) {
-      buffer.copyToChannel(bufferLike.getChannelData(channel), channel);
-    }
-    return buffer;
   }, []);
 
   const scaleBufferLike = useCallback((bufferLike, gain) => {
@@ -1587,6 +1590,118 @@ export default function CassetteTool() {
     return createBufferLikeSlice(rendered, impulse.delaySamples, bufferLike.length);
   }, [createAudioBufferFromBufferLike, createBufferLikeSlice, createImpulseAudioBuffer, getCorrectionImpulse]);
 
+  const buildDynamicLevelProfiles = useCallback((profile) => {
+    if (!profile || !hasDynamicCalibrationProfile(profile)) return [];
+    const leftCurves = getProfileLevelCurves(profile, "L");
+    const rightCurves = getProfileLevelCurves(profile, "R");
+    return leftCurves.map((curve, index) => {
+      const rightCurve = rightCurves[index] || rightCurves[rightCurves.length - 1] || curve;
+      return {
+        inputDb: curve.inputDb,
+        profile: {
+          ...profile,
+          name: `${profile.name} @ ${curve.inputDb} dB`,
+          channels: {
+            L: {
+              frequenciesHz: curve.frequenciesHz,
+              correctionDb: curve.correctionDb,
+              phaseRad: curve.phaseRad,
+            },
+            R: {
+              frequenciesHz: rightCurve.frequenciesHz,
+              correctionDb: rightCurve.correctionDb,
+              phaseRad: rightCurve.phaseRad,
+            },
+          },
+        },
+      };
+    });
+  }, []);
+
+  const buildDynamicWeightFrames = useCallback((bufferLike, levelProfiles, peakTargetDb) => {
+    if (!levelProfiles.length) return null;
+    const levelsDb = levelProfiles.map((entry) => entry.inputDb).sort((a, b) => a - b);
+    const frameSize = 2048;
+    const hopSize = 512;
+    const frameCount = Math.max(1, Math.ceil(bufferLike.length / hopSize));
+    const weights = levelsDb.map(() => new Float32Array(frameCount));
+    const left = bufferLike.getChannelData(0);
+    const right = bufferLike.getChannelData(Math.min(1, bufferLike.numberOfChannels - 1));
+    const targetAmp = Math.max(1e-6, Math.pow(10, peakTargetDb / 20));
+
+    for (let frame = 0; frame < frameCount; frame++) {
+      const center = frame * hopSize;
+      const start = Math.max(0, center - (frameSize >> 1));
+      const end = Math.min(bufferLike.length, start + frameSize);
+      let peak = 1e-6;
+      for (let i = start; i < end; i++) {
+        const absL = Math.abs(left[i] || 0);
+        const absR = Math.abs(right[i] || 0);
+        if (absL > peak) peak = absL;
+        if (absR > peak) peak = absR;
+      }
+      const relDb = 20 * Math.log10(peak / targetAmp);
+      if (relDb <= levelsDb[0]) {
+        weights[0][frame] = 1;
+        continue;
+      }
+      if (relDb >= levelsDb[levelsDb.length - 1]) {
+        weights[levelsDb.length - 1][frame] = 1;
+        continue;
+      }
+      for (let levelIndex = 0; levelIndex < levelsDb.length - 1; levelIndex++) {
+        const lo = levelsDb[levelIndex];
+        const hi = levelsDb[levelIndex + 1];
+        if (relDb >= lo && relDb <= hi) {
+          const t = (relDb - lo) / Math.max(1e-9, hi - lo);
+          weights[levelIndex][frame] = 1 - t;
+          weights[levelIndex + 1][frame] = t;
+          break;
+        }
+      }
+    }
+    return { weights, hopSize, frameCount };
+  }, []);
+
+  const blendDynamicLevelRenders = useCallback((renderedLevels, weightFrames, length, sampleRate) => {
+    if (!renderedLevels.length || !weightFrames) return renderedLevels[0] || null;
+    const channels = Array.from({ length: renderedLevels[0].numberOfChannels }, (_, channel) => new Float32Array(length));
+    for (let sample = 0; sample < length; sample++) {
+      const framePos = sample / weightFrames.hopSize;
+      const frameA = Math.max(0, Math.min(weightFrames.frameCount - 1, Math.floor(framePos)));
+      const frameB = Math.max(0, Math.min(weightFrames.frameCount - 1, frameA + 1));
+      const t = Math.max(0, Math.min(1, framePos - frameA));
+      for (let levelIndex = 0; levelIndex < renderedLevels.length; levelIndex++) {
+        const weightA = weightFrames.weights[levelIndex][frameA] || 0;
+        const weightB = weightFrames.weights[levelIndex][frameB] || 0;
+        const weight = weightA + (weightB - weightA) * t;
+        if (weight <= 1e-6) continue;
+        for (let channel = 0; channel < channels.length; channel++) {
+          channels[channel][sample] += renderedLevels[levelIndex].getChannelData(channel)[sample] * weight;
+        }
+      }
+    }
+    return {
+      numberOfChannels: channels.length,
+      sampleRate,
+      length,
+      getChannelData(channel) {
+        return channels[channel] || channels[0];
+      },
+    };
+  }, []);
+
+  const renderBufferLikeWithDynamicProfile = useCallback(async (bufferLike, profile, peakTargetDb) => {
+    const levelProfiles = buildDynamicLevelProfiles(profile);
+    if (!levelProfiles.length) return renderBufferLikeWithProfile(bufferLike, profile);
+    const weightFrames = buildDynamicWeightFrames(bufferLike, levelProfiles, peakTargetDb);
+    const renderedLevels = [];
+    for (const entry of levelProfiles) {
+      renderedLevels.push(await renderBufferLikeWithProfile(bufferLike, entry.profile));
+    }
+    return blendDynamicLevelRenders(renderedLevels, weightFrames, bufferLike.length, bufferLike.sampleRate);
+  }, [blendDynamicLevelRenders, buildDynamicLevelProfiles, buildDynamicWeightFrames, renderBufferLikeWithProfile]);
+
   const getTrackOutputStats = useCallback(async (track, sampleRate, profile) => {
     if (!track?.audioBuffer) return { peak: 0, rms: 0 };
     if (!profile) return { peak: track.peak || 0, rms: track.rms || 0 };
@@ -1624,6 +1739,20 @@ export default function CassetteTool() {
     tracks: tracks.map(t => ({ id: t.id, side: t.side, gapOverride: t.gapOverride, hasAudio: !!t.audioBuffer }))
   }), [tracks, defaultGap, smartGap, fillTail, sideSec]);
   const activeDeckProfile = simMode.startsWith("TAPE_") ? deckProfile : "off";
+  const activePreviewCalibrationProfile = useMemo(
+    () => deriveCompensationProfile(loadedCalibrationProfile, {
+      applyEq: applyCalibrationEqPreview,
+      applyClarity: applyCalibrationClarityPreview,
+    }),
+    [loadedCalibrationProfile, applyCalibrationEqPreview, applyCalibrationClarityPreview],
+  );
+  const activeExportCalibrationProfile = useMemo(
+    () => deriveCompensationProfile(loadedCalibrationProfile, {
+      applyEq: applyCalibrationEqExport,
+      applyClarity: applyCalibrationClarityExport,
+    }),
+    [loadedCalibrationProfile, applyCalibrationEqExport, applyCalibrationClarityExport],
+  );
 
   const sideA = useMemo(() => tracks.filter(t => t.side === "A"), [tracks]);
   const sideB = useMemo(() => tracks.filter(t => t.side === "B"), [tracks]);
@@ -1666,21 +1795,15 @@ export default function CassetteTool() {
   const durA = useMemo(() => calcDur(sideA), [sideA, calcDur]);
   const durB = useMemo(() => calcDur(sideB), [sideB, calcDur]);
 
-  const decodeExternalAudioFile = useCallback(async (file, label = file.name) => {
-    const ctx = getAC();
+  const decodeExternalAudioFile = useCallback(async (file, label = file.name, fileBuffer = null) => {
     setProcMsg(`${T("decoding")}: ${label}`);
-    const fileBuf = await file.arrayBuffer();
-    try {
-      if (likelyNeedsTranscode(file.name)) throw new Error("format likely unsupported natively, try ffmpeg");
-      return await ctx.decodeAudioData(fileBuf.slice(0));
-    } catch (nativeErr) {
-      setProcMsg(`ffmpeg: ${label}`);
-      if (ffmpegStatus === "idle") setFfmpegStatus("loading");
-      const wavBuf = await transcodeToWav(file, (msg) => setProcMsg(`ffmpeg: ${msg}`));
-      setFfmpegStatus("ready");
-      return await ctx.decodeAudioData(wavBuf.slice(0));
-    }
-  }, [T, ffmpegStatus, getAC]);
+    return decodeAudioFileToBufferLike(file, {
+      fileBuffer,
+      ffmpegStatus,
+      setFfmpegStatus,
+      setProcMsg,
+    });
+  }, [T, ffmpegStatus, setFfmpegStatus]);
 
   // ── Tool hooks ────────────────────────────────────────────
   const {
@@ -1723,8 +1846,10 @@ export default function CassetteTool() {
   const onLoadCalibrationProfile = useCallback((profile) => {
     setLoadedCalibrationProfile(profile);
     setLoadedCalibrationProfileName(profile.name);
-    setApplyCalibrationPreview(true);
-    setApplyCalibrationExport(true);
+    setApplyCalibrationEqPreview(true);
+    setApplyCalibrationEqExport(true);
+    setApplyCalibrationClarityPreview(true);
+    setApplyCalibrationClarityExport(true);
     correctionImpulseCacheRef.current.clear();
   }, []);
 
@@ -1798,32 +1923,19 @@ export default function CassetteTool() {
           importFile = extracted.file;
           fileBuf = extracted.audioBuffer;
           sourceMeta = detectSourceAudioMeta(importFile.name, fileBuf);
-          displayName = extracted.meta?.musicName || displayName;
         } else {
           fileBuf = await f.arrayBuffer();
           sourceMeta = detectSourceAudioMeta(f.name, fileBuf);
         }
-        if (likelyNeedsTranscode(importFile.name)) {
-          throw new Error("format likely unsupported natively, try ffmpeg");
+        const decoded = await decodeExternalAudioFile(importFile, importFile.name, fileBuf);
+        ab = createAudioBufferFromBufferLike(ctx, decoded);
+      } catch (err) {
+        console.error(`Failed to decode ${f.name}:`, err);
+        if (isW1File(f.name) && importFile === f) {
+          showToast(`${T("w1DecryptFailed")}: ${f.name}`, 5000);
         }
-        ab = await ctx.decodeAudioData(fileBuf.slice(0));
-      } catch (nativeErr) {
-        try {
-          if (isW1File(f.name) && importFile === f) throw nativeErr;
-          setProcMsg(`ffmpeg: ${importFile.name}`);
-          if (ffmpegStatus === "idle") setFfmpegStatus("loading");
-          const wavBuf = await transcodeToWav(importFile, (msg) => setProcMsg(`ffmpeg: ${msg}`));
-          setFfmpegStatus("ready");
-          ab = await ctx.decodeAudioData(wavBuf.slice(0));
-        } catch (ffErr) {
-          console.error(`Failed to decode ${f.name} (native + ffmpeg):`, ffErr);
-          if (isW1File(f.name) && importFile === f) {
-            showToast(`${T("w1DecryptFailed")}: ${f.name}`, 5000);
-          }
-          if (ffErr.message?.includes("SharedArrayBuffer")) {
-            setFfmpegStatus("unavailable");
-            showToast("SharedArrayBuffer unavailable — COOP/COEP headers missing. FLAC/AIFF decoding disabled.", 6000);
-          }
+        if (err.message?.includes("SharedArrayBuffer")) {
+          showToast("SharedArrayBuffer unavailable — COOP/COEP headers missing. FLAC/AIFF decoding disabled.", 6000);
         }
       }
       if (!ab) continue;
@@ -1853,7 +1965,7 @@ export default function CassetteTool() {
     const matched = hydratedIds.size;
     if (matched > 0) showToast(`${matched} ${T("stubsHydrated")}`, 3000);
     setProcessing(false); setProcMsg("");
-  }, [getAC, T, ffmpegStatus, showToast, tracks]);
+  }, [decodeExternalAudioFile, getAC, T, showToast, tracks]);
 
   const handleDrop = useCallback((e, side) => {
     e.preventDefault(); e.stopPropagation(); setDragOverSide(null);
@@ -1957,56 +2069,51 @@ export default function CassetteTool() {
       const ok = window.confirm(`${T("bitDepthWarn")}:\n${names}\n\nContinue?`);
       if (!ok) return;
     }
-    setProcessing(true); setExpProg({ side, step: 0, total: st.length + 2 });
+    setProcessing(true); setExpProg({ side, step: 0, total: st.length + 3 });
     try {
       const ch = 2;
-      const exportProfile = loadedCalibrationProfile && applyCalibrationExport ? loadedCalibrationProfile : null;
+      const exportProfile = activeExportCalibrationProfile;
       const gains = await resolveNormalizedTrackGains(st, sr, exportProfile);
       let len = 0;
       st.forEach((tr, i) => { len += tr.duration * sr; if (i < st.length - 1) len += getGap(tr, st[i + 1]) * sr; });
       if (fillTail) len = Math.max(len, sideSec * sr);
       len = Math.ceil(len);
-      const exportImpulse = exportProfile ? getCorrectionImpulse(exportProfile, sr) : null;
-      const renderLength = len + (exportImpulse?.length || 0);
-      const oc = new OfflineAudioContext(ch, renderLength, sr); let cur = 0;
+      const oc = new OfflineAudioContext(ch, len, sr); let cur = 0;
       const mixBus = oc.createGain();
       mixBus.gain.value = 1.0;
-      if (exportImpulse) {
-        const convolver = oc.createConvolver();
-        convolver.normalize = false;
-        convolver.buffer = createImpulseAudioBuffer(oc, exportImpulse);
-        mixBus.connect(convolver);
-        convolver.connect(oc.destination);
-      } else {
-        mixBus.connect(oc.destination);
-      }
+      mixBus.connect(oc.destination);
       for (let i = 0; i < st.length; i++) {
-        setExpProg({ side, step: i + 1, total: st.length + 2 }); setProcMsg(`SIDE ${side}: [${i + 1}/${st.length}] ${st[i].name}`);
+        setExpProg({ side, step: i + 1, total: st.length + 3 }); setProcMsg(`SIDE ${side}: [${i + 1}/${st.length}] ${st[i].name}`);
         const tr = st[i], src = oc.createBufferSource(), gn = oc.createGain();
         src.buffer = tr.audioBuffer; gn.gain.value = gains[i]; src.connect(gn); gn.connect(mixBus);
         src.start(cur / sr); cur += Math.ceil(tr.duration * sr);
         if (i < st.length - 1) cur += Math.ceil(getGap(tr, st[i + 1]) * sr);
       }
-      setProcMsg(`SIDE ${side}: ${T("rendering")}...`); setExpProg({ side, step: st.length + 1, total: st.length + 2 });
-      const r = await oc.startRendering();
-      setProcMsg(`SIDE ${side}: ${T("encoding")}...`); setExpProg({ side, step: st.length + 2, total: st.length + 2 });
-      let encodedBuffer = exportImpulse ? createBufferLikeSlice(r, exportImpulse.delaySamples, len) : r;
-      if (exportImpulse) {
+      setProcMsg(`SIDE ${side}: ${T("rendering")}...`); setExpProg({ side, step: st.length + 1, total: st.length + 3 });
+      const baseMix = await oc.startRendering();
+      let encodedBuffer = baseMix;
+      if (exportProfile) {
+        setProcMsg(`SIDE ${side}: applying deck model...`);
+        setExpProg({ side, step: st.length + 2, total: st.length + 3 });
+        encodedBuffer = hasDynamicCalibrationProfile(exportProfile)
+          ? await renderBufferLikeWithDynamicProfile(baseMix, exportProfile, targetDb)
+          : await renderBufferLikeWithProfile(baseMix, exportProfile);
         const renderedPeak = getPeak(encodedBuffer);
         const postGain = renderedPeak > 0.999 ? 0.999 / renderedPeak : 1;
         encodedBuffer = scaleBufferLike(encodedBuffer, postGain);
       }
+      setProcMsg(`SIDE ${side}: ${T("encoding")}...`); setExpProg({ side, step: st.length + 3, total: st.length + 3 });
       const blob = encodeWAV(encodedBuffer, bits), u = URL.createObjectURL(blob), a = document.createElement("a");
       a.href = u; a.download = `SIDE_${side}_${sr}hz_${bits}bit.wav`; a.click(); URL.revokeObjectURL(u);
     } catch (e) { console.error(e); alert(`Export failed: ${e.message}`); }
     setProcessing(false); setProcMsg(""); setExpProg(null);
-  }, [tracks, defaultGap, fillTail, sideSec, getAC, T, getGap, resolveExportSr, resolveExportBits, stopSignalOutput, loadedCalibrationProfile, applyCalibrationExport, getCorrectionImpulse, createImpulseAudioBuffer, createBufferLikeSlice, scaleBufferLike, resolveNormalizedTrackGains]);
+  }, [tracks, defaultGap, fillTail, sideSec, getAC, T, getGap, resolveExportSr, resolveExportBits, stopSignalOutput, activeExportCalibrationProfile, scaleBufferLike, resolveNormalizedTrackGains, renderBufferLikeWithDynamicProfile, renderBufferLikeWithProfile, targetDb]);
 
   // ── Playback Engine ───────────────────────────────────────
   const playGenRef = useRef(0); // generation counter to prevent stale callbacks
   const appliedSimKeyRef = useRef(`${simMode}|${activeDeckProfile}|${toneProfile}|${tubeEnabled ? 1 : 0}|${vinylEra}|${vinylCrackle}`);
   const appliedPlaybackStructureRef = useRef(playbackStructureKey);
-  const appliedCorrectionKeyRef = useRef(`${profileSignature(loadedCalibrationProfile)}|${applyCalibrationPreview ? 1 : 0}`);
+  const appliedCorrectionKeyRef = useRef(profileSignature(activePreviewCalibrationProfile));
   const getPlaybackCursor = useCallback((schedule, pos, contentDur, totalDur) => {
     if (!schedule.length) return -1;
     if (totalDur > contentDur && pos >= contentDur) return schedule.length;
@@ -2022,11 +2129,11 @@ export default function CassetteTool() {
       : simMode === "vinyl"
         ? VINYL_SIM_PROFILE.warpBaseDelayMs / 1000
         : 0;
-    const correctionDelay = loadedCalibrationProfile && applyCalibrationPreview
-      ? (getCorrectionImpulse(loadedCalibrationProfile, ctx?.sampleRate || 48000)?.delaySamples || 0) / (ctx?.sampleRate || 48000)
+    const correctionDelay = activePreviewCalibrationProfile
+      ? (getCorrectionImpulse(activePreviewCalibrationProfile, ctx?.sampleRate || 48000)?.delaySamples || 0) / (ctx?.sampleRate || 48000)
       : 0;
     return Math.max(0, baseLatency + outputLatency + mediumDelay + correctionDelay);
-  }, [applyCalibrationPreview, getCorrectionImpulse, loadedCalibrationProfile, simMode]);
+  }, [activePreviewCalibrationProfile, getCorrectionImpulse, simMode]);
 
   const stopAuxSources = useCallback((sources) => {
     sources.forEach((source) => {
@@ -2100,10 +2207,10 @@ export default function CassetteTool() {
   }, [playerVolume]);
 
   const buildPlaybackCorrectionGraph = useCallback((ctx, inputNode) => {
-    if (!loadedCalibrationProfile || !applyCalibrationPreview) {
+    if (!activePreviewCalibrationProfile) {
       return { output: inputNode, nodes: [] };
     }
-    const impulse = getCorrectionImpulse(loadedCalibrationProfile, ctx.sampleRate);
+    const impulse = getCorrectionImpulse(activePreviewCalibrationProfile, ctx.sampleRate);
     if (!impulse) return { output: inputNode, nodes: [] };
     const convolver = ctx.createConvolver();
     convolver.normalize = false;
@@ -2116,7 +2223,7 @@ export default function CassetteTool() {
     // so the simulation receives approximately the same total signal level.
     // This preserves the corrected frequency shape but prevents level-driven
     // clipping in downstream nonlinear processors.
-    const ch = loadedCalibrationProfile.channels?.L;
+    const ch = activePreviewCalibrationProfile.channels?.L;
     if (ch?.correctionDb?.length) {
       // RMS of correction curve = broadband energy change
       let sumSq = 0;
@@ -2138,7 +2245,7 @@ export default function CassetteTool() {
     }
 
     return { output: convolver, nodes: [convolver] };
-  }, [applyCalibrationPreview, createImpulseAudioBuffer, getCorrectionImpulse, loadedCalibrationProfile]);
+  }, [activePreviewCalibrationProfile, createImpulseAudioBuffer, getCorrectionImpulse]);
 
   const buildPlaybackSimulationGraph = useCallback((ctx, inputNode, simOutput, playPos, totalDur, initialGain = 1) => {
     let outputNode = inputNode;
@@ -2306,7 +2413,7 @@ export default function CassetteTool() {
     const gains = await resolveNormalizedTrackGains(
       sideTracks,
       ctx.sampleRate,
-      loadedCalibrationProfile && applyCalibrationPreview ? loadedCalibrationProfile : null
+      activePreviewCalibrationProfile
     );
     if (playGenRef.current !== gen) return;
     const gainByTrackId = new Map(sideTracks.map((track, index) => [track.id, gains[index] || 1]));
@@ -2387,7 +2494,7 @@ export default function CassetteTool() {
       playRef.current.raf = requestAnimationFrame(tick);
     };
     playRef.current.raf = requestAnimationFrame(tick);
-  }, [getAC, buildPlaybackCorrectionGraph, buildPlaybackOutputChain, buildSchedule, getPlaybackCursor, buildPlaybackSimulationGraph, clearPlaybackOutputChain, clearSimulationGraphs, disconnectNodes, getPlaybackDisplayDelay, stopPlayback, stopSignalOutput, tracks, resolveNormalizedTrackGains, loadedCalibrationProfile, applyCalibrationPreview]);
+  }, [getAC, buildPlaybackCorrectionGraph, buildPlaybackOutputChain, buildSchedule, getPlaybackCursor, buildPlaybackSimulationGraph, clearPlaybackOutputChain, clearSimulationGraphs, disconnectNodes, getPlaybackDisplayDelay, stopPlayback, stopSignalOutput, tracks, resolveNormalizedTrackGains, activePreviewCalibrationProfile]);
 
   const playSide = useCallback((side) => {
     playFromPos(side, 0);
@@ -2426,7 +2533,7 @@ export default function CassetteTool() {
   }, [simMode, activeDeckProfile, toneProfile, tubeEnabled, vinylEra, vinylCrackle, playing, playingSide, rebuildPlaybackSimulationGraph]);
 
   useEffect(() => {
-    const appliedKey = `${profileSignature(loadedCalibrationProfile)}|${applyCalibrationPreview ? 1 : 0}`;
+    const appliedKey = profileSignature(activePreviewCalibrationProfile);
     if (appliedCorrectionKeyRef.current === appliedKey) return;
     appliedCorrectionKeyRef.current = appliedKey;
     if (!playing || !playingSide) return;
@@ -2439,7 +2546,7 @@ export default function CassetteTool() {
         setPaused(true);
       }
     })();
-  }, [applyCalibrationPreview, getAC, loadedCalibrationProfile, paused, playFromPos, playing, playingSide]);
+  }, [activePreviewCalibrationProfile, getAC, paused, playFromPos, playing, playingSide]);
 
   useEffect(() => {
     if (simMode.startsWith("TAPE_")) return;
@@ -2527,8 +2634,10 @@ export default function CassetteTool() {
       const profile = normalizeCalibrationProfile(raw);
       setLoadedCalibrationProfile(profile);
       setLoadedCalibrationProfileName(file.name);
-      setApplyCalibrationPreview(true);
-      setApplyCalibrationExport(true);
+      setApplyCalibrationEqPreview(true);
+      setApplyCalibrationEqExport(true);
+      setApplyCalibrationClarityPreview(true);
+      setApplyCalibrationClarityExport(true);
       showToast(T("calibrationProfileLoaded"));
     } catch (err) {
       showToast(`${T("calibrationProfileLoadFailed")}: ${err.message}`, 5000);
@@ -2538,8 +2647,10 @@ export default function CassetteTool() {
   const clearCalibrationProfile = useCallback(() => {
     setLoadedCalibrationProfile(null);
     setLoadedCalibrationProfileName("");
-    setApplyCalibrationPreview(false);
-    setApplyCalibrationExport(false);
+    setApplyCalibrationEqPreview(false);
+    setApplyCalibrationEqExport(false);
+    setApplyCalibrationClarityPreview(false);
+    setApplyCalibrationClarityExport(false);
     correctionImpulseCacheRef.current.clear();
     showToast(T("calibrationProfileCleared"));
   }, [T, showToast]);
@@ -3083,23 +3194,43 @@ export default function CassetteTool() {
             <span style={{ fontSize: 12, color: "var(--text-dim)", minWidth: 160 }}>{loadedCalibrationProfileName || T("noCalibrationProfile")}</span>
             <div style={{ width: 1, height: 20, background: "var(--border)", alignSelf: "center", flexShrink: 0 }} />
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <label style={{ ...lb, margin: 0 }}>{T("applyCalibrationPreview")}</label>
+              <label style={{ ...lb, margin: 0 }}>{T("applyCalibrationEqPreview")}</label>
               <button
-                onClick={() => loadedCalibrationProfile && setApplyCalibrationPreview((value) => !value)}
-                style={toggleStyle(!!loadedCalibrationProfile && applyCalibrationPreview)}
+                onClick={() => loadedCalibrationProfile && setApplyCalibrationEqPreview((value) => !value)}
+                style={toggleStyle(!!loadedCalibrationProfile && applyCalibrationEqPreview)}
                 disabled={!loadedCalibrationProfile}
               >
-                {!!loadedCalibrationProfile && applyCalibrationPreview ? "ON" : "OFF"}
+                {!!loadedCalibrationProfile && applyCalibrationEqPreview ? "ON" : "OFF"}
               </button>
             </div>
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
-              <label style={{ ...lb, margin: 0 }}>{T("applyCalibrationExport")}</label>
+              <label style={{ ...lb, margin: 0 }}>{T("applyCalibrationClarityPreview")}</label>
               <button
-                onClick={() => loadedCalibrationProfile && setApplyCalibrationExport((value) => !value)}
-                style={toggleStyle(!!loadedCalibrationProfile && applyCalibrationExport)}
+                onClick={() => loadedCalibrationProfile && setApplyCalibrationClarityPreview((value) => !value)}
+                style={toggleStyle(!!loadedCalibrationProfile && applyCalibrationClarityPreview)}
                 disabled={!loadedCalibrationProfile}
               >
-                {!!loadedCalibrationProfile && applyCalibrationExport ? "ON" : "OFF"}
+                {!!loadedCalibrationProfile && applyCalibrationClarityPreview ? "ON" : "OFF"}
+              </button>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <label style={{ ...lb, margin: 0 }}>{T("applyCalibrationEqExport")}</label>
+              <button
+                onClick={() => loadedCalibrationProfile && setApplyCalibrationEqExport((value) => !value)}
+                style={toggleStyle(!!loadedCalibrationProfile && applyCalibrationEqExport)}
+                disabled={!loadedCalibrationProfile}
+              >
+                {!!loadedCalibrationProfile && applyCalibrationEqExport ? "ON" : "OFF"}
+              </button>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              <label style={{ ...lb, margin: 0 }}>{T("applyCalibrationClarityExport")}</label>
+              <button
+                onClick={() => loadedCalibrationProfile && setApplyCalibrationClarityExport((value) => !value)}
+                style={toggleStyle(!!loadedCalibrationProfile && applyCalibrationClarityExport)}
+                disabled={!loadedCalibrationProfile}
+              >
+                {!!loadedCalibrationProfile && applyCalibrationClarityExport ? "ON" : "OFF"}
               </button>
             </div>
           </div>

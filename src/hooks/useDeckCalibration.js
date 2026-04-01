@@ -17,7 +17,115 @@ function extractRawStereo(audioBuffer) {
   };
 }
 
-export default function useDeckCalibration({ T, showToast, downloadBlob, encodeWAV, decodeExternalAudioFile, setProcessing, setProcMsg, showTools }) {
+function interpolateLogValue(frequenciesHz, values, targetHz) {
+  if (!frequenciesHz?.length || !values?.length) return 0;
+  if (targetHz <= frequenciesHz[0]) return values[0] ?? 0;
+  const last = frequenciesHz.length - 1;
+  if (targetHz >= frequenciesHz[last]) return values[last] ?? 0;
+  let lo = 0;
+  let hi = last;
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >> 1;
+    if (frequenciesHz[mid] > targetHz) hi = mid;
+    else lo = mid;
+  }
+  const f0 = Math.max(1e-6, frequenciesHz[lo]);
+  const f1 = Math.max(f0 + 1e-6, frequenciesHz[hi]);
+  const t = Math.log(targetHz / f0) / Math.log(f1 / f0);
+  const a = values[lo] ?? 0;
+  const b = values[hi] ?? 0;
+  return a + ((b - a) * t);
+}
+
+function normalizeMeasuredCurve(curve, anchorHz = 1000) {
+  if (!curve?.frequenciesHz?.length) return curve;
+  const measuredDb = Array.isArray(curve.measuredDb) ? curve.measuredDb : null;
+  const correctionDb = Array.isArray(curve.correctionDb) ? curve.correctionDb : null;
+  if (!measuredDb?.length && !correctionDb?.length) return curve;
+  const measuredSource = measuredDb?.length ? measuredDb : correctionDb.map((value) => -(value ?? 0));
+  const anchorDb = interpolateLogValue(curve.frequenciesHz, measuredSource, anchorHz);
+  const normalizedMeasured = measuredSource.map((value) => (value ?? 0) - anchorDb);
+  return {
+    ...curve,
+    measuredDb: normalizedMeasured,
+    correctionDb: normalizedMeasured.map((value) => -value),
+    phaseRad: Array.isArray(curve.phaseRad) ? [...curve.phaseRad] : curve.phaseRad,
+  };
+}
+
+function normalizeResponseAnalysisAnchoring(responseAnalysis, anchorHz = 1000) {
+  if (!responseAnalysis?.frequenciesHz?.length) return responseAnalysis;
+  const normalizeTopCurve = (channel) => normalizeMeasuredCurve({
+    frequenciesHz: responseAnalysis.frequenciesHz,
+    measuredDb: channel?.measuredDb,
+    correctionDb: channel?.correctionDb,
+    phaseRad: channel?.phaseRad,
+  }, anchorHz);
+  const normalizeChannel = (channel) => {
+    if (!channel) return channel;
+    const normalizedTop = normalizeTopCurve(channel);
+    return {
+      ...channel,
+      measuredDb: normalizedTop?.measuredDb || [],
+      correctionDb: normalizedTop?.correctionDb || [],
+      phaseRad: normalizedTop?.phaseRad || [],
+      levelCurves: (channel.levelCurves || []).map((curve) => normalizeMeasuredCurve(curve, anchorHz)),
+      validationCurve: channel.validationCurve ? normalizeMeasuredCurve(channel.validationCurve, anchorHz) : null,
+    };
+  };
+  const next = {
+    ...responseAnalysis,
+    channels: {
+      L: normalizeChannel(responseAnalysis.channels?.L),
+      R: normalizeChannel(responseAnalysis.channels?.R),
+    },
+  };
+  if (next.profile?.channels) {
+    next.profile = {
+      ...next.profile,
+      channels: {
+        L: {
+          ...(next.profile.channels.L || {}),
+          frequenciesHz: next.channels.L?.validationCurve?.frequenciesHz || next.channels.L?.frequenciesHz || next.profile.channels.L?.frequenciesHz || [],
+          correctionDb: next.channels.L?.correctionDb || next.profile.channels.L?.correctionDb || [],
+          phaseRad: next.channels.L?.phaseRad || next.profile.channels.L?.phaseRad || [],
+          levelCurves: (next.channels.L?.levelCurves || []).map((curve) => ({
+            inputDb: curve.inputDb,
+            role: curve.role,
+            frequenciesHz: curve.frequenciesHz,
+            correctionDb: curve.correctionDb,
+            phaseRad: curve.phaseRad,
+          })),
+        },
+        R: {
+          ...(next.profile.channels.R || {}),
+          frequenciesHz: next.channels.R?.validationCurve?.frequenciesHz || next.channels.R?.frequenciesHz || next.profile.channels.R?.frequenciesHz || [],
+          correctionDb: next.channels.R?.correctionDb || next.profile.channels.R?.correctionDb || [],
+          phaseRad: next.channels.R?.phaseRad || next.profile.channels.R?.phaseRad || [],
+          levelCurves: (next.channels.R?.levelCurves || []).map((curve) => ({
+            inputDb: curve.inputDb,
+            role: curve.role,
+            frequenciesHz: curve.frequenciesHz,
+            correctionDb: curve.correctionDb,
+            phaseRad: curve.phaseRad,
+          })),
+        },
+      },
+    };
+  }
+  return next;
+}
+
+export default function useDeckCalibration({
+  T,
+  showToast,
+  downloadBlob,
+  encodeWAV,
+  decodeExternalAudioFile,
+  setProcessing,
+  setProcMsg,
+  showTools,
+}) {
   const deckCalBrowserRecordingEnabled = false;
   const [deckCalProgramManifest, setDeckCalProgramManifest] = useState(null);
   const [deckCalProgramManifestName, setDeckCalProgramManifestName] = useState("");
@@ -46,26 +154,79 @@ export default function useDeckCalibration({ T, showToast, downloadBlob, encodeW
     setDeckCalProgramManifestName("");
   }, []);
 
+  const baselineProfileForChannel = useCallback((baselineChannel, channel) => ({
+    channels: {
+      [channel]: {
+        frequenciesHz: baselineChannel?.frequenciesHz || [],
+        correctionDb: baselineChannel?.referenceDb || baselineChannel?.correctionDb || [],
+      },
+    },
+  }), []);
+
+  const adjustCurveWithBaseline = useCallback((curve, baselineChannel, channel) => {
+    if (!curve?.frequenciesHz?.length || !curve?.measuredDb?.length || !curve?.correctionDb?.length) return null;
+    const baselineProfile = baselineProfileForChannel(baselineChannel, channel);
+    const measuredDb = curve.frequenciesHz.map((freq, index) => (
+      curve.measuredDb[index] - getProfileCorrectionDb(baselineProfile, freq, channel)
+    ));
+    const correctionDb = curve.frequenciesHz.map((freq, index) => (
+      curve.correctionDb[index] + getProfileCorrectionDb(baselineProfile, freq, channel)
+    ));
+    return {
+      ...curve,
+      measuredDb,
+      correctionDb,
+    };
+  }, [baselineProfileForChannel]);
+
+  const pickBaselineCurve = useCallback((baselineChannel, inputDb) => {
+    const levelCurves = baselineChannel?.levelCurves || [];
+    if (!levelCurves.length) return baselineChannel;
+    const exact = levelCurves.find((curve) => Number(curve.inputDb) === Number(inputDb));
+    if (exact) return exact;
+    return baselineChannel;
+  }, []);
+
+  const pickRepresentativeCurve = useCallback((channel) => {
+    if (channel?.validationCurve?.correctionDb?.length) return channel.validationCurve;
+    if (channel?.correctionDb?.length && channel?.frequenciesHz?.length) return channel;
+    const levelCurves = channel?.levelCurves || [];
+    if (!levelCurves.length) return { frequenciesHz: [], correctionDb: [], measuredDb: [] };
+    return levelCurves[Math.floor(levelCurves.length / 2)];
+  }, []);
+
   const adjustResponseChannelWithBaseline = useCallback((analysisChannel, baselineChannel, frequenciesHz, channel) => {
     if (!analysisChannel?.measuredDb?.length || !baselineChannel?.frequenciesHz?.length || !baselineChannel?.referenceDb?.length) {
       throw new Error(`Baseline response data is invalid for channel ${channel}`);
     }
-    const baselineProfile = {
-      channels: {
-        [channel]: {
-          frequenciesHz: baselineChannel.frequenciesHz,
-          correctionDb: baselineChannel.referenceDb,
-        },
-      },
+    const representative = adjustCurveWithBaseline({
+      frequenciesHz,
+      measuredDb: analysisChannel.measuredDb,
+      correctionDb: analysisChannel.correctionDb,
+      phaseRad: analysisChannel.phaseRad,
+      residualGroupDelayMs: analysisChannel.residualGroupDelayMs,
+      clarity: analysisChannel.clarity,
+    }, baselineChannel, channel);
+    const levelCurves = (analysisChannel.levelCurves || [])
+      .map((curve) => adjustCurveWithBaseline(curve, pickBaselineCurve(baselineChannel, curve.inputDb), channel))
+      .filter(Boolean);
+    const validationCurve = analysisChannel.validationCurve
+      ? adjustCurveWithBaseline(
+        analysisChannel.validationCurve,
+        pickBaselineCurve(baselineChannel, analysisChannel.validationCurve.inputDb),
+        channel,
+      )
+      : null;
+    return {
+      measuredDb: representative?.measuredDb || [],
+      correctionDb: representative?.correctionDb || [],
+      phaseRad: representative?.phaseRad || analysisChannel.phaseRad || [],
+      residualGroupDelayMs: representative?.residualGroupDelayMs || analysisChannel.residualGroupDelayMs || [],
+      clarity: representative?.clarity || analysisChannel.clarity || null,
+      levelCurves,
+      validationCurve,
     };
-    const measuredDb = frequenciesHz.map((freq, index) => (
-      analysisChannel.measuredDb[index] - getProfileCorrectionDb(baselineProfile, freq, channel)
-    ));
-    const correctionDb = frequenciesHz.map((freq, index) => (
-      analysisChannel.correctionDb[index] + getProfileCorrectionDb(baselineProfile, freq, channel)
-    ));
-    return { measuredDb, correctionDb };
-  }, []);
+  }, [adjustCurveWithBaseline, pickBaselineCurve]);
 
   const applyProgramManifestToResponse = useCallback((analysis, manifest) => {
     const baseline = manifest?.baselines?.response;
@@ -84,23 +245,64 @@ export default function useDeckCalibration({ T, showToast, downloadBlob, encodeW
       analysis.frequenciesHz,
       "R",
     );
+    const representativeLeft = pickRepresentativeCurve(adjustedLeft);
+    const representativeRight = pickRepresentativeCurve(adjustedRight);
     return {
       ...analysis,
+      frequenciesHz: representativeLeft?.frequenciesHz || analysis.frequenciesHz,
       channels: {
-        L: adjustedLeft,
-        R: adjustedRight,
+        L: {
+          ...adjustedLeft,
+          frequenciesHz: representativeLeft?.frequenciesHz || analysis.frequenciesHz,
+          measuredDb: representativeLeft?.measuredDb || adjustedLeft.measuredDb,
+          correctionDb: representativeLeft?.correctionDb || adjustedLeft.correctionDb,
+          residualGroupDelayMs: representativeLeft?.residualGroupDelayMs || adjustedLeft.residualGroupDelayMs || [],
+          clarity: representativeLeft?.clarity || adjustedLeft.clarity || null,
+        },
+        R: {
+          ...adjustedRight,
+          frequenciesHz: representativeRight?.frequenciesHz || analysis.frequenciesHz,
+          measuredDb: representativeRight?.measuredDb || adjustedRight.measuredDb,
+          correctionDb: representativeRight?.correctionDb || adjustedRight.correctionDb,
+          residualGroupDelayMs: representativeRight?.residualGroupDelayMs || adjustedRight.residualGroupDelayMs || [],
+          clarity: representativeRight?.clarity || adjustedRight.clarity || null,
+        },
       },
+      dynamicModel: analysis.dynamicModel,
       manifestName: manifest.name,
       profile: {
         ...analysis.profile,
         sourceManifest: { name: manifest.name, createdAt: manifest.createdAt },
+        dynamicModel: analysis.profile?.dynamicModel || analysis.dynamicModel,
         channels: {
-          L: { frequenciesHz: analysis.frequenciesHz, correctionDb: adjustedLeft.correctionDb },
-          R: { frequenciesHz: analysis.frequenciesHz, correctionDb: adjustedRight.correctionDb },
+          L: {
+            frequenciesHz: representativeLeft?.frequenciesHz || analysis.frequenciesHz,
+            correctionDb: representativeLeft?.correctionDb || adjustedLeft.correctionDb,
+            phaseRad: representativeLeft?.phaseRad || adjustedLeft.phaseRad || [],
+            levelCurves: adjustedLeft.levelCurves.map((curve) => ({
+              inputDb: curve.inputDb,
+              role: curve.role,
+              frequenciesHz: curve.frequenciesHz,
+              correctionDb: curve.correctionDb,
+              phaseRad: curve.phaseRad,
+            })),
+          },
+          R: {
+            frequenciesHz: representativeRight?.frequenciesHz || analysis.frequenciesHz,
+            correctionDb: representativeRight?.correctionDb || adjustedRight.correctionDb,
+            phaseRad: representativeRight?.phaseRad || adjustedRight.phaseRad || [],
+            levelCurves: adjustedRight.levelCurves.map((curve) => ({
+              inputDb: curve.inputDb,
+              role: curve.role,
+              frequenciesHz: curve.frequenciesHz,
+              correctionDb: curve.correctionDb,
+              phaseRad: curve.phaseRad,
+            })),
+          },
         },
       },
     };
-  }, [adjustResponseChannelWithBaseline]);
+  }, [adjustResponseChannelWithBaseline, pickRepresentativeCurve]);
 
   const applyProgramManifestToTransport = useCallback((analysis, manifest) => {
     const baseline = manifest?.baselines?.transport;
@@ -139,6 +341,165 @@ export default function useDeckCalibration({ T, showToast, downloadBlob, encodeW
       setProcMsg("");
     }
   }, [T, decodeExternalAudioFile, setProcessing, setProcMsg, showToast]);
+
+  const averageCurves = useCallback((curves) => {
+    if (!curves?.length) return null;
+    const first = curves[0];
+    if (!first?.correctionDb?.length) return null;
+    const count = curves.length;
+    const avgMeasured = new Float64Array(first.measuredDb?.length || 0);
+    const avgCorrection = new Float64Array(first.correctionDb.length);
+    const avgPhase = first.phaseRad?.length ? new Float64Array(first.phaseRad.length) : null;
+    const avgResidualGroupDelay = first.residualGroupDelayMs?.length ? new Float64Array(first.residualGroupDelayMs.length) : null;
+    let sumGroupDelayResidualRmsMs = 0;
+    let sumGroupDelayResidualMaxMs = 0;
+    let sumGroupDelayResidualMaxFreqHz = 0;
+    let sumTransientSpreadMs = 0;
+    let clarityCount = 0;
+    for (const curve of curves) {
+      for (let i = 0; i < avgMeasured.length; i++) avgMeasured[i] += curve.measuredDb?.[i] || 0;
+      for (let i = 0; i < avgCorrection.length; i++) avgCorrection[i] += curve.correctionDb?.[i] || 0;
+      if (avgPhase) {
+        for (let i = 0; i < avgPhase.length; i++) avgPhase[i] += curve.phaseRad?.[i] || 0;
+      }
+      if (avgResidualGroupDelay) {
+        for (let i = 0; i < avgResidualGroupDelay.length; i++) avgResidualGroupDelay[i] += curve.residualGroupDelayMs?.[i] || 0;
+      }
+      if (curve.clarity) {
+        sumGroupDelayResidualRmsMs += Number(curve.clarity.groupDelayResidualRmsMs || 0);
+        sumGroupDelayResidualMaxMs += Number(curve.clarity.groupDelayResidualMaxMs || 0);
+        sumGroupDelayResidualMaxFreqHz += Number(curve.clarity.groupDelayResidualMaxFreqHz || 0);
+        sumTransientSpreadMs += Number(curve.clarity.transientSpreadMs || 0);
+        clarityCount += 1;
+      }
+    }
+    for (let i = 0; i < avgMeasured.length; i++) avgMeasured[i] /= count;
+    for (let i = 0; i < avgCorrection.length; i++) avgCorrection[i] /= count;
+    if (avgPhase) {
+      for (let i = 0; i < avgPhase.length; i++) avgPhase[i] /= count;
+    }
+    if (avgResidualGroupDelay) {
+      for (let i = 0; i < avgResidualGroupDelay.length; i++) avgResidualGroupDelay[i] /= count;
+    }
+    return {
+      ...first,
+      measuredDb: Array.from(avgMeasured),
+      correctionDb: Array.from(avgCorrection),
+      phaseRad: avgPhase ? Array.from(avgPhase) : [],
+      residualGroupDelayMs: avgResidualGroupDelay ? Array.from(avgResidualGroupDelay) : [],
+      clarity: clarityCount ? {
+        groupDelayResidualRmsMs: sumGroupDelayResidualRmsMs / clarityCount,
+        groupDelayResidualMaxMs: sumGroupDelayResidualMaxMs / clarityCount,
+        groupDelayResidualMaxFreqHz: Math.round(sumGroupDelayResidualMaxFreqHz / clarityCount),
+        transientSpreadMs: sumTransientSpreadMs / clarityCount,
+      } : null,
+    };
+  }, []);
+
+  const averageToneSeries = useCallback((series) => {
+    if (!series?.length) return [];
+    const first = series[0];
+    const out = [];
+    for (let i = 0; i < first.length; i++) {
+      let sumMeasured = 0;
+      let sumThdPercent = 0;
+      let sumThdDb = 0;
+      for (const set of series) {
+        sumMeasured += set[i]?.measuredDb || 0;
+        sumThdPercent += set[i]?.thdPercent || 0;
+        sumThdDb += set[i]?.thdDb || 0;
+      }
+      out.push({
+        ...first[i],
+        measuredDb: sumMeasured / series.length,
+        thdPercent: sumThdPercent / series.length,
+        thdDb: sumThdDb / series.length,
+      });
+    }
+    return out;
+  }, []);
+
+  const averageNullableSeries = useCallback((series) => {
+    if (!series?.length) return [];
+    const maxLength = series.reduce((max, values) => Math.max(max, values?.length || 0), 0);
+    const out = [];
+    for (let index = 0; index < maxLength; index++) {
+      let sum = 0;
+      let count = 0;
+      for (const values of series) {
+        const value = values?.[index];
+        if (value == null || !Number.isFinite(value)) continue;
+        sum += value;
+        count += 1;
+      }
+      out.push(count ? (sum / count) : null);
+    }
+    return out;
+  }, []);
+
+  const averageNumericSeries = useCallback((series) => {
+    if (!series?.length) return [];
+    const maxLength = series.reduce((max, values) => Math.max(max, values?.length || 0), 0);
+    const out = [];
+    for (let index = 0; index < maxLength; index++) {
+      let sum = 0;
+      let count = 0;
+      for (const values of series) {
+        const value = values?.[index];
+        if (!Number.isFinite(value)) continue;
+        sum += value;
+        count += 1;
+      }
+      out.push(count ? (sum / count) : 0);
+    }
+    return out;
+  }, []);
+
+  const averageStandardTapeResults = useCallback((results, preset) => {
+    if (!results?.length) return null;
+    const first = results[0];
+    const measuredDbL = averageNullableSeries(results.map((result) => result.measuredDbL || []));
+    const measuredDbR = averageNullableSeries(results.map((result) => result.measuredDbR || []));
+    const correctionDbL = averageNumericSeries(results.map((result) => result.channels?.L?.correctionDb || []));
+    const correctionDbR = averageNumericSeries(results.map((result) => result.channels?.R?.correctionDb || []));
+    const missingFreqs = (first.frequencies || []).filter((_, index) => (
+      results.every((result) => result.measuredDbL?.[index] == null || result.measuredDbR?.[index] == null)
+    ));
+    return {
+      ...first,
+      preset: preset?.name || first.preset,
+      measuredDbL,
+      measuredDbR,
+      missingFreqs,
+      channels: {
+        L: {
+          ...(first.channels?.L || {}),
+          measuredDb: measuredDbL.map((value) => value ?? 0),
+          correctionDb: correctionDbL,
+        },
+        R: {
+          ...(first.channels?.R || {}),
+          measuredDb: measuredDbR.map((value) => value ?? 0),
+          correctionDb: correctionDbR,
+        },
+      },
+      profile: {
+        ...(first.profile || {}),
+        name: `${first.profile?.name || `Playback Cal (${preset?.name || first.preset || "Standard Tape"})`} (${results.length}-pass avg)`,
+        channels: {
+          L: {
+            ...(first.profile?.channels?.L || {}),
+            correctionDb: correctionDbL,
+          },
+          R: {
+            ...(first.profile?.channels?.R || {}),
+            correctionDb: correctionDbR,
+          },
+        },
+      },
+      passCount: results.length,
+    };
+  }, [averageNullableSeries, averageNumericSeries]);
 
   // ── Multi-pass capture accumulation ───────────────────────
   const [multiCaptures, setMultiCaptures] = useState([]);
@@ -197,6 +558,37 @@ export default function useDeckCalibration({ T, showToast, downloadBlob, encodeW
     if (!multiCaptures.length) return;
     setProcessing(true);
     try {
+      if (scenario === "playback") {
+        const preset = STANDARD_TAPE_PRESETS[standardTapePreset];
+        if (!preset) throw new Error("No standard tape preset selected");
+        const results = [];
+        const failedPasses = [];
+        for (let i = 0; i < multiCaptures.length; i++) {
+          setProcMsg(`分析 [${i + 1}/${multiCaptures.length}] ${multiCaptures[i].name}`);
+          try {
+            const workerResult = await runDeckCalibrationWorker(
+              "analyseStandardTape",
+              multiCaptures[i].audioBuffer,
+              { preset },
+            );
+            if (!workerResult?.ok) throw new Error(workerResult?.error || "Worker error");
+            results.push(workerResult.result);
+          } catch (err) {
+            failedPasses.push({ name: multiCaptures[i].name, error: err.message });
+          }
+        }
+        if (!results.length) throw new Error("所有回放录音分析均失败");
+        const averaged = averageStandardTapeResults(results, preset);
+        setResponseAnalysis(averaged);
+        setTransportAnalysis(null);
+        if (failedPasses.length) {
+          showToast(`分析完成：${results.length}/${multiCaptures.length} 个成功，${failedPasses.length} 个跳过`, 6000);
+        } else {
+          showToast(`${results.length} 次回放均值分析完成`);
+        }
+        return;
+      }
+
       const results = [];
       const failedPasses = [];
       for (let i = 0; i < multiCaptures.length; i++) {
@@ -214,42 +606,104 @@ export default function useDeckCalibration({ T, showToast, downloadBlob, encodeW
       }
       if (!results.length) throw new Error("所有回放录音分析均失败");
 
-      // Average frequency-domain results across passes
       const firstResp = results[0].response;
-      const freqs = firstResp.frequenciesHz;
-      const avgL_measured = new Float64Array(freqs.length);
-      const avgR_measured = new Float64Array(freqs.length);
-      const avgL_correction = new Float64Array(freqs.length);
-      const avgR_correction = new Float64Array(freqs.length);
-      for (const r of results) {
-        for (let j = 0; j < freqs.length; j++) {
-          avgL_measured[j] += (r.response.channels?.L?.measuredDb?.[j] || 0);
-          avgR_measured[j] += (r.response.channels?.R?.measuredDb?.[j] || 0);
-          avgL_correction[j] += (r.response.channels?.L?.correctionDb?.[j] || 0);
-          avgR_correction[j] += (r.response.channels?.R?.correctionDb?.[j] || 0);
-        }
-      }
       const n = results.length;
-      for (let j = 0; j < freqs.length; j++) {
-        avgL_measured[j] /= n;
-        avgR_measured[j] /= n;
-        avgL_correction[j] /= n;
-        avgR_correction[j] /= n;
-      }
+      const avgTopL = averageCurves(results.map((result) => ({
+        frequenciesHz: result.response.frequenciesHz,
+        measuredDb: result.response.channels?.L?.measuredDb || [],
+        correctionDb: result.response.channels?.L?.correctionDb || [],
+        residualGroupDelayMs: result.response.channels?.L?.residualGroupDelayMs || [],
+        phaseRad: result.response.channels?.L?.phaseRad || [],
+        clarity: result.response.channels?.L?.clarity || null,
+      })));
+      const avgTopR = averageCurves(results.map((result) => ({
+        frequenciesHz: result.response.frequenciesHz,
+        measuredDb: result.response.channels?.R?.measuredDb || [],
+        correctionDb: result.response.channels?.R?.correctionDb || [],
+        residualGroupDelayMs: result.response.channels?.R?.residualGroupDelayMs || [],
+        phaseRad: result.response.channels?.R?.phaseRad || [],
+        clarity: result.response.channels?.R?.clarity || null,
+      })));
+      const avgLevelCurvesL = (firstResp.channels?.L?.levelCurves || []).map((curve, index) => averageCurves(
+        results.map((result) => result.response.channels?.L?.levelCurves?.[index]).filter(Boolean),
+      )).filter(Boolean);
+      const avgLevelCurvesR = (firstResp.channels?.R?.levelCurves || []).map((curve, index) => averageCurves(
+        results.map((result) => result.response.channels?.R?.levelCurves?.[index]).filter(Boolean),
+      )).filter(Boolean);
+      const avgValidationL = firstResp.channels?.L?.validationCurve
+        ? averageCurves(results.map((result) => result.response.channels?.L?.validationCurve).filter(Boolean))
+        : null;
+      const avgValidationR = firstResp.channels?.R?.validationCurve
+        ? averageCurves(results.map((result) => result.response.channels?.R?.validationCurve).filter(Boolean))
+        : null;
+      const avgToneMapL = averageToneSeries(results.map((result) => result.response.dynamicModel?.toneMap?.L || []));
+      const avgToneMapR = averageToneSeries(results.map((result) => result.response.dynamicModel?.toneMap?.R || []));
 
-      // Build averaged response analysis
       const avgResponse = {
         ...firstResp,
+        frequenciesHz: avgTopL?.frequenciesHz || firstResp.frequenciesHz,
         channels: {
-          L: { measuredDb: Array.from(avgL_measured), correctionDb: Array.from(avgL_correction) },
-          R: { measuredDb: Array.from(avgR_measured), correctionDb: Array.from(avgR_correction) },
+          L: {
+            measuredDb: avgTopL?.measuredDb || [],
+            correctionDb: avgTopL?.correctionDb || [],
+            phaseRad: avgTopL?.phaseRad || [],
+            residualGroupDelayMs: avgTopL?.residualGroupDelayMs || [],
+            clarity: avgTopL?.clarity || null,
+            levelCurves: avgLevelCurvesL,
+            validationCurve: avgValidationL,
+          },
+          R: {
+            measuredDb: avgTopR?.measuredDb || [],
+            correctionDb: avgTopR?.correctionDb || [],
+            phaseRad: avgTopR?.phaseRad || [],
+            residualGroupDelayMs: avgTopR?.residualGroupDelayMs || [],
+            clarity: avgTopR?.clarity || null,
+            levelCurves: avgLevelCurvesR,
+            validationCurve: avgValidationR,
+          },
+        },
+        dynamicModel: {
+          ...(firstResp.dynamicModel || {}),
+          toneMap: {
+            L: avgToneMapL,
+            R: avgToneMapR,
+          },
         },
         profile: {
           ...firstResp.profile,
           name: `${firstResp.profile?.name || "Calibration"} (${n}-pass avg)`,
+          dynamicModel: {
+            ...(firstResp.profile?.dynamicModel || firstResp.dynamicModel || {}),
+            toneMap: {
+              L: avgToneMapL,
+              R: avgToneMapR,
+            },
+          },
           channels: {
-            L: { frequenciesHz: [...freqs], correctionDb: Array.from(avgL_correction) },
-            R: { frequenciesHz: [...freqs], correctionDb: Array.from(avgR_correction) },
+            L: {
+              frequenciesHz: avgTopL?.frequenciesHz || [],
+              correctionDb: avgTopL?.correctionDb || [],
+              phaseRad: avgTopL?.phaseRad || [],
+              levelCurves: avgLevelCurvesL.map((curve) => ({
+                inputDb: curve.inputDb,
+                role: curve.role,
+                frequenciesHz: curve.frequenciesHz,
+                correctionDb: curve.correctionDb,
+                phaseRad: curve.phaseRad,
+              })),
+            },
+            R: {
+              frequenciesHz: avgTopR?.frequenciesHz || [],
+              correctionDb: avgTopR?.correctionDb || [],
+              phaseRad: avgTopR?.phaseRad || [],
+              levelCurves: avgLevelCurvesR.map((curve) => ({
+                inputDb: curve.inputDb,
+                role: curve.role,
+                frequenciesHz: curve.frequenciesHz,
+                correctionDb: curve.correctionDb,
+                phaseRad: curve.phaseRad,
+              })),
+            },
           },
         },
         passCount: n,
@@ -273,7 +727,8 @@ export default function useDeckCalibration({ T, showToast, downloadBlob, encodeW
       }
 
       const shouldApplyManifest = scenario === "test-tape" && deckCalProgramManifest;
-      const nextResponse = shouldApplyManifest ? applyProgramManifestToResponse(avgResponse, deckCalProgramManifest) : avgResponse;
+      const normalizedResponse = normalizeResponseAnalysisAnchoring(avgResponse);
+      const nextResponse = shouldApplyManifest ? applyProgramManifestToResponse(normalizedResponse, deckCalProgramManifest) : normalizedResponse;
       const nextTransport = shouldApplyManifest ? applyProgramManifestToTransport(avgTransport, deckCalProgramManifest) : avgTransport;
       setResponseAnalysis(nextResponse);
       setTransportAnalysis(nextTransport);
@@ -289,7 +744,20 @@ export default function useDeckCalibration({ T, showToast, downloadBlob, encodeW
       setProcessing(false);
       setProcMsg("");
     }
-  }, [applyProgramManifestToResponse, applyProgramManifestToTransport, deckCalProgramManifest, multiCaptures, runDeckCalibrationWorker, setProcessing, setProcMsg, showToast]);
+  }, [
+    applyProgramManifestToResponse,
+    applyProgramManifestToTransport,
+    averageCurves,
+    averageStandardTapeResults,
+    averageToneSeries,
+    deckCalProgramManifest,
+    multiCaptures,
+    runDeckCalibrationWorker,
+    setProcessing,
+    setProcMsg,
+    showToast,
+    standardTapePreset,
+  ]);
 
   const startDeckCalRecording = useCallback(async (kind) => {
     void kind;
@@ -314,7 +782,8 @@ export default function useDeckCalibration({ T, showToast, downloadBlob, encodeW
       if (!workerResult?.ok) throw new Error(workerResult?.error || "Worker error");
       const rawResult = workerResult.result;
       const shouldApplyManifest = scenario === "test-tape" && deckCalProgramManifest;
-      const nextResponse = shouldApplyManifest ? applyProgramManifestToResponse(rawResult.response, deckCalProgramManifest) : rawResult.response;
+      const normalizedResponse = normalizeResponseAnalysisAnchoring(rawResult.response);
+      const nextResponse = shouldApplyManifest ? applyProgramManifestToResponse(normalizedResponse, deckCalProgramManifest) : normalizedResponse;
       const nextTransport = shouldApplyManifest ? applyProgramManifestToTransport(rawResult.transport, deckCalProgramManifest) : rawResult.transport;
       setResponseAnalysis(nextResponse);
       setTransportAnalysis(nextTransport);
@@ -389,10 +858,22 @@ export default function useDeckCalibration({ T, showToast, downloadBlob, encodeW
             L: {
               frequenciesHz: responseAnalysis.frequenciesHz,
               referenceDb: responseAnalysis.channels.L.measuredDb,
+              levelCurves: (responseAnalysis.channels.L.levelCurves || []).map((curve) => ({
+                inputDb: curve.inputDb,
+                role: curve.role,
+                frequenciesHz: curve.frequenciesHz,
+                referenceDb: curve.measuredDb,
+              })),
             },
             R: {
               frequenciesHz: responseAnalysis.frequenciesHz,
               referenceDb: responseAnalysis.channels.R.measuredDb,
+              levelCurves: (responseAnalysis.channels.R.levelCurves || []).map((curve) => ({
+                inputDb: curve.inputDb,
+                role: curve.role,
+                frequenciesHz: curve.frequenciesHz,
+                referenceDb: curve.measuredDb,
+              })),
             },
           },
         },

@@ -18,11 +18,59 @@ function interpolateLogDb(frequenciesHz, valuesDb, targetHz) {
   return a + (b - a) * t;
 }
 
+function normalizeLevelCurves(levelCurves) {
+  if (!Array.isArray(levelCurves)) return [];
+  return levelCurves
+    .map((curve) => {
+      const frequenciesHz = curve?.frequenciesHz || curve?.freqHz || [];
+      const correctionDb = curve?.correctionDb || curve?.recordImprintDb || curve?.referenceDb || [];
+      if (!frequenciesHz.length || !correctionDb.length) return null;
+      return {
+        inputDb: Number(curve.inputDb || 0),
+        role: curve.role || "fit",
+        frequenciesHz,
+        correctionDb,
+        phaseRad: Array.isArray(curve?.phaseRad) ? curve.phaseRad : [],
+      };
+    })
+    .filter(Boolean)
+    .sort((a, b) => a.inputDb - b.inputDb);
+}
+
+function pickRepresentativeCurve(channel, levelCurves) {
+  if (channel?.frequenciesHz?.length && channel?.correctionDb?.length) {
+    return {
+      frequenciesHz: channel.frequenciesHz,
+      correctionDb: channel.correctionDb,
+      phaseRad: Array.isArray(channel.phaseRad) ? channel.phaseRad : [],
+    };
+  }
+  if (!levelCurves.length) return { frequenciesHz: [], correctionDb: [], phaseRad: [] };
+  const preferred = levelCurves.find((curve) => curve.role === "validate");
+  if (preferred) {
+    return {
+      frequenciesHz: preferred.frequenciesHz,
+      correctionDb: preferred.correctionDb,
+      phaseRad: preferred.phaseRad || [],
+    };
+  }
+  const mid = levelCurves[Math.floor(levelCurves.length / 2)];
+  return {
+    frequenciesHz: mid.frequenciesHz,
+    correctionDb: mid.correctionDb,
+    phaseRad: mid.phaseRad || [],
+  };
+}
+
 function normalizeChannel(channel) {
-  if (!channel) return { frequenciesHz: [], correctionDb: [] };
-  const frequenciesHz = channel.frequenciesHz || channel.freqHz || [];
-  const correctionDb = channel.correctionDb || channel.recordImprintDb || channel.referenceDb || [];
-  return { frequenciesHz, correctionDb };
+  const levelCurves = normalizeLevelCurves(channel?.levelCurves);
+  const representative = pickRepresentativeCurve(channel, levelCurves);
+  return {
+    frequenciesHz: representative.frequenciesHz,
+    correctionDb: representative.correctionDb,
+    phaseRad: representative.phaseRad,
+    levelCurves,
+  };
 }
 
 function normalizeCurveProfile(raw, fallbackType, fallbackName) {
@@ -51,10 +99,66 @@ export function getProfileCorrectionDb(profile, freqHz, channel = "L") {
   return interpolateLogDb(selected.frequenciesHz, selected.correctionDb, freqHz);
 }
 
+export function getProfilePhaseRad(profile, freqHz, channel = "L") {
+  const selected = profile?.channels?.[channel] || profile?.channels?.L;
+  if (!selected?.phaseRad?.length) return 0;
+  return interpolateLogDb(selected.frequenciesHz, selected.phaseRad, freqHz);
+}
+
+export function getProfileLevelCurves(profile, channel = "L") {
+  const selected = profile?.channels?.[channel] || profile?.channels?.L;
+  return selected?.levelCurves || [];
+}
+
+export function hasDynamicCalibrationProfile(profile) {
+  return getProfileLevelCurves(profile, "L").length > 1;
+}
+
+function stripChannelCompensation(channel, { applyEq = true, applyClarity = true } = {}) {
+  const frequenciesHz = [...(channel?.frequenciesHz || [])];
+  const zeroCorrection = frequenciesHz.map(() => 0);
+  const zeroPhase = frequenciesHz.map(() => 0);
+  return {
+    ...channel,
+    frequenciesHz,
+    correctionDb: applyEq ? [...(channel?.correctionDb || [])] : zeroCorrection,
+    phaseRad: applyClarity ? [...(channel?.phaseRad || [])] : zeroPhase,
+    levelCurves: (channel?.levelCurves || []).map((curve) => {
+      const curveFreqHz = [...(curve?.frequenciesHz || [])];
+      return {
+        ...curve,
+        frequenciesHz: curveFreqHz,
+        correctionDb: applyEq ? [...(curve?.correctionDb || [])] : curveFreqHz.map(() => 0),
+        phaseRad: applyClarity ? [...(curve?.phaseRad || [])] : curveFreqHz.map(() => 0),
+      };
+    }),
+  };
+}
+
+export function deriveCompensationProfile(profile, { applyEq = true, applyClarity = true } = {}) {
+  if (!profile || (!applyEq && !applyClarity)) return null;
+  if (applyEq && applyClarity) return profile;
+  return {
+    ...profile,
+    channels: {
+      L: stripChannelCompensation(profile.channels?.L, { applyEq, applyClarity }),
+      R: stripChannelCompensation(profile.channels?.R || profile.channels?.L, { applyEq, applyClarity }),
+    },
+  };
+}
+
 function invertChannel(channel) {
   return {
     frequenciesHz: [...(channel?.frequenciesHz || [])],
     correctionDb: (channel?.correctionDb || []).map((value) => -value),
+    phaseRad: (channel?.phaseRad || []).map((value) => -value),
+    levelCurves: (channel?.levelCurves || []).map((curve) => ({
+      inputDb: curve.inputDb,
+      role: curve.role || "fit",
+      frequenciesHz: [...(curve?.frequenciesHz || [])],
+      correctionDb: (curve?.correctionDb || []).map((value) => -value),
+      phaseRad: (curve?.phaseRad || []).map((value) => -value),
+    })),
   };
 }
 
@@ -81,48 +185,87 @@ export function profileSignature(profile) {
   });
 }
 
-function buildHermitianSpectrum(profile, sampleRate, channel, fftSize) {
-  const spectrum = new Float64Array(fftSize);
+function fftComplexInPlace(real, imag, inverse = false) {
+  const n = real.length;
+  let j = 0;
+  for (let i = 0; i < n; i++) {
+    if (i < j) {
+      [real[i], real[j]] = [real[j], real[i]];
+      [imag[i], imag[j]] = [imag[j], imag[i]];
+    }
+    let bit = n >> 1;
+    while (j & bit) {
+      j ^= bit;
+      bit >>= 1;
+    }
+    j ^= bit;
+  }
+  for (let len = 2; len <= n; len <<= 1) {
+    const angle = (inverse ? 2 : -2) * Math.PI / len;
+    const wLenCos = Math.cos(angle);
+    const wLenSin = Math.sin(angle);
+    for (let start = 0; start < n; start += len) {
+      let wCos = 1;
+      let wSin = 0;
+      for (let i = 0; i < len / 2; i++) {
+        const u = start + i;
+        const v = u + (len >> 1);
+        const vReal = (real[v] * wCos) - (imag[v] * wSin);
+        const vImag = (real[v] * wSin) + (imag[v] * wCos);
+        real[v] = real[u] - vReal;
+        imag[v] = imag[u] - vImag;
+        real[u] += vReal;
+        imag[u] += vImag;
+        const nextCos = (wCos * wLenCos) - (wSin * wLenSin);
+        const nextSin = (wCos * wLenSin) + (wSin * wLenCos);
+        wCos = nextCos;
+        wSin = nextSin;
+      }
+    }
+  }
+  if (inverse) {
+    for (let i = 0; i < n; i++) {
+      real[i] /= n;
+      imag[i] /= n;
+    }
+  }
+}
+
+function buildHermitianSpectrum(profile, sampleRate, channel, fftSize, delaySamples) {
+  const real = new Float64Array(fftSize);
+  const imag = new Float64Array(fftSize);
   const nyquist = fftSize / 2;
+  const limitDb = Math.max(0, Number(profile?.applicationLimitDb || profile?.maxCorrectionDb || 12));
   for (let k = 0; k <= nyquist; k++) {
     const freq = k === 0 ? 1 : (k * sampleRate) / fftSize;
-    const gainDb = getProfileCorrectionDb(profile, freq, channel);
+    const gainDb = Math.max(-limitDb, Math.min(limitDb, getProfileCorrectionDb(profile, freq, channel)));
     const amp = Math.pow(10, gainDb / 20);
-    spectrum[k] = amp;
-    if (k > 0 && k < nyquist) spectrum[fftSize - k] = amp;
+    const phase = -getProfilePhaseRad(profile, freq, channel);
+    const shiftPhase = (-2 * Math.PI * k * delaySamples) / fftSize;
+    const totalPhase = phase + shiftPhase;
+    real[k] = amp * Math.cos(totalPhase);
+    imag[k] = amp * Math.sin(totalPhase);
+    if (k > 0 && k < nyquist) {
+      real[fftSize - k] = real[k];
+      imag[fftSize - k] = -imag[k];
+    }
   }
-  return spectrum;
-}
-
-function inverseRealDft(spectrum) {
-  const size = spectrum.length;
-  const out = new Float32Array(size);
-  for (let n = 0; n < size; n++) {
-    let sum = 0;
-    for (let k = 0; k < size; k++) sum += spectrum[k] * Math.cos((2 * Math.PI * k * n) / size);
-    out[n] = sum / size;
-  }
-  return out;
-}
-
-function shiftToCausal(data) {
-  const size = data.length;
-  const half = size >> 1;
-  const out = new Float32Array(size);
-  for (let i = 0; i < size; i++) out[i] = data[(i - half + size) % size];
-  return out;
+  return { real, imag };
 }
 
 export function buildLinearPhaseImpulse(profile, sampleRate, fftSize = 4096) {
-  const leftSpectrum = buildHermitianSpectrum(profile, sampleRate, "L", fftSize);
-  const rightSpectrum = buildHermitianSpectrum(profile, sampleRate, "R", fftSize);
-  const left = shiftToCausal(inverseRealDft(leftSpectrum));
-  const right = shiftToCausal(inverseRealDft(rightSpectrum));
+  const delaySamples = fftSize >> 1;
+  const leftSpectrum = buildHermitianSpectrum(profile, sampleRate, "L", fftSize, delaySamples);
+  const rightSpectrum = buildHermitianSpectrum(profile, sampleRate, "R", fftSize, delaySamples);
+  fftComplexInPlace(leftSpectrum.real, leftSpectrum.imag, true);
+  fftComplexInPlace(rightSpectrum.real, rightSpectrum.imag, true);
+  const left = Float32Array.from(leftSpectrum.real);
+  const right = Float32Array.from(rightSpectrum.real);
   return {
     left,
     right,
     length: fftSize,
-    delaySamples: fftSize >> 1,
+    delaySamples,
   };
 }
 

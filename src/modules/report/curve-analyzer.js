@@ -40,6 +40,13 @@ function maxAbsDb(db, indices) {
   return max;
 }
 
+function averageBandDb(freqs, db, lo, hi) {
+  if (!freqs?.length || !db?.length) return null;
+  const indices = indicesInRange(freqs, lo, hi);
+  if (!indices.length) return null;
+  return avgDb(db, indices);
+}
+
 /**
  * Analyze a single channel's frequency response.
  */
@@ -107,9 +114,9 @@ export function analyseChannel(freqs, db) {
 /**
  * Analyze L/R channel difference.
  */
-export function analyseStereoBalance(freqs, dbL, dbR) {
+export function analyseStereoBalance(freqs, dbL, dbR, minHz = 60, maxHz = 16000) {
   if (!freqs?.length || !dbL?.length || !dbR?.length) return null;
-  const fullIndices = indicesInRange(freqs, 60, 16000);
+  const fullIndices = indicesInRange(freqs, minHz, maxHz);
   let maxDiff = 0;
   let maxDiffFreq = 0;
   let sumDiffSq = 0;
@@ -124,6 +131,72 @@ export function analyseStereoBalance(freqs, dbL, dbR) {
     maxDiff: Number(maxDiff.toFixed(1)),
     maxDiffFreq,
     label: rmsDiff < 0.5 ? "excellent" : rmsDiff < 1.0 ? "good" : rmsDiff < 2.0 ? "moderate" : "poor",
+  };
+}
+
+function analyseClarityChannel(channel, toneMap = []) {
+  if (!channel) return null;
+  const levelCurves = [...(channel.levelCurves || [])].filter((curve) => curve?.measuredDb?.length && curve?.frequenciesHz?.length);
+  levelCurves.sort((a, b) => (a.inputDb || 0) - (b.inputDb || 0));
+  const lowCurve = levelCurves[0] || null;
+  const hotCurve = levelCurves[levelCurves.length - 1] || null;
+  const hfLowDb = lowCurve ? averageBandDb(lowCurve.frequenciesHz, lowCurve.measuredDb, 8000, 12000) : null;
+  const hfHotDb = hotCurve ? averageBandDb(hotCurve.frequenciesHz, hotCurve.measuredDb, 8000, 12000) : null;
+
+  const tones = [...(toneMap || [])].filter((point) => Number.isFinite(point?.inputDb));
+  tones.sort((a, b) => (a.inputDb || 0) - (b.inputDb || 0));
+  const lowTone = tones[0] || null;
+  const hotTone = tones[tones.length - 1] || null;
+  const validationTone = tones.find((point) => point.role === "validate") || null;
+
+  return {
+    groupDelayResidualRmsMs: Number(channel.clarity?.groupDelayResidualRmsMs || 0),
+    transientSpreadMs: Number(channel.clarity?.transientSpreadMs || 0),
+    gainCompressionDb: lowTone && hotTone ? Number((hotTone.measuredDb - lowTone.measuredDb).toFixed(2)) : null,
+    hfCollapseDb: hfLowDb != null && hfHotDb != null ? Number((hfHotDb - hfLowDb).toFixed(2)) : null,
+    validationThdPercent: validationTone ? Number(validationTone.thdPercent || 0) : null,
+    hotThdPercent: hotTone ? Number(hotTone.thdPercent || 0) : null,
+  };
+}
+
+function averageMetric(values) {
+  const finite = values.filter((value) => Number.isFinite(value));
+  if (!finite.length) return null;
+  return finite.reduce((sum, value) => sum + value, 0) / finite.length;
+}
+
+export function analyseClarity(responseAnalysis) {
+  if (!responseAnalysis?.frequenciesHz?.length) return null;
+  const channels = {
+    L: analyseClarityChannel(responseAnalysis.channels?.L, responseAnalysis.dynamicModel?.toneMap?.L),
+    R: analyseClarityChannel(responseAnalysis.channels?.R, responseAnalysis.dynamicModel?.toneMap?.R),
+  };
+  const summary = {
+    groupDelayResidualRmsMs: averageMetric([channels.L?.groupDelayResidualRmsMs, channels.R?.groupDelayResidualRmsMs]),
+    transientSpreadMs: averageMetric([channels.L?.transientSpreadMs, channels.R?.transientSpreadMs]),
+    gainCompressionDb: averageMetric([channels.L?.gainCompressionDb, channels.R?.gainCompressionDb]),
+    hfCollapseDb: averageMetric([channels.L?.hfCollapseDb, channels.R?.hfCollapseDb]),
+    validationThdPercent: averageMetric([channels.L?.validationThdPercent, channels.R?.validationThdPercent]),
+    hotThdPercent: averageMetric([channels.L?.hotThdPercent, channels.R?.hotThdPercent]),
+  };
+
+  let blurScore = 0;
+  if ((summary.transientSpreadMs || 0) > 2.5) blurScore += 2;
+  else if ((summary.transientSpreadMs || 0) > 1.2) blurScore += 1;
+  if ((summary.hotThdPercent || 0) > 1.0) blurScore += 2;
+  else if ((summary.hotThdPercent || 0) > 0.5) blurScore += 1;
+  if ((summary.gainCompressionDb || 0) < -1.5) blurScore += 2;
+  else if ((summary.gainCompressionDb || 0) < -0.8) blurScore += 1;
+  if ((summary.hfCollapseDb || 0) < -2.0) blurScore += 2;
+  else if ((summary.hfCollapseDb || 0) < -0.8) blurScore += 1;
+  if ((summary.groupDelayResidualRmsMs || 0) > 8) blurScore += 1;
+
+  const label = blurScore >= 4 ? "soft" : blurScore <= 1 ? "clear" : "neutral";
+  return {
+    channels,
+    summary,
+    blurScore,
+    label,
   };
 }
 
@@ -191,6 +264,8 @@ const TAG_DEFS = [
   // Transport good
   { id: "transport_ok", label: { "zh-CN": "走带稳", ja: "走行◎", en: "STABLE" },       color: "#28a745", priority: 35 },
   { id: "ch_good",      label: { "zh-CN": "声道均衡", ja: "ch良好", en: "CH OK" },      color: "#28a745", priority: 30 },
+  { id: "clear",        label: { "zh-CN": "清晰", ja: "明瞭", en: "CLEAR" },            color: "#28a745", priority: 58 },
+  { id: "soft",         label: { "zh-CN": "偏糊", ja: "やや鈍い", en: "SOFT" },         color: "#e8a040", priority: 58 },
   // Flatness
   { id: "flat",         label: { "zh-CN": "平坦", ja: "フラット", en: "FLAT" },         color: "#28a745", priority: 38 },
   { id: "colored",      label: { "zh-CN": "染色", ja: "色付き", en: "COLORED" },        color: "#e8a040", priority: 38 },
@@ -201,7 +276,7 @@ const TAG_DEFS = [
 
 const TAG_MAP = new Map(TAG_DEFS.map((t) => [t.id, t]));
 
-export function generateTags(analysis, { transport, balance, eqResult, error } = {}) {
+export function generateTags(analysis, { transport, balance, eqResult, clarity, error } = {}) {
   const tags = [];
   const add = (id) => { const def = TAG_MAP.get(id); if (def) tags.push(def); };
 
@@ -239,6 +314,11 @@ export function generateTags(analysis, { transport, balance, eqResult, error } =
   if (balance) {
     if (balance.rmsDiff > 1.5) add("ch_imbalance");
     else if (balance.label === "excellent" || balance.label === "good") add("ch_good");
+  }
+
+  if (clarity) {
+    if (clarity.label === "clear") add("clear");
+    else if (clarity.label === "soft") add("soft");
   }
 
   if (eqResult) {

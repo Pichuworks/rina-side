@@ -14,6 +14,7 @@ import {
   analyseStereoBalance,
   analyseTransport,
   analyseEqResult,
+  analyseClarity,
   generateTags,
 } from "./curve-analyzer.js";
 
@@ -63,6 +64,17 @@ function sign(v) {
   return v > 0 ? `+${v}` : `${v}`;
 }
 
+function pickValidationTone(toneMap) {
+  return (toneMap || []).find((point) => point.role === "validate") || null;
+}
+
+function pickHotTone(toneMap) {
+  const points = [...(toneMap || [])];
+  if (!points.length) return null;
+  points.sort((a, b) => (b.inputDb || 0) - (a.inputDb || 0));
+  return points[0];
+}
+
 // ── Report: Deck Calibration ─────────────────────────────────
 
 export function generateDeckCalibrationReport(responseAnalysis, transportAnalysis, lang = "zh-CN") {
@@ -71,11 +83,21 @@ export function generateDeckCalibrationReport(responseAnalysis, transportAnalysi
   const freqs = responseAnalysis.frequenciesHz;
   const chL = responseAnalysis.channels?.L;
   const chR = responseAnalysis.channels?.R;
-  const aL = chL ? analyseChannel(freqs, chL.correctionDb) : null;
-  const aR = chR ? analyseChannel(freqs, chR.correctionDb) : null;
-  const bal = chL && chR ? analyseStereoBalance(freqs, chL.correctionDb, chR.correctionDb) : null;
+  const measuredL = chL?.measuredDb?.length ? chL.measuredDb : chL?.correctionDb?.map((value) => -value);
+  const measuredR = chR?.measuredDb?.length ? chR.measuredDb : chR?.correctionDb?.map((value) => -value);
+  const aL = measuredL ? analyseChannel(freqs, measuredL) : null;
+  const aR = measuredR ? analyseChannel(freqs, measuredR) : null;
+  const bal = measuredL && measuredR ? analyseStereoBalance(freqs, measuredL, measuredR, 100, 8000) : null;
+  const balHf = measuredL && measuredR ? analyseStereoBalance(freqs, measuredL, measuredR, 8000, 16000) : null;
+  const clarity = analyseClarity(responseAnalysis);
   const tr = analyseTransport(transportAnalysis);
   const transportIsRelative = transportAnalysis?.transportReferenceMode === "writer-relative";
+  const toneMapL = responseAnalysis.dynamicModel?.toneMap?.L || [];
+  const toneMapR = responseAnalysis.dynamicModel?.toneMap?.R || [];
+  const validationToneL = pickValidationTone(toneMapL);
+  const validationToneR = pickValidationTone(toneMapR);
+  const hotToneL = pickHotTone(toneMapL);
+  const hotToneR = pickHotTone(toneMapR);
   // Use L channel as primary for summary
   const a = aL || aR;
   if (!a) return null;
@@ -111,8 +133,27 @@ export function generateDeckCalibrationReport(responseAnalysis, transportAnalysi
     if (bal) {
       lines.push(``);
       lines.push(`### 声道平衡`);
-      lines.push(`左右声道一致性${BALANCE_TEXT["zh-CN"][bal.label]}（RMS 差异 ${bal.rmsDiff} dB，最大差异 ${bal.maxDiff} dB @ ${hz(bal.maxDiffFreq)}）。`);
-      if (bal.rmsDiff > 1.5) lines.push(`左右差异偏大——在自录自放场景下，这可能来自录制磁头或回放磁头的方位角偏差、声道间串扰、或两者兼有。`);
+      lines.push(`主体频段（100Hz – 8kHz）左右声道一致性${BALANCE_TEXT["zh-CN"][bal.label]}（RMS 差异 ${bal.rmsDiff} dB，最大差异 ${bal.maxDiff} dB @ ${hz(bal.maxDiffFreq)}）。`);
+      if (balHf && balHf.rmsDiff > bal.rmsDiff + 1) {
+        lines.push(`高频尾端（8kHz – 16kHz）左右差异更明显（RMS ${balHf.rmsDiff} dB，最大 ${balHf.maxDiff} dB @ ${hz(balHf.maxDiffFreq)}）。这会让图上最右侧分叉比较大，但不一定等于中频结像也同样严重偏移。`);
+      }
+      if (bal.rmsDiff > 1.5) lines.push(`主体频段左右差异偏大——在自录自放场景下，这可能来自录制磁头或回放磁头的方位角偏差、声道间串扰、或两者兼有。`);
+    }
+
+    if (clarity || validationToneL || validationToneR) {
+      lines.push(``);
+      lines.push(`### 清晰度`);
+      lines.push(`这盘带的清晰度判断：${clarity?.label === "clear" ? "偏清晰" : clarity?.label === "soft" ? "偏糊" : "中等"}。`);
+      if (clarity?.summary) {
+        lines.push(`残余群时延离散 ${clarity.summary.groupDelayResidualRmsMs?.toFixed?.(3) || "0.000"} ms RMS，瞬态展宽 ${clarity.summary.transientSpreadMs?.toFixed?.(3) || "0.000"} ms。`);
+        if (clarity.summary.gainCompressionDb != null || clarity.summary.hfCollapseDb != null) {
+          lines.push(`压缩 / 饱和迹象：1kHz 增益压缩 ${clarity.summary.gainCompressionDb?.toFixed?.(2) || "0.00"} dB，高电平高频额外塌陷 ${clarity.summary.hfCollapseDb?.toFixed?.(2) || "0.00"} dB。`);
+        }
+      }
+      if (validationToneL || validationToneR || hotToneL || hotToneR) {
+        lines.push(`1kHz 失真：验证电平 L ${validationToneL?.thdPercent?.toFixed?.(2) || "0.00"}% / R ${validationToneR?.thdPercent?.toFixed?.(2) || "0.00"}%；最高电平 L ${hotToneL?.thdPercent?.toFixed?.(2) || "0.00"}% / R ${hotToneR?.thdPercent?.toFixed?.(2) || "0.00"}%。`);
+      }
+      lines.push(`这些指标越差，通常越容易听成“发糊、边缘变软、层次被抹平”；它们能帮助判断清晰度趋势，但仍不等于主观解析度分数。`);
     }
 
     if (tr) {
@@ -144,7 +185,7 @@ export function generateDeckCalibrationReport(responseAnalysis, transportAnalysi
       ? (transportIsRelative ? `，相对参考 W/F ${tr.wfRms}%` : `，W/F ${tr.wfRms}%`)
       : "";
     const summary = `${TILT_TEXT["zh-CN"][a.tiltLabel]}（录放综合），${FLAT_TEXT["zh-CN"][a.flatnessLabel]}${a.rolloffHz ? `，HF -3dB @ ${hz(a.rolloffHz)}` : ""}${transportSummary}`;
-    const tags = generateTags(a, { transport: tr, balance: bal });
+    const tags = generateTags(a, { transport: tr, balance: bal, clarity });
     return { summary, full: lines.join("\n"), tags };
   }
 
@@ -159,7 +200,25 @@ export function generateDeckCalibrationReport(responseAnalysis, transportAnalysi
   if (bal) {
     lines.push(``);
     lines.push(`### Channel Balance`);
-    lines.push(`L/R consistency: ${BALANCE_TEXT.en[bal.label]} (RMS diff ${bal.rmsDiff} dB, max ${bal.maxDiff} dB @ ${hz(bal.maxDiffFreq)}).`);
+    lines.push(`Core band (100 Hz – 8 kHz) L/R consistency: ${BALANCE_TEXT.en[bal.label]} (RMS diff ${bal.rmsDiff} dB, max ${bal.maxDiff} dB @ ${hz(bal.maxDiffFreq)}).`);
+    if (balHf && balHf.rmsDiff > bal.rmsDiff + 1) {
+      lines.push(`HF tail (8 kHz – 16 kHz) diverges more strongly (RMS ${balHf.rmsDiff} dB, max ${balHf.maxDiff} dB @ ${hz(balHf.maxDiffFreq)}), so the far-right end of the graph can split noticeably without implying the same amount of image shift through the core band.`);
+    }
+  }
+  if (clarity || validationToneL || validationToneR) {
+    lines.push(``);
+    lines.push(`### Clarity`);
+    lines.push(`Clarity verdict for this tape: ${clarity?.label === "clear" ? "fairly clear" : clarity?.label === "soft" ? "somewhat soft" : "middle of the road"}.`);
+    if (clarity?.summary) {
+      lines.push(`Residual group-delay spread ${clarity.summary.groupDelayResidualRmsMs?.toFixed?.(3) || "0.000"} ms RMS, transient spread ${clarity.summary.transientSpreadMs?.toFixed?.(3) || "0.000"} ms.`);
+      if (clarity.summary.gainCompressionDb != null || clarity.summary.hfCollapseDb != null) {
+        lines.push(`Compression / saturation signs: 1 kHz gain compression ${clarity.summary.gainCompressionDb?.toFixed?.(2) || "0.00"} dB, extra HF collapse at hot level ${clarity.summary.hfCollapseDb?.toFixed?.(2) || "0.00"} dB.`);
+      }
+    }
+    if (validationToneL || validationToneR || hotToneL || hotToneR) {
+      lines.push(`1 kHz distortion: validation level L ${validationToneL?.thdPercent?.toFixed?.(2) || "0.00"}% / R ${validationToneR?.thdPercent?.toFixed?.(2) || "0.00"}%; hottest level L ${hotToneL?.thdPercent?.toFixed?.(2) || "0.00"}% / R ${hotToneR?.thdPercent?.toFixed?.(2) || "0.00"}%.`);
+    }
+    lines.push(`Worse values here usually correlate with blur, softened leading edges, and loss of separation, but they are still proxies rather than a subjective “resolution score.”`);
   }
   if (tr) {
     lines.push(``);
@@ -178,7 +237,7 @@ export function generateDeckCalibrationReport(responseAnalysis, transportAnalysi
   lines.push(`${TILT_TEXT.en[a.tiltLabel].charAt(0).toUpperCase() + TILT_TEXT.en[a.tiltLabel].slice(1)} character, ${FLAT_TEXT.en[a.flatnessLabel]}. Loading the calibration profile will compensate for these deviations.`);
 
   const summary = `${TILT_TEXT.en[a.tiltLabel]}, ${FLAT_TEXT.en[a.flatnessLabel]}${a.rolloffHz ? `, HF -3dB @ ${hz(a.rolloffHz)}` : ""}${tr ? (transportIsRelative ? `, relative-ref W/F ${tr.wfRms}%` : `, W/F ${tr.wfRms}%`) : ""}`;
-  const tags = generateTags(a, { transport: tr, balance: bal });
+  const tags = generateTags(a, { transport: tr, balance: bal, clarity });
   return { summary, full: lines.join("\n"), tags };
 }
 

@@ -25,7 +25,7 @@ function TagBadge({ label, color }) {
 
 /**
  * Mini inline SVG frequency response chart.
- * chartData: { frequencyGridHz: number[], curves: Array<{ db: number[], color: string, label?: string }> }
+ * chartData: { frequencyGridHz: number[], curves: Array<{ db: number[], color: string, label?: string, dash?: string }> }
  */
 function MiniFreqChart({ chartData }) {
   if (!chartData?.frequencyGridHz?.length || !chartData.curves?.length) return null;
@@ -81,12 +81,29 @@ function MiniFreqChart({ chartData }) {
           if (!Number.isFinite(db)) continue;
           points.push(`${toX(freqs[i]).toFixed(1)},${toY(db).toFixed(1)}`);
         }
-        return <polyline key={ci} points={points.join(" ")} fill="none" stroke={curve.color || "#888"} strokeWidth={1.2} />;
+        return (
+          <polyline
+            key={ci}
+            points={points.join(" ")}
+            fill="none"
+            stroke={curve.color || "#888"}
+            strokeWidth={1.2}
+            strokeDasharray={curve.dash || undefined}
+          />
+        );
       })}
       {/* Legend */}
       {chartData.curves.filter((c) => c.label).map((curve, ci) => (
         <g key={`lg${ci}`}>
-          <line x1={PAD.l + ci * 90} x2={PAD.l + ci * 90 + 14} y1={6} y2={6} stroke={curve.color || "#888"} strokeWidth={1.5} />
+          <line
+            x1={PAD.l + ci * 90}
+            x2={PAD.l + ci * 90 + 14}
+            y1={6}
+            y2={6}
+            stroke={curve.color || "#888"}
+            strokeWidth={1.5}
+            strokeDasharray={curve.dash || undefined}
+          />
           <text x={PAD.l + ci * 90 + 18} y={9} fontSize={8} fill="var(--text-dim)">{curve.label}</text>
         </g>
       ))}

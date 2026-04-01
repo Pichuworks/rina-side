@@ -1,5 +1,5 @@
 // ── ffmpeg.wasm helper ───────────────────────────────────────
-// Lazy-loads ffmpeg.wasm only when native Web Audio decoding fails.
+// Lazy-loads ffmpeg.wasm only when direct PCM WAV parsing is not possible.
 // Uses the multi-threaded build (requires COOP/COEP headers).
 
 import { FFmpeg } from '@ffmpeg/ffmpeg';
@@ -50,7 +50,7 @@ async function getFFmpeg(onLog) {
  * Transcode an audio file to WAV using ffmpeg.wasm.
  * @param {File} file — the input audio file
  * @param {function} onLog — optional log callback
- * @returns {ArrayBuffer} — WAV data ready for decodeAudioData
+ * @returns {ArrayBuffer} — WAV data ready for PCM parsing
  */
 export async function transcodeToWav(file, onLog) {
   const ff = await getFFmpeg(onLog);
@@ -78,14 +78,4 @@ export function isSharedArrayBufferAvailable() {
 function getExt(filename) {
   const dot = filename.lastIndexOf('.');
   return dot >= 0 ? filename.slice(dot).toLowerCase() : '';
-}
-
-// File extensions that browsers typically can't decode natively
-const NEEDS_FFMPEG = new Set(['.flac', '.aiff', '.aif', '.ape', '.wv', '.dsd', '.dsf', '.dff', '.wma', '.opus']);
-
-/**
- * Check if a file likely needs ffmpeg for decoding.
- */
-export function likelyNeedsTranscode(filename) {
-  return NEEDS_FFMPEG.has(getExt(filename));
 }
