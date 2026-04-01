@@ -63,6 +63,15 @@ function applyEdgeFade(data, sampleRate, fadeSec = 0.02) {
   }
 }
 
+function buildSyncProbe(sync) {
+  const probeLength = Math.min(4096, Math.max(1024, Math.floor(sync.length / 2)));
+  const probeOffset = Math.floor((sync.length - probeLength) / 2);
+  return {
+    kernel: sync.slice(probeOffset, probeOffset + probeLength),
+    offset: probeOffset,
+  };
+}
+
 function buildStereoBufferLike(sampleRate, mono) {
   const left = mono.slice();
   const right = mono.slice();
@@ -215,17 +224,7 @@ function findSync(signal, kernel, searchStart, searchEnd) {
   const maxPos = Math.max(searchStart, Math.min(searchEnd, signal.length - kernel.length - 1));
   let bestPos = searchStart;
   let bestScore = -Infinity;
-  const coarseStep = 16;
-  for (let pos = searchStart; pos <= maxPos; pos += coarseStep) {
-    const score = dotAt(signal, pos, kernel);
-    if (score > bestScore) {
-      bestScore = score;
-      bestPos = pos;
-    }
-  }
-  const refineStart = Math.max(searchStart, bestPos - coarseStep);
-  const refineEnd = Math.min(maxPos, bestPos + coarseStep);
-  for (let pos = refineStart; pos <= refineEnd; pos++) {
+  for (let pos = searchStart; pos <= maxPos; pos++) {
     const score = dotAt(signal, pos, kernel);
     if (score > bestScore) {
       bestScore = score;
@@ -239,6 +238,8 @@ function detectSyncPair(signal, measurement, options = {}) {
   const sr = measurement.spec.sampleRate;
   const searchStart = Math.max(0, Math.floor(options.searchStart || 0));
   const searchEnd = Math.min(signal.length, Math.floor(options.searchEnd || signal.length));
+  const startProbe = buildSyncProbe(measurement.syncStart);
+  const endProbe = buildSyncProbe(measurement.syncEnd);
   const baseline = meanAbs(signal, 0, Math.max(512, Math.round(sr * 0.15)));
   const threshold = Math.max(0.015, baseline * 6);
   let roughStart = -1;
@@ -250,20 +251,37 @@ function detectSyncPair(signal, measurement, options = {}) {
   }
   if (roughStart < 0) throw new Error("Failed to locate measurement start");
   const startSearchA = Math.max(searchStart, roughStart - measurement.syncStart.length);
-  const startSearchB = Math.min(searchEnd - measurement.syncStart.length - 1, roughStart + measurement.syncStart.length);
-  const start = findSync(signal, measurement.syncStart, startSearchA, startSearchB);
+  const startSearchB = Math.min(searchEnd - startProbe.kernel.length - 1, roughStart + measurement.syncStart.length);
+  const startMatch = findSync(signal, startProbe.kernel, startSearchA, startSearchB);
+  const start = { pos: startMatch.pos - startProbe.offset, score: startMatch.score };
   const expectedEndPos = start.pos + measurement.syncStart.length + Math.round(measurement.spec.gapSec * sr) + measurement.mainLength + Math.round(measurement.spec.gapSec * sr);
   const endSearchA = Math.max(start.pos + measurement.mainLength / 2, expectedEndPos - measurement.syncEnd.length * 2);
-  const endSearchB = Math.min(searchEnd - measurement.syncEnd.length - 1, expectedEndPos + measurement.syncEnd.length * 2);
-  const end = findSync(signal, measurement.syncEnd, endSearchA, endSearchB);
+  const endSearchB = Math.min(searchEnd - endProbe.kernel.length - 1, expectedEndPos + measurement.syncEnd.length * 2);
+  const endMatch = findSync(signal, endProbe.kernel, endSearchA, endSearchB);
+  const end = { pos: endMatch.pos - endProbe.offset, score: endMatch.score };
+  if (start.score < 0.03 || end.score < 0.03) {
+    throw new Error("Failed to confidently locate measurement sync");
+  }
   return { start, end };
 }
 
 function detectMainBounds(signal, measurement, options = {}) {
   const sr = measurement.spec.sampleRate;
   const { start, end } = detectSyncPair(signal, measurement, options);
-  const detectedMainStart = start.pos + measurement.syncStart.length + Math.round(measurement.spec.gapSec * sr);
-  const detectedMainEnd = end.pos - Math.round(measurement.spec.gapSec * sr);
+  const gapSamples = Math.round(measurement.spec.gapSec * sr);
+  const detectedMainStart = start.pos + measurement.syncStart.length + gapSamples;
+  const detectedMainEnd = end.pos - gapSamples;
+  if (detectedMainEnd <= detectedMainStart) throw new Error("Invalid measurement bounds");
+  if (measurement.kind === "response") {
+    const detectedLength = detectedMainEnd - detectedMainStart;
+    const probeLength = Math.max(2048, Math.min(Math.round(sr * 0.25), detectedLength));
+    const mainProbeStart = detectedMainStart + Math.max(0, Math.floor((detectedLength - probeLength) / 2));
+    const mainLevel = meanAbs(signal, mainProbeStart, probeLength);
+    const gapBeforeLevel = meanAbs(signal, start.pos + measurement.syncStart.length, gapSamples);
+    const gapAfterLevel = meanAbs(signal, detectedMainEnd, gapSamples);
+    const gapLevel = Math.max(gapBeforeLevel, gapAfterLevel, 1e-6);
+    if (mainLevel < gapLevel * 2.5) throw new Error("Measurement main segment failed energy validation");
+  }
   return { startSample: detectedMainStart, endSample: detectedMainEnd };
 }
 
@@ -350,9 +368,9 @@ function analyseResponseChannel(main, measurement, frequenciesHz) {
   for (const freq of frequenciesHz) {
     const t = Math.log(freq / measurement.spec.startHz) / Math.log(measurement.spec.endHz / measurement.spec.startHz);
     const center = Math.round(t * (measurement.mainLength - 1));
-    const cycles = Math.max(8, Math.min(96, Math.round((sr / Math.max(freq, 1)) * 10)));
-    const refMag = goertzelMagnitude(measurement.referenceMain, center, cycles, freq, sr);
-    const recMag = goertzelMagnitude(main, center, cycles, freq, sr);
+    const windowLength = Math.max(8, Math.round((sr / Math.max(freq, 1)) * 10));
+    const refMag = goertzelMagnitude(measurement.referenceMain, center, windowLength, freq, sr);
+    const recMag = goertzelMagnitude(main, center, windowLength, freq, sr);
     const response = 20 * Math.log10((recMag + 1e-12) / (refMag + 1e-12));
     measuredDb.push(response);
     correctionDb.push(-response);
@@ -437,7 +455,12 @@ function estimateFrequencyFromZeroCrossings(data, sampleRate) {
 
 function analyseTransportMono(mono, measurement, detectOptions = {}) {
   const sr = measurement.spec.sampleRate;
-  const { main, startSample, endSample } = sliceAndNormalizeMain(mono, measurement, detectOptions);
+  const { startSample, endSample } = detectMainBounds(mono, measurement, detectOptions);
+  const trimSamples = Math.min(
+    Math.round(sr * 0.25),
+    Math.max(0, Math.floor((endSample - startSample - 1) / 4)),
+  );
+  const main = mono.slice(startSample + trimSamples, endSample - trimSamples);
   const windowLength = Math.round(sr * 0.25);
   const hop = Math.round(sr * 0.05);
   const estimates = [];

@@ -18,6 +18,7 @@ const I18N = {
   toolProfileSaved: { "zh-CN": "校准档案已保存", ja: "校正ファイルを保存しました", en: "Calibration file saved" },
   toolCaptureImported: { "zh-CN": "回放录音已导入", ja: "再生録音を読み込みました", en: "Playback recording imported" },
   toolRecordUnavailable: { "zh-CN": "当前浏览器不支持录音", ja: "このブラウザでは録音を利用できません", en: "This browser does not support in-browser recording" },
+  toolRecordLossyDisabled: { "zh-CN": "校准录音必须导入无损文件，浏览器有损录音已禁用", ja: "校正用録音はロスレス音声を読み込んでください。ブラウザ録音は無効です", en: "Calibration capture must be imported as a lossless file. In-browser recording is disabled." },
   toolRecordFailed: { "zh-CN": "浏览器录音失败", ja: "ブラウザ録音に失敗しました", en: "In-browser recording failed" },
   calibrationProfile: { "zh-CN": "校准档案", ja: "校正ファイル", en: "Calibration File" },
   loadCalibrationProfile: { "zh-CN": "加载校准档案", ja: "校正ファイルを読込", en: "Load Calibration File" },

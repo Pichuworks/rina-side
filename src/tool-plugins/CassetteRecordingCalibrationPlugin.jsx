@@ -1,6 +1,7 @@
 import React, { useRef, useState, useMemo } from "react";
 import { ReportCard } from "./ReportCard.jsx";
 import { generateDeckCalibrationReport } from "../modules/report/report-generator.js";
+import { getProfileCorrectionDb, normalizeCalibrationProfile } from "../calibration-profile.js";
 
 export const CASSETTE_RECORDING_CALIBRATION_PLUGIN_ID = "deck-rec-cal";
 
@@ -183,6 +184,7 @@ export function CassetteRecordingCalibrationPlugin({
   transportAnalysis,
   programManifestName,
   recordingKind,
+  browserRecordingEnabled = false,
   onLoadProgramManifest,
   onClearProgramManifest,
   onExportProgram,
@@ -209,6 +211,12 @@ export function CassetteRecordingCalibrationPlugin({
   const multiCaptureFileRef = useRef(null);
   const t = LABELS[lang] || LABELS.en;
   const isRecording = recordingKind === "program";
+  const transportRefLabel = transportAnalysis?.transportReferenceMode
+    ? (lang === "zh-CN" ? "写入机参考频率" : lang === "ja" ? "録音機基準周波数" : "Writer Reference")
+    : t.refTone;
+  const transportSpeedLabel = transportAnalysis?.transportReferenceMode
+    ? (lang === "zh-CN" ? "相对速度偏差" : lang === "ja" ? "相対速度偏差" : "Relative Speed")
+    : t.speedError;
 
   // Recording derivation state
   const [compositeProfile, setCompositeProfile] = useState(null);
@@ -221,7 +229,7 @@ export function CassetteRecordingCalibrationPlugin({
     const reader = new FileReader();
     reader.onload = () => {
       try {
-        const parsed = JSON.parse(reader.result);
+        const parsed = normalizeCalibrationProfile(JSON.parse(reader.result));
         setProfile(parsed);
         setName(file.name);
       } catch { setProfile(null); setName(""); }
@@ -232,8 +240,8 @@ export function CassetteRecordingCalibrationPlugin({
   const computeRecordingProfile = () => {
     if (!compositeProfile?.channels?.L?.correctionDb || !playbackProfile?.channels?.L?.correctionDb) return;
     const freqs = compositeProfile.channels.L.frequenciesHz || [];
-    const recL = freqs.map((_, i) => (compositeProfile.channels.L.correctionDb[i] || 0) - (playbackProfile.channels.L.correctionDb[i] || 0));
-    const recR = freqs.map((_, i) => (compositeProfile.channels.R?.correctionDb[i] || compositeProfile.channels.L.correctionDb[i] || 0) - (playbackProfile.channels.R?.correctionDb[i] || playbackProfile.channels.L.correctionDb[i] || 0));
+    const recL = freqs.map((freq) => getProfileCorrectionDb(compositeProfile, freq, "L") - getProfileCorrectionDb(playbackProfile, freq, "L"));
+    const recR = freqs.map((freq) => getProfileCorrectionDb(compositeProfile, freq, "R") - getProfileCorrectionDb(playbackProfile, freq, "R"));
     const result = {
       type: "deck.recording-correction-profile",
       name: `${compositeProfileName} − ${playbackProfileName} (recording)`,
@@ -477,13 +485,15 @@ export function CassetteRecordingCalibrationPlugin({
         >
           {t.importCapture}
         </button>
-        <button
-          onClick={() => (isRecording ? onStopRecording() : onStartRecording("program"))}
-          disabled={processing}
-          style={{ padding: "8px 14px", border: "1px solid var(--border)", borderRadius: 8, background: isRecording ? "var(--accent-dim)" : "var(--bg-deep)", cursor: "pointer", color: isRecording ? "var(--accent-ink)" : "var(--text)" }}
-        >
-          {isRecording ? t.stopRecord : t.startRecord}
-        </button>
+        {browserRecordingEnabled && (
+          <button
+            onClick={() => (isRecording ? onStopRecording() : onStartRecording("program"))}
+            disabled={processing}
+            style={{ padding: "8px 14px", border: "1px solid var(--border)", borderRadius: 8, background: isRecording ? "var(--accent-dim)" : "var(--bg-deep)", cursor: "pointer", color: isRecording ? "var(--accent-ink)" : "var(--text)" }}
+          >
+            {isRecording ? t.stopRecord : t.startRecord}
+          </button>
+        )}
         <button
           onClick={() => activeScenario === "playback" ? onAnalyseStandardTape() : onAnalyseCapture(activeScenario)}
           disabled={processing || !captureName}
@@ -545,15 +555,15 @@ export function CassetteRecordingCalibrationPlugin({
           <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 8 }}>{t.transportTitle}</div>
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 8 }}>
             <div style={{ padding: "8px 10px", border: "1px solid var(--border)", borderRadius: 8, background: "var(--bg-deep)" }}>
-              <div style={{ fontSize: 11, color: "var(--text-dim)" }}>{t.refTone}</div>
-              <div style={{ fontSize: 14 }}>{transportAnalysis.nominalHz.toFixed(2)} Hz</div>
+              <div style={{ fontSize: 11, color: "var(--text-dim)" }}>{transportRefLabel}</div>
+              <div style={{ fontSize: 14 }}>{(transportAnalysis.referenceMeanHz || transportAnalysis.nominalHz).toFixed(2)} Hz</div>
             </div>
             <div style={{ padding: "8px 10px", border: "1px solid var(--border)", borderRadius: 8, background: "var(--bg-deep)" }}>
               <div style={{ fontSize: 11, color: "var(--text-dim)" }}>{t.meanFreq}</div>
               <div style={{ fontSize: 14 }}>{transportAnalysis.meanHz.toFixed(2)} Hz</div>
             </div>
             <div style={{ padding: "8px 10px", border: "1px solid var(--border)", borderRadius: 8, background: "var(--bg-deep)" }}>
-              <div style={{ fontSize: 11, color: "var(--text-dim)" }}>{t.speedError}</div>
+              <div style={{ fontSize: 11, color: "var(--text-dim)" }}>{transportSpeedLabel}</div>
               <div style={{ fontSize: 14 }}>{transportAnalysis.speedErrorPercent.toFixed(3)} %</div>
             </div>
             <div style={{ padding: "8px 10px", border: "1px solid var(--border)", borderRadius: 8, background: "var(--bg-deep)" }}>

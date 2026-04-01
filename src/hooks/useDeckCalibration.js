@@ -4,13 +4,21 @@ import {
   TRANSPORT_MEASUREMENT_SPEC,
   TEST_TAPE_PROGRAM_SPEC,
   generateTestTapeProgram,
-  analyseTestTapeProgram,
-  analyseStandardCalibrationTape,
   STANDARD_TAPE_PRESETS,
 } from "../deck-calibration.js";
 import { getProfileCorrectionDb } from "../calibration-profile.js";
 
+function extractRawStereo(audioBuffer) {
+  const channels = Math.max(1, audioBuffer.numberOfChannels || 1);
+  return {
+    left: audioBuffer.getChannelData(0).slice(),
+    right: audioBuffer.getChannelData(Math.min(1, channels - 1)).slice(),
+    sampleRate: audioBuffer.sampleRate,
+  };
+}
+
 export default function useDeckCalibration({ T, showToast, downloadBlob, encodeWAV, decodeExternalAudioFile, setProcessing, setProcMsg, showTools }) {
+  const deckCalBrowserRecordingEnabled = false;
   const [deckCalProgramManifest, setDeckCalProgramManifest] = useState(null);
   const [deckCalProgramManifestName, setDeckCalProgramManifestName] = useState("");
   const [deckCalRecordingKind, setDeckCalRecordingKind] = useState("");
@@ -96,12 +104,13 @@ export default function useDeckCalibration({ T, showToast, downloadBlob, encodeW
 
   const applyProgramManifestToTransport = useCallback((analysis, manifest) => {
     const baseline = manifest?.baselines?.transport;
-    if (!baseline?.nominalOnTapeToneHz) return analysis;
-    const nominalHz = baseline.nominalOnTapeToneHz;
+    if (!analysis || !baseline?.referenceMeanHz) return analysis;
+    const referenceMeanHz = baseline.referenceMeanHz;
     return {
       ...analysis,
-      nominalHz,
-      speedErrorPercent: ((analysis.meanHz - nominalHz) / nominalHz) * 100,
+      referenceMeanHz,
+      transportReferenceMode: baseline.referenceMode || "writer-relative",
+      speedErrorPercent: ((analysis.meanHz - referenceMeanHz) / referenceMeanHz) * 100,
       writerWowFlutterFloorPercentRms: baseline.wowFlutterFloorPercentRms || 0,
       manifestName: manifest.name,
     };
@@ -162,17 +171,43 @@ export default function useDeckCalibration({ T, showToast, downloadBlob, encodeW
     setTransportAnalysis(null);
   }, []);
 
-  const analyseMultiCaptures = useCallback((scenario = "self") => {
+  const runDeckCalibrationWorker = useCallback((command, audioBuffer, extra = {}) => {
+    return new Promise((resolve, reject) => {
+      const worker = new Worker(
+        new URL("../workers/deck-calibration.worker.js", import.meta.url),
+        { type: "module" },
+      );
+      const audio = extractRawStereo(audioBuffer);
+      worker.onmessage = (event) => {
+        worker.terminate();
+        resolve(event.data);
+      };
+      worker.onerror = (event) => {
+        worker.terminate();
+        reject(new Error(event.message || "Deck calibration worker failed"));
+      };
+      worker.postMessage(
+        { command, audio, ...extra },
+        [audio.left.buffer, audio.right.buffer],
+      );
+    });
+  }, []);
+
+  const analyseMultiCaptures = useCallback(async (scenario = "self") => {
     if (!multiCaptures.length) return;
     setProcessing(true);
     try {
-      const program = generateTestTapeProgram(TEST_TAPE_PROGRAM_SPEC);
       const results = [];
       const failedPasses = [];
       for (let i = 0; i < multiCaptures.length; i++) {
         setProcMsg(`分析 [${i + 1}/${multiCaptures.length}] ${multiCaptures[i].name}`);
         try {
-          results.push(analyseTestTapeProgram(multiCaptures[i].audioBuffer, program));
+          const workerResult = await runDeckCalibrationWorker(
+            "analyseTestTapeProgram",
+            multiCaptures[i].audioBuffer,
+          );
+          if (!workerResult?.ok) throw new Error(workerResult?.error || "Worker error");
+          results.push(workerResult.result);
         } catch (err) {
           failedPasses.push({ name: multiCaptures[i].name, error: err.message });
         }
@@ -254,40 +289,12 @@ export default function useDeckCalibration({ T, showToast, downloadBlob, encodeW
       setProcessing(false);
       setProcMsg("");
     }
-  }, [applyProgramManifestToResponse, applyProgramManifestToTransport, deckCalProgramManifest, multiCaptures, setProcessing, setProcMsg, showToast]);
+  }, [applyProgramManifestToResponse, applyProgramManifestToTransport, deckCalProgramManifest, multiCaptures, runDeckCalibrationWorker, setProcessing, setProcMsg, showToast]);
 
   const startDeckCalRecording = useCallback(async (kind) => {
-    if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
-      showToast(T("toolRecordUnavailable"), 5000);
-      return;
-    }
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({
-        audio: { channelCount: 2, echoCancellation: false, noiseSuppression: false, autoGainControl: false },
-      });
-      const mimeType = ["audio/webm;codecs=opus", "audio/webm", "audio/ogg;codecs=opus"].find((type) => MediaRecorder.isTypeSupported(type)) || "";
-      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
-      const chunks = [];
-      recorder.ondataavailable = (event) => {
-        if (event.data?.size) chunks.push(event.data);
-      };
-      recorder.onstop = async () => {
-        const blob = new Blob(chunks, { type: recorder.mimeType || "audio/webm" });
-        const ext = recorder.mimeType?.includes("ogg") ? "ogg" : "webm";
-        const file = new File([blob], `${kind}-capture.${ext}`, { type: blob.type });
-        setDeckCalRecordingKind("");
-        stream.getTracks().forEach((track) => track.stop());
-        deckCalRecordRef.current = { recorder: null, stream: null, chunks: [], kind: "" };
-        await importDeckCalCaptureFile(file);
-      };
-      recorder.start();
-      deckCalRecordRef.current = { recorder, stream, chunks, kind };
-      setDeckCalRecordingKind(kind);
-    } catch (err) {
-      console.error(err);
-      showToast(`${T("toolRecordFailed")}: ${err.message}`, 5000);
-    }
-  }, [T, importDeckCalCaptureFile, showToast]);
+    void kind;
+    showToast(T("toolRecordLossyDisabled"), 5000);
+  }, [T, showToast]);
 
   const stopDeckCalRecording = useCallback(() => {
     const active = deckCalRecordRef.current;
@@ -298,10 +305,14 @@ export default function useDeckCalibration({ T, showToast, downloadBlob, encodeW
     if (!showTools && deckCalRecordingKind) stopDeckCalRecording();
   }, [deckCalRecordingKind, showTools, stopDeckCalRecording]);
 
-  const analyseDeckCalCapture = useCallback((scenario = "self") => {
+  const analyseDeckCalCapture = useCallback(async (scenario = "self") => {
     if (!deckCalCapture) return;
+    setProcessing(true);
     try {
-      const rawResult = analyseTestTapeProgram(deckCalCapture, generateTestTapeProgram(TEST_TAPE_PROGRAM_SPEC));
+      setProcMsg("Analyzing playback recording...");
+      const workerResult = await runDeckCalibrationWorker("analyseTestTapeProgram", deckCalCapture);
+      if (!workerResult?.ok) throw new Error(workerResult?.error || "Worker error");
+      const rawResult = workerResult.result;
       const shouldApplyManifest = scenario === "test-tape" && deckCalProgramManifest;
       const nextResponse = shouldApplyManifest ? applyProgramManifestToResponse(rawResult.response, deckCalProgramManifest) : rawResult.response;
       const nextTransport = shouldApplyManifest ? applyProgramManifestToTransport(rawResult.transport, deckCalProgramManifest) : rawResult.transport;
@@ -309,28 +320,41 @@ export default function useDeckCalibration({ T, showToast, downloadBlob, encodeW
       setTransportAnalysis(nextTransport);
     } catch (err) {
       showToast(`Test tape analysis failed: ${err.message}`, 5000);
+    } finally {
+      setProcessing(false);
+      setProcMsg("");
     }
-  }, [applyProgramManifestToResponse, applyProgramManifestToTransport, deckCalCapture, deckCalProgramManifest, showToast]);
+  }, [applyProgramManifestToResponse, applyProgramManifestToTransport, deckCalCapture, deckCalProgramManifest, runDeckCalibrationWorker, setProcessing, setProcMsg, showToast]);
 
   // ── Standard calibration tape analysis ──────────────────────
   const [standardTapePreset, setStandardTapePreset] = useState("aiwa-3freq");
 
-  const analyseStandardTape = useCallback(() => {
+  const analyseStandardTape = useCallback(async () => {
     if (!deckCalCapture) return;
     const preset = STANDARD_TAPE_PRESETS[standardTapePreset];
-    if (!preset) { showToast("未选择测试带预设", 5000); return; }
+    if (!preset) {
+      showToast("No standard tape preset selected", 5000);
+      return;
+    }
+    setProcessing(true);
     try {
-      const result = analyseStandardCalibrationTape(deckCalCapture, preset);
+      setProcMsg("Analyzing standard calibration tape...");
+      const workerResult = await runDeckCalibrationWorker("analyseStandardTape", deckCalCapture, { preset });
+      if (!workerResult?.ok) throw new Error(workerResult?.error || "Worker error");
+      const result = workerResult.result;
       if (result.missingFreqs.length) {
-        showToast(`未检测到: ${result.missingFreqs.join(", ")} Hz`, 6000);
+        showToast(`Missing detections: ${result.missingFreqs.join(", ")} Hz`, 6000);
       }
       setResponseAnalysis(result);
       setTransportAnalysis(null); // Standard tapes don't have transport analysis
-      showToast(`${preset.name} 分析完成（${result.frequencies.length - result.missingFreqs.length}/${result.frequencies.length} 频率检测成功）`);
+      showToast(`${preset.name} analysis complete (${result.frequencies.length - result.missingFreqs.length}/${result.frequencies.length} frequencies detected)`);
     } catch (err) {
-      showToast(`标准测试带分析失败: ${err.message}`, 5000);
+      showToast(`Standard tape analysis failed: ${err.message}`, 5000);
+    } finally {
+      setProcessing(false);
+      setProcMsg("");
     }
-  }, [deckCalCapture, standardTapePreset, showToast]);
+  }, [deckCalCapture, runDeckCalibrationWorker, setProcessing, setProcMsg, standardTapePreset, showToast]);
 
   const saveResponseProfile = useCallback(() => {
     if (!responseAnalysis?.profile) return;
@@ -373,9 +397,9 @@ export default function useDeckCalibration({ T, showToast, downloadBlob, encodeW
           },
         },
         transport: {
-          nominalOnTapeToneHz: transportAnalysis.meanHz,
+          referenceMode: "writer-relative",
+          referenceMeanHz: transportAnalysis.meanHz,
           wowFlutterFloorPercentRms: transportAnalysis.wowFlutterPercentRms || 0,
-          speedOffsetPercent: transportAnalysis.speedErrorPercent || 0,
         },
       },
     };
@@ -386,6 +410,7 @@ export default function useDeckCalibration({ T, showToast, downloadBlob, encodeW
   return {
     deckCalProgramManifestName,
     deckCalRecordingKind,
+    deckCalBrowserRecordingEnabled,
     deckCalCaptureName,
     responseAnalysis,
     transportAnalysis,

@@ -75,6 +75,7 @@ export function generateDeckCalibrationReport(responseAnalysis, transportAnalysi
   const aR = chR ? analyseChannel(freqs, chR.correctionDb) : null;
   const bal = chL && chR ? analyseStereoBalance(freqs, chL.correctionDb, chR.correctionDb) : null;
   const tr = analyseTransport(transportAnalysis);
+  const transportIsRelative = transportAnalysis?.transportReferenceMode === "writer-relative";
   // Use L channel as primary for summary
   const a = aL || aR;
   if (!a) return null;
@@ -117,8 +118,13 @@ export function generateDeckCalibrationReport(responseAnalysis, transportAnalysi
     if (tr) {
       lines.push(``);
       lines.push(`### 走带稳定性`);
-      lines.push(`速度偏差 ${tr.speedErrorPercent}%（${SPEED_TEXT["zh-CN"][tr.speedLabel]}${tr.speedFast ? "，偏快" : "，偏慢"}），Wow/Flutter ${tr.wfRms}% RMS（${WF_TEXT["zh-CN"][tr.wfLabel]}）。`);
-      lines.push(`注意：自录自放的 W/F 数值包含了录制时和回放时两次走带误差的叠加。实际单程 W/F 会更小一些。`);
+      if (transportIsRelative) {
+        lines.push(`相对写入机参考的速度偏差 ${tr.speedErrorPercent}%（${SPEED_TEXT["zh-CN"][tr.speedLabel]}${tr.speedFast ? "，相对更快" : "，相对更慢"}），Wow/Flutter ${tr.wfRms}% RMS（${WF_TEXT["zh-CN"][tr.wfLabel]}）。`);
+        lines.push(`注意：这里的速度结果是相对写入这盘测试带的那台机器，不是相对理想标准速度的绝对校准值。`);
+      } else {
+        lines.push(`速度偏差 ${tr.speedErrorPercent}%（${SPEED_TEXT["zh-CN"][tr.speedLabel]}${tr.speedFast ? "，偏快" : "，偏慢"}），Wow/Flutter ${tr.wfRms}% RMS（${WF_TEXT["zh-CN"][tr.wfLabel]}）。`);
+      }
+      lines.push(`注意：自录自放或测试带对比得到的 W/F 数值都包含参考链路本身的影响，不能直接当成单程机构的绝对 W/F。`);
       if (tr.wfLabel === "excellent" || tr.wfLabel === "good") {
         lines.push(`即便是叠加值也很低，说明走带机构状态不错。`);
       }
@@ -134,7 +140,10 @@ export function generateDeckCalibrationReport(responseAnalysis, transportAnalysi
     lines.push(`${verdict.join("，")}。${a.tiltLabel === "warm" || a.tiltLabel === "slightly_warm" ? "录出来的声音会带一点暖意——可能是磁头特性或磁带饱和带来的自然染色。" : a.tiltLabel === "bright" || a.tiltLabel === "slightly_bright" ? "整体偏亮——高频通路状况不错，但录制人声类内容时可以关注一下齿音。" : "中性取向，录制链路的染色很小。"}`);
     lines.push(`加载校准档案后，SIDE 会在试听和导出时补偿这条链路的综合偏差。如果只想补偿回放端（例如在其它卡座上播放），需要单独测量那台卡座的回放特性。`);
 
-    const summary = `${TILT_TEXT["zh-CN"][a.tiltLabel]}（录放综合），${FLAT_TEXT["zh-CN"][a.flatnessLabel]}${a.rolloffHz ? `，HF -3dB @ ${hz(a.rolloffHz)}` : ""}${tr ? `，W/F ${tr.wfRms}%` : ""}`;
+    const transportSummary = tr
+      ? (transportIsRelative ? `，相对参考 W/F ${tr.wfRms}%` : `，W/F ${tr.wfRms}%`)
+      : "";
+    const summary = `${TILT_TEXT["zh-CN"][a.tiltLabel]}（录放综合），${FLAT_TEXT["zh-CN"][a.flatnessLabel]}${a.rolloffHz ? `，HF -3dB @ ${hz(a.rolloffHz)}` : ""}${transportSummary}`;
     const tags = generateTags(a, { transport: tr, balance: bal });
     return { summary, full: lines.join("\n"), tags };
   }
@@ -155,14 +164,20 @@ export function generateDeckCalibrationReport(responseAnalysis, transportAnalysi
   if (tr) {
     lines.push(``);
     lines.push(`### Transport`);
-    lines.push(`Speed error ${tr.speedErrorPercent}% (${SPEED_TEXT.en[tr.speedLabel]}), W/F ${tr.wfRms}% RMS (${WF_TEXT.en[tr.wfLabel]}).`);
+    if (transportIsRelative) {
+      lines.push(`Relative speed offset vs. the writer-deck reference is ${tr.speedErrorPercent}% (${SPEED_TEXT.en[tr.speedLabel]}), W/F ${tr.wfRms}% RMS (${WF_TEXT.en[tr.wfLabel]}).`);
+      lines.push(`This is a writer-relative comparison, not an absolute speed calibration against an ideal standard.`);
+    } else {
+      lines.push(`Speed error ${tr.speedErrorPercent}% (${SPEED_TEXT.en[tr.speedLabel]}), W/F ${tr.wfRms}% RMS (${WF_TEXT.en[tr.wfLabel]}).`);
+    }
+    lines.push(`The reported wow/flutter still includes the reference path, so it should not be read as a single-pass absolute W/F value.`);
   }
 
   lines.push(``);
   lines.push(`### Summary`);
   lines.push(`${TILT_TEXT.en[a.tiltLabel].charAt(0).toUpperCase() + TILT_TEXT.en[a.tiltLabel].slice(1)} character, ${FLAT_TEXT.en[a.flatnessLabel]}. Loading the calibration profile will compensate for these deviations.`);
 
-  const summary = `${TILT_TEXT.en[a.tiltLabel]}, ${FLAT_TEXT.en[a.flatnessLabel]}${a.rolloffHz ? `, HF -3dB @ ${hz(a.rolloffHz)}` : ""}${tr ? `, W/F ${tr.wfRms}%` : ""}`;
+  const summary = `${TILT_TEXT.en[a.tiltLabel]}, ${FLAT_TEXT.en[a.flatnessLabel]}${a.rolloffHz ? `, HF -3dB @ ${hz(a.rolloffHz)}` : ""}${tr ? (transportIsRelative ? `, relative-ref W/F ${tr.wfRms}%` : `, W/F ${tr.wfRms}%`) : ""}`;
   const tags = generateTags(a, { transport: tr, balance: bal });
   return { summary, full: lines.join("\n"), tags };
 }

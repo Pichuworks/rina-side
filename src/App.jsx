@@ -1696,6 +1696,7 @@ export default function CassetteTool() {
   const {
     deckCalProgramManifestName,
     deckCalRecordingKind,
+    deckCalBrowserRecordingEnabled,
     deckCalCaptureName,
     responseAnalysis,
     transportAnalysis,
@@ -2860,6 +2861,7 @@ export default function CassetteTool() {
                 transportAnalysis={transportAnalysis}
                 programManifestName={deckCalProgramManifestName}
                 recordingKind={deckCalRecordingKind}
+                browserRecordingEnabled={deckCalBrowserRecordingEnabled}
                 onLoadProgramManifest={loadDeckCalProgramManifestFile}
                 onClearProgramManifest={clearDeckCalProgramManifest}
                 onExportProgram={exportTestTapeProgram}
