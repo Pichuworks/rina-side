@@ -98,7 +98,7 @@ export default function usePlayerProfile({ showToast, downloadBlob, encodeWAV, d
   const exportPlayerProbe = useCallback(() => {
     const probe = generateProbeSequence(createProbeManifest());
     downloadBlob(encodeWAV(probe.bufferLike, 24), "player-probe-v1.wav");
-    showToast("Player probe exported");
+    showToast("测试信号已导出");
   }, [downloadBlob, encodeWAV, showToast]);
 
   const importPlayerProbeCaptureFile = useCallback(async (file) => {
@@ -109,9 +109,9 @@ export default function usePlayerProfile({ showToast, downloadBlob, encodeWAV, d
       setProbeCaptureBuffer(audioBuffer);
       setProbeCaptureName(file.name);
       setPlayerProbeProfile(null);
-      showToast("Probe capture imported");
+      showToast("回放录音已导入");
     } catch (err) {
-      showToast(`Probe import failed: ${err.message}`, 5000);
+      showToast(`导入失败：${err.message}`, 5000);
     } finally {
       setProcessing(false);
       setProcMsg("");
@@ -123,16 +123,16 @@ export default function usePlayerProfile({ showToast, downloadBlob, encodeWAV, d
     try {
       const profile = buildProbeProfile(null, probeCaptureBuffer, createProbeManifest(), { name: name || "Probe Profile" });
       setPlayerProbeProfile(profile);
-      showToast("Probe profile generated");
+      showToast("测量结果已生成");
     } catch (err) {
-      showToast(`Probe profile failed: ${err.message}`, 5000);
+      showToast(`生成失败：${err.message}`, 5000);
     }
   }, [probeCaptureBuffer, showToast]);
 
   const savePlayerProbeProfile = useCallback(() => {
     if (!playerProbeProfile) return;
     downloadBlob(new Blob([serializeProfileJson(playerProbeProfile)], { type: "application/json" }), `${playerProbeProfile.name || "probe-profile"}.json`);
-    showToast("Probe profile saved");
+    showToast("测量结果已保存");
   }, [downloadBlob, playerProbeProfile, showToast]);
 
   // ── Song ────────────────────────────────────────────────────
@@ -166,13 +166,13 @@ export default function usePlayerProfile({ showToast, downloadBlob, encodeWAV, d
         if (parsed.role === "reference") references.push(track);
         else recorded.push(track);
       });
-      if (invalid.length) throw new Error(`Invalid song filenames: ${invalid.join(", ")}`);
+      if (invalid.length) throw new Error(`文件名格式不对：${invalid.join(", ")}`);
       setSongReferenceTracks(references);
       setSongRecordedTracks(recorded);
       setPlayerSongProfile(null);
-      showToast(`Loaded ${references.length} source / ${recorded.length} recorded files`);
+      showToast(`已加载 ${references.length} 个原曲 / ${recorded.length} 个内录`);
     } catch (err) {
-      showToast(`Song import failed: ${err.message}`, 5000);
+      showToast(`导入失败：${err.message}`, 5000);
     } finally {
       setProcessing(false);
       setProcMsg("");
@@ -181,7 +181,7 @@ export default function usePlayerProfile({ showToast, downloadBlob, encodeWAV, d
 
   const buildPlayerSongProfile = useCallback(async (name) => {
     if (!songPairing.pairs.length || songPairing.error) {
-      showToast(songPairing.error || "No valid song pairs", 5000);
+      showToast(songPairing.error || "没有有效的配对", 5000);
       return;
     }
     setProcessing(true);
@@ -220,7 +220,7 @@ export default function usePlayerProfile({ showToast, downloadBlob, encodeWAV, d
   const savePlayerSongProfile = useCallback(() => {
     if (!playerSongProfile) return;
     downloadBlob(new Blob([serializeProfileJson(playerSongProfile)], { type: "application/json" }), `${playerSongProfile.name || "song-profile"}.json`);
-    showToast("Song profile saved");
+    showToast("测量结果已保存");
   }, [downloadBlob, playerSongProfile, showToast]);
 
   // ── EQ Workbench ────────────────────────────────────────────
@@ -243,9 +243,9 @@ export default function usePlayerProfile({ showToast, downloadBlob, encodeWAV, d
       const profile = parseAndNormalizeProfileJson(await file.text());
       setEqWorkbenchBaseProfile(profile);
       setEqWorkbenchBaseProfileName(file.name);
-      showToast("A base profile imported");
+      showToast("基础频响已导入");
     } catch (err) {
-      showToast(`EQ base import failed: ${err.message}`, 5000);
+      showToast(`导入失败：${err.message}`, 5000);
     }
   }, [showToast]);
 
@@ -272,16 +272,16 @@ function autoQForBand(centerHz, sortedCenters, index) {
         .split(",")
         .map((value) => Number(value.trim()))
         .filter((value) => Number.isFinite(value) && value > 0);
-      if (!centers.length) throw new Error("No valid EQ band centers");
+      if (!centers.length) throw new Error("没有有效的 EQ 频段");
       const uniqueCenters = [...new Set(centers)].sort((a, b) => a - b);
       const gainStepDb = Number(config.gainStepDb);
       const minStep = Number(config.minStep);
       const maxStep = Number(config.maxStep);
-      if (!(gainStepDb > 0)) throw new Error("Invalid gain step");
+      if (!(gainStepDb > 0)) throw new Error("每档增益无效");
       // Allow fractional steps for PEQ (e.g. 0.1 dB)
       const isFractionalStep = gainStepDb < 1;
-      if (!isFractionalStep && (!Number.isInteger(minStep) || !Number.isInteger(maxStep))) throw new Error("Invalid EQ step range");
-      if (minStep > 0 || maxStep < 0) throw new Error("Invalid EQ step range");
+      if (!isFractionalStep && (!Number.isInteger(minStep) || !Number.isInteger(maxStep))) throw new Error("档位范围无效");
+      if (minStep > 0 || maxStep < 0) throw new Error("档位范围无效");
 
       // Q: use user override if provided, otherwise auto-calculate per band
       const userQ = config.qValue ? Number(config.qValue) : null;
@@ -311,14 +311,14 @@ function autoQForBand(centerHz, sortedCenters, index) {
       const qSummary = useAutoQ ? `（自动 Q: ${qValues[0]}~${qValues[qValues.length - 1]}）` : `（Q=${userQ}）`;
       showToast(`EQ 模型已生成 ${qSummary}`);
     } catch (err) {
-      showToast(`EQ model build failed: ${err.message}`, 5000);
+      showToast(`EQ 模型生成失败：${err.message}`, 5000);
     }
   }, [eqWorkbenchBaseProfile, showToast]);
 
   const saveEqReadyProfile = useCallback(() => {
     if (!playerEqReadyProfile) return;
     downloadBlob(new Blob([serializeProfileJson(playerEqReadyProfile)], { type: "application/json" }), `${playerEqReadyProfile.name || "a-adjustable-profile"}.json`);
-    showToast("A adjustable profile saved");
+    showToast("EQ 模型已保存");
   }, [downloadBlob, playerEqReadyProfile, showToast]);
 
   // ── Compiler ────────────────────────────────────────────────
@@ -336,9 +336,9 @@ function autoQForBand(centerHz, sortedCenters, index) {
         setCompilerTargetMode("profile");
       }
       setPlayerEqCompileResult(null);
-      showToast(`${role} profile imported`);
+      showToast(`${role === "A" ? "设备" : "目标"}频响已导入`);
     } catch (err) {
-      showToast(`Profile import failed: ${err.message}`, 5000);
+      showToast(`频响导入失败：${err.message}`, 5000);
     }
   }, [showToast]);
 
@@ -458,7 +458,7 @@ function autoQForBand(centerHz, sortedCenters, index) {
   const loadCompileResultProfile = useCallback(() => {
     if (!compileLoadableProfile) return;
     onLoadCalibrationProfile(compileLoadableProfile);
-    showToast("Compiled EQ profile loaded");
+    showToast("EQ 补偿已加载到主页面");
   }, [compileLoadableProfile, onLoadCalibrationProfile, showToast]);
 
   const exportCompileLoadableProfile = useCallback(() => {
@@ -467,7 +467,7 @@ function autoQForBand(centerHz, sortedCenters, index) {
       new Blob([JSON.stringify(compileLoadableProfile, null, 2)], { type: "application/json" }),
       `${compileLoadableProfile.name || "compiled-eq-profile"}.json`,
     );
-    showToast("Compiled EQ loadable profile exported");
+    showToast("EQ 补偿档案已导出");
   }, [compileLoadableProfile, downloadBlob, showToast]);
 
   const exportCompileResultJson = useCallback(() => {
@@ -476,7 +476,7 @@ function autoQForBand(centerHz, sortedCenters, index) {
       new Blob([JSON.stringify(playerEqCompileResult, null, 2)], { type: "application/json" }),
       "compiled-eq-result.json",
     );
-    showToast("Compile result JSON exported");
+    showToast("计算结果 JSON 已导出");
   }, [downloadBlob, playerEqCompileResult, showToast]);
 
   const exportCompileResultText = useCallback(() => {
@@ -510,7 +510,7 @@ function autoQForBand(centerHz, sortedCenters, index) {
       new Blob([lines.join("\n")], { type: "text/plain;charset=utf-8" }),
       "compiled-eq-result.txt",
     );
-    showToast("Compile result text exported");
+    showToast("计算结果文本已导出");
   }, [compilerProfileAName, compilerProfileBName, downloadBlob, playerEqCompileResult, showToast]);
 
   // ── Full-resolution correction (no EQ quantization) ────────

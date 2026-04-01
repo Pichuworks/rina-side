@@ -1346,13 +1346,13 @@ const HeaderControls = React.memo(function HeaderControls({ lang, setLang, theme
           border: "1px solid var(--border)", boxShadow: "0 8px 32px rgba(0,0,0,0.12)", fontSize: 14, lineHeight: 1.9, color: "var(--text)", display: "flex", flexDirection: "column"
         }}>
           <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "20px 24px 14px", borderBottom: "1px solid var(--border)", flexShrink: 0 }}>
-            <span style={{ fontSize: 16, color: "var(--accent-ink)" }}>About</span>
+            <span style={{ fontSize: 16, color: "var(--accent-ink)" }}>{T("about")}</span>
             <button onClick={() => setShowAbout(false)} style={{ background: "none", border: "none", fontSize: 18, cursor: "pointer", color: "var(--text-dim)" }}>✕</button>
           </div>
           <div className="modalScroll" style={{ padding: "18px 24px 22px", overflowY: "auto", overflowX: "hidden", minHeight: 0 }}>
             <div>Sequential Interleaved Dubbing Engine</div>
             <div>Developed by 天使天才天王寺璃奈</div>
-            <div>With Claude Opus 4.6 Extended & GPT 5.4 (reasoning high, summaries auto)</div>
+            <div>With Claude Opus 4.6 & GPT 5.4</div>
             <div>{APP_VERSION}</div>
             <a href={APP_GITHUB} target="_blank" rel="noreferrer" style={{ color: "var(--accent-ink)", textDecoration: "none" }}>
               {`Github: ${APP_GITHUB}`}
@@ -2060,13 +2060,13 @@ export default function CassetteTool() {
     const downsampled = st.filter(t => t.sampleRate > sr);
     if (downsampled.length > 0) {
       const names = downsampled.map(t => `${t.name} (${t.sampleRate / 1000}kHz→${sr / 1000}kHz)`).join("\n");
-      const ok = window.confirm(`${T("resampleWarn")}:\n${names}\n\nContinue?`);
+      const ok = window.confirm(`${T("resampleWarn")}:\n${names}`);
       if (!ok) return;
     }
     const bitDepthChanged = st.filter(t => t.bitDepth != null && t.bitDepth !== bits);
     if (bitDepthChanged.length > 0) {
       const names = bitDepthChanged.map(t => `${t.name} (${t.bitDepth}bit→${bits}bit)`).join("\n");
-      const ok = window.confirm(`${T("bitDepthWarn")}:\n${names}\n\nContinue?`);
+      const ok = window.confirm(`${T("bitDepthWarn")}:\n${names}`);
       if (!ok) return;
     }
     setProcessing(true); setExpProg({ side, step: 0, total: st.length + 3 });
@@ -2089,11 +2089,11 @@ export default function CassetteTool() {
         src.start(cur / sr); cur += Math.ceil(tr.duration * sr);
         if (i < st.length - 1) cur += Math.ceil(getGap(tr, st[i + 1]) * sr);
       }
-      setProcMsg(`SIDE ${side}: ${T("rendering")}...`); setExpProg({ side, step: st.length + 1, total: st.length + 3 });
+      setProcMsg(`SIDE ${side}: ${T("rendering")}`); setExpProg({ side, step: st.length + 1, total: st.length + 3 });
       const baseMix = await oc.startRendering();
       let encodedBuffer = baseMix;
       if (exportProfile) {
-        setProcMsg(`SIDE ${side}: applying deck model...`);
+        setProcMsg(`SIDE ${side}: 正在应用补偿……`);
         setExpProg({ side, step: st.length + 2, total: st.length + 3 });
         encodedBuffer = hasDynamicCalibrationProfile(exportProfile)
           ? await renderBufferLikeWithDynamicProfile(baseMix, exportProfile, targetDb)
@@ -2102,10 +2102,10 @@ export default function CassetteTool() {
         const postGain = renderedPeak > 0.999 ? 0.999 / renderedPeak : 1;
         encodedBuffer = scaleBufferLike(encodedBuffer, postGain);
       }
-      setProcMsg(`SIDE ${side}: ${T("encoding")}...`); setExpProg({ side, step: st.length + 3, total: st.length + 3 });
+      setProcMsg(`SIDE ${side}: ${T("encoding")}`); setExpProg({ side, step: st.length + 3, total: st.length + 3 });
       const blob = encodeWAV(encodedBuffer, bits), u = URL.createObjectURL(blob), a = document.createElement("a");
       a.href = u; a.download = `SIDE_${side}_${sr}hz_${bits}bit.wav`; a.click(); URL.revokeObjectURL(u);
-    } catch (e) { console.error(e); alert(`Export failed: ${e.message}`); }
+    } catch (e) { console.error(e); alert(`导出失败：${e.message}`); }
     setProcessing(false); setProcMsg(""); setExpProg(null);
   }, [tracks, defaultGap, fillTail, sideSec, getAC, T, getGap, resolveExportSr, resolveExportBits, stopSignalOutput, activeExportCalibrationProfile, scaleBufferLike, resolveNormalizedTrackGains, renderBufferLikeWithDynamicProfile, renderBufferLikeWithProfile, targetDb]);
 

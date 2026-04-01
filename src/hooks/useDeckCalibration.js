@@ -135,6 +135,7 @@ export default function useDeckCalibration({
   const [responseAnalysis, setResponseAnalysis] = useState(null);
   const [transportAnalysis, setTransportAnalysis] = useState(null);
   const deckCalRecordRef = useRef({ recorder: null, stream: null, chunks: [], kind: "" });
+  const [standardTapePreset, setStandardTapePreset] = useState("aiwa-3freq");
 
   const loadDeckCalProgramManifestFile = useCallback(async (file) => {
     if (!file) return;
@@ -777,7 +778,7 @@ export default function useDeckCalibration({
     if (!deckCalCapture) return;
     setProcessing(true);
     try {
-      setProcMsg("Analyzing playback recording...");
+      setProcMsg("正在分析回放录音……");
       const workerResult = await runDeckCalibrationWorker("analyseTestTapeProgram", deckCalCapture);
       if (!workerResult?.ok) throw new Error(workerResult?.error || "Worker error");
       const rawResult = workerResult.result;
@@ -788,7 +789,7 @@ export default function useDeckCalibration({
       setResponseAnalysis(nextResponse);
       setTransportAnalysis(nextTransport);
     } catch (err) {
-      showToast(`Test tape analysis failed: ${err.message}`, 5000);
+      showToast(`分析失败：${err.message}`, 5000);
     } finally {
       setProcessing(false);
       setProcMsg("");
@@ -796,29 +797,28 @@ export default function useDeckCalibration({
   }, [applyProgramManifestToResponse, applyProgramManifestToTransport, deckCalCapture, deckCalProgramManifest, runDeckCalibrationWorker, setProcessing, setProcMsg, showToast]);
 
   // ── Standard calibration tape analysis ──────────────────────
-  const [standardTapePreset, setStandardTapePreset] = useState("aiwa-3freq");
 
   const analyseStandardTape = useCallback(async () => {
     if (!deckCalCapture) return;
     const preset = STANDARD_TAPE_PRESETS[standardTapePreset];
     if (!preset) {
-      showToast("No standard tape preset selected", 5000);
+      showToast("还没有选择标准校准带", 5000);
       return;
     }
     setProcessing(true);
     try {
-      setProcMsg("Analyzing standard calibration tape...");
+      setProcMsg("正在分析标准校准带……");
       const workerResult = await runDeckCalibrationWorker("analyseStandardTape", deckCalCapture, { preset });
       if (!workerResult?.ok) throw new Error(workerResult?.error || "Worker error");
       const result = workerResult.result;
       if (result.missingFreqs.length) {
-        showToast(`Missing detections: ${result.missingFreqs.join(", ")} Hz`, 6000);
+        showToast(`以下频率未检测到：${result.missingFreqs.join(", ")} Hz`, 6000);
       }
       setResponseAnalysis(result);
       setTransportAnalysis(null); // Standard tapes don't have transport analysis
-      showToast(`${preset.name} analysis complete (${result.frequencies.length - result.missingFreqs.length}/${result.frequencies.length} frequencies detected)`);
+      showToast(`${preset.name} 分析完成（检测到 ${result.frequencies.length - result.missingFreqs.length}/${result.frequencies.length} 个频率点）`);
     } catch (err) {
-      showToast(`Standard tape analysis failed: ${err.message}`, 5000);
+      showToast(`标准校准带分析失败：${err.message}`, 5000);
     } finally {
       setProcessing(false);
       setProcMsg("");
