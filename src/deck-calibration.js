@@ -607,15 +607,13 @@ function estimateTransientSpreadMs(frequenciesHz, measuredDb, phaseRad, sampleRa
   const fftSize = 4096;
   const real = new Float64Array(fftSize);
   const imag = new Float64Array(fftSize);
-  const phaseLine = fitPhaseLine(frequenciesHz, phaseRad);
   for (let bin = 0; bin <= fftSize / 2; bin++) {
     const freq = (bin * sampleRate) / fftSize;
     const ampDb = interpolateLogValue(frequenciesHz, measuredDb, Math.max(freq, frequenciesHz[0]));
     const amp = Math.pow(10, ampDb / 20);
     const phase = interpolateLogValue(frequenciesHz, phaseRad, Math.max(freq, frequenciesHz[0]));
-    const debiasedPhase = phase - ((phaseLine.slope * TWO_PI * freq) + phaseLine.intercept);
-    const r = amp * Math.cos(debiasedPhase);
-    const im = amp * Math.sin(debiasedPhase);
+    const r = amp * Math.cos(phase);
+    const im = amp * Math.sin(phase);
     real[bin] = r;
     imag[bin] = im;
     if (bin > 0 && bin < fftSize / 2) {
@@ -705,25 +703,27 @@ function analyseResponseChannel(main, measurement, frequenciesHz) {
   const anchorDb = interpolateLogValue(frequenciesHz, smoothedMeasured, anchorHz);
   const anchoredMeasured = smoothedMeasured.map((value) => value - anchorDb);
   const anchoredCorrection = anchoredMeasured.map((value) => -value);
+  const phaseLine = fitPhaseLine(frequenciesHz, smoothedPhaseRad, 100, 8000);
+  const debiasedPhaseRad = smoothedPhaseRad.map((phase, index) => (
+    phase - ((phaseLine.slope * TWO_PI * frequenciesHz[index]) + phaseLine.intercept)
+  ));
   const rawGroupDelaySec = new Array(frequenciesHz.length).fill(0);
   for (let i = 0; i < frequenciesHz.length; i++) {
     const prev = Math.max(0, i - 1);
     const next = Math.min(frequenciesHz.length - 1, i + 1);
     const omegaA = TWO_PI * frequenciesHz[prev];
     const omegaB = TWO_PI * frequenciesHz[next];
-    const phaseA = smoothedPhaseRad[prev];
-    const phaseB = smoothedPhaseRad[next];
+    const phaseA = debiasedPhaseRad[prev];
+    const phaseB = debiasedPhaseRad[next];
     const deltaOmega = Math.max(1e-9, omegaB - omegaA);
     rawGroupDelaySec[i] = -((phaseB - phaseA) / deltaOmega);
   }
-  const phaseLine = fitPhaseLine(frequenciesHz, smoothedPhaseRad, 100, 8000);
-  const baselineDelaySec = -phaseLine.slope;
-  const residualGroupDelayMs = rawGroupDelaySec.map((value) => (value - baselineDelaySec) * 1000);
+  const residualGroupDelayMs = rawGroupDelaySec.map((value) => value * 1000);
   const groupDelaySummary = summarizeGroupDelayResidual(frequenciesHz, residualGroupDelayMs, 500, 8000);
   const transientSpreadMs = estimateTransientSpreadMs(
     frequenciesHz,
     anchoredMeasured,
-    smoothedPhaseRad,
+    debiasedPhaseRad,
     sr,
   );
   return {
@@ -731,7 +731,7 @@ function analyseResponseChannel(main, measurement, frequenciesHz) {
     correctionDb: anchoredCorrection,
     anchorHz,
     anchorDb,
-    phaseRad: smoothedPhaseRad,
+    phaseRad: debiasedPhaseRad,
     residualGroupDelayMs,
     clarity: {
       groupDelayResidualRmsMs: groupDelaySummary ? Number(groupDelaySummary.rmsMs.toFixed(3)) : null,
