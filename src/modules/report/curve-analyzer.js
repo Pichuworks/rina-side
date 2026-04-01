@@ -164,3 +164,89 @@ export function analyseEqResult(compileResult) {
 }
 
 export { BANDS };
+
+// ── Tag system ───────────────────────────────────────────────
+
+const TAG_DEFS = [
+  // Error/failure tags
+  { id: "fail",         label: { "zh-CN": "失败", ja: "失敗", en: "FAIL" },           color: "#dc3545", priority: 100 },
+  // Excellence
+  { id: "reference",    label: { "zh-CN": "参考级", ja: "リファレンス", en: "REF" },     color: "#28a745", priority: 90 },
+  // Transport problems
+  { id: "wf_high",      label: { "zh-CN": "抖晃高", ja: "W/F高", en: "W/F HIGH" },     color: "#dc3545", priority: 85 },
+  { id: "speed_off",    label: { "zh-CN": "速度偏差", ja: "速度ずれ", en: "SPEED" },    color: "#e8a040", priority: 80 },
+  // Channel issues
+  { id: "ch_imbalance", label: { "zh-CN": "声道偏差", ja: "ch偏差", en: "CH DIFF" },    color: "#e8a040", priority: 78 },
+  // Tonal character
+  { id: "warm",         label: { "zh-CN": "暖", ja: "ウォーム", en: "WARM" },           color: "#e87040", priority: 60 },
+  { id: "sl_warm",      label: { "zh-CN": "略暖", ja: "やや暖", en: "SL.WARM" },       color: "#d4956a", priority: 55 },
+  { id: "neutral",      label: { "zh-CN": "中性", ja: "中立", en: "NEUTRAL" },          color: "#888", priority: 50 },
+  { id: "sl_bright",    label: { "zh-CN": "略亮", ja: "やや明", en: "SL.BRIGHT" },     color: "#5b9bd5", priority: 55 },
+  { id: "bright",       label: { "zh-CN": "亮", ja: "ブライト", en: "BRIGHT" },         color: "#4080e8", priority: 60 },
+  // Frequency character
+  { id: "bass_full",    label: { "zh-CN": "低频饱满", ja: "低域豊か", en: "BASS+" },    color: "#c87030", priority: 45 },
+  { id: "bass_thin",    label: { "zh-CN": "低频偏薄", ja: "低域薄", en: "BASS−" },     color: "#6090c0", priority: 45 },
+  { id: "hf_good",      label: { "zh-CN": "高频延伸", ja: "高域◎", en: "HF EXT" },     color: "#28a745", priority: 40 },
+  { id: "hf_narrow",    label: { "zh-CN": "高频窄", ja: "高域狭", en: "HF NAR" },      color: "#e8a040", priority: 42 },
+  // Transport good
+  { id: "transport_ok", label: { "zh-CN": "走带稳", ja: "走行◎", en: "STABLE" },       color: "#28a745", priority: 35 },
+  { id: "ch_good",      label: { "zh-CN": "声道均衡", ja: "ch良好", en: "CH OK" },      color: "#28a745", priority: 30 },
+  // Flatness
+  { id: "flat",         label: { "zh-CN": "平坦", ja: "フラット", en: "FLAT" },         color: "#28a745", priority: 38 },
+  { id: "colored",      label: { "zh-CN": "染色", ja: "色付き", en: "COLORED" },        color: "#e8a040", priority: 38 },
+  // EQ fit
+  { id: "fit_good",     label: { "zh-CN": "拟合好", ja: "適合◎", en: "FIT OK" },       color: "#28a745", priority: 70 },
+  { id: "fit_poor",     label: { "zh-CN": "拟合差", ja: "適合✕", en: "FIT LOW" },      color: "#dc3545", priority: 75 },
+];
+
+const TAG_MAP = new Map(TAG_DEFS.map((t) => [t.id, t]));
+
+export function generateTags(analysis, { transport, balance, eqResult, error } = {}) {
+  const tags = [];
+  const add = (id) => { const def = TAG_MAP.get(id); if (def) tags.push(def); };
+
+  if (error) { add("fail"); return tags.slice(0, 5); }
+
+  if (analysis) {
+    // Reference grade
+    if (analysis.flatnessRms < 1.0 && analysis.rolloffHz && analysis.rolloffHz >= 16000) add("reference");
+    // Tilt
+    if (analysis.tiltLabel === "warm") add("warm");
+    else if (analysis.tiltLabel === "slightly_warm") add("sl_warm");
+    else if (analysis.tiltLabel === "bright") add("bright");
+    else if (analysis.tiltLabel === "slightly_bright") add("sl_bright");
+    else add("neutral");
+    // Bass
+    const bass = analysis.bands.find((b) => b.id === "bass");
+    if (bass && bass.avg > 2) add("bass_full");
+    else if (bass && bass.avg < -2) add("bass_thin");
+    // HF
+    if (analysis.rolloffHz) {
+      if (analysis.rolloffHz >= 18000) add("hf_good");
+      else if (analysis.rolloffHz < 12000) add("hf_narrow");
+    }
+    // Flatness
+    if (analysis.flatnessRms < 2) add("flat");
+    else if (analysis.flatnessRms > 4) add("colored");
+  }
+
+  if (transport) {
+    if (transport.wfRms > 0.2) add("wf_high");
+    else if (transport.wfLabel === "excellent" || transport.wfLabel === "good") add("transport_ok");
+    if (transport.speedErrorPercent > 0.5) add("speed_off");
+  }
+
+  if (balance) {
+    if (balance.rmsDiff > 1.5) add("ch_imbalance");
+    else if (balance.label === "excellent" || balance.label === "good") add("ch_good");
+  }
+
+  if (eqResult) {
+    if (eqResult.fitLabel === "excellent" || eqResult.fitLabel === "good") add("fit_good");
+    else if (eqResult.fitLabel === "poor") add("fit_poor");
+  }
+
+  // Sort by priority descending, take top 5
+  tags.sort((a, b) => b.priority - a.priority);
+  return tags.slice(0, 5);
+}

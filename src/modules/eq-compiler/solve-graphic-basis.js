@@ -168,68 +168,114 @@ export function solveGraphicBasis(targetDeltaDb, weights, usableMask, eqModel) {
     .map((entry) => entry.index);
 
   const columns = problem.bands.map((band) => band.weightedColumn);
-  const initialRelaxation = solveContinuousRelaxation(problem, order, problem.rhs);
-  const initialSteps = new Array(problem.bands.length).fill(0);
+
+  // Solve continuous relaxation first (always fast — just linear algebra)
+  const relaxation = solveContinuousRelaxation(problem, order, problem.rhs);
+  const continuousSteps = new Array(problem.bands.length).fill(0);
   for (let i = 0; i < order.length; i++) {
-    const bandIndex = order[i];
-    const band = problem.bands[bandIndex];
-    initialSteps[bandIndex] = nearestInteger(initialRelaxation.solution[i] ?? 0, band.minStep, band.maxStep);
+    continuousSteps[order[i]] = relaxation.solution[i] ?? 0;
   }
-  let bestSteps = [...initialSteps];
-  let bestError = computeResidualNormSq(
-    subtractVectors(problem.rhs, evaluateWeightedPrediction(columns, initialSteps)),
-  );
 
-  function search(fixedSteps, predictedWeighted) {
-    const freeIndices = order.filter((index) => fixedSteps[index] == null);
-    if (!freeIndices.length) {
-      bestError = computeResidualNormSq(subtractVectors(problem.rhs, predictedWeighted));
-      bestSteps = [...fixedSteps];
-      return;
-    }
-    const rhs = subtractVectors(problem.rhs, predictedWeighted);
-    const relaxation = solveContinuousRelaxation(problem, freeIndices, rhs);
-    if (relaxation.error >= bestError - 1e-9) return;
+  // Determine if branch-and-bound is feasible
+  // Total search space = product of (maxStep - minStep + 1) for all bands
+  const maxBranchNodes = problem.bands.reduce((product, band) => {
+    const range = Math.abs(band.maxStep - band.minStep) + 1;
+    return product * Math.min(range, 50); // cap per-band for estimation
+  }, 1);
+  const useBranchAndBound = maxBranchNodes <= 1e8; // ~100M nodes max
 
-    let pivotBandIndex = freeIndices[0];
-    let pivotLocalIndex = 0;
-    let bestPriority = -Infinity;
-    for (let localIndex = 0; localIndex < freeIndices.length; localIndex++) {
-      const bandIndex = freeIndices[localIndex];
+  if (useBranchAndBound) {
+    // Original branch-and-bound for coarse integer EQ (few options per band)
+    const initialSteps = new Array(problem.bands.length).fill(0);
+    for (let i = 0; i < order.length; i++) {
+      const bandIndex = order[i];
       const band = problem.bands[bandIndex];
-      const continuousValue = relaxation.solution[localIndex] ?? 0;
-      const nearest = Math.round(continuousValue);
-      const fractional = Math.abs(continuousValue - nearest);
-      const priority = fractional * Math.max(1, band.weightedNormSq);
-      if (priority > bestPriority) {
-        bestPriority = priority;
-        pivotBandIndex = bandIndex;
-        pivotLocalIndex = localIndex;
+      initialSteps[bandIndex] = nearestInteger(relaxation.solution[i] ?? 0, band.minStep, band.maxStep);
+    }
+    let bestSteps = [...initialSteps];
+    let bestError = computeResidualNormSq(
+      subtractVectors(problem.rhs, evaluateWeightedPrediction(columns, initialSteps)),
+    );
+
+    let nodeCount = 0;
+    const nodeLimit = 5e6; // hard cap: 5M nodes
+
+    function search(fixedSteps, predictedWeighted) {
+      if (++nodeCount > nodeLimit) return;
+      const freeIndices = order.filter((index) => fixedSteps[index] == null);
+      if (!freeIndices.length) {
+        const err = computeResidualNormSq(subtractVectors(problem.rhs, predictedWeighted));
+        if (err < bestError) {
+          bestError = err;
+          bestSteps = [...fixedSteps];
+        }
+        return;
+      }
+      const rhs = subtractVectors(problem.rhs, predictedWeighted);
+      const innerRelax = solveContinuousRelaxation(problem, freeIndices, rhs);
+      if (innerRelax.error >= bestError - 1e-9) return;
+
+      let pivotBandIndex = freeIndices[0];
+      let pivotLocalIndex = 0;
+      let bestPriority = -Infinity;
+      for (let localIndex = 0; localIndex < freeIndices.length; localIndex++) {
+        const bandIndex = freeIndices[localIndex];
+        const band = problem.bands[bandIndex];
+        const continuousValue = innerRelax.solution[localIndex] ?? 0;
+        const nearest = Math.round(continuousValue);
+        const fractional = Math.abs(continuousValue - nearest);
+        const priority = fractional * Math.max(1, band.weightedNormSq);
+        if (priority > bestPriority) {
+          bestPriority = priority;
+          pivotBandIndex = bandIndex;
+          pivotLocalIndex = localIndex;
+        }
+      }
+
+      const pivotBand = problem.bands[pivotBandIndex];
+      const branchValues = buildBranchOrder(
+        innerRelax.solution[pivotLocalIndex] ?? 0,
+        pivotBand.minStep,
+        pivotBand.maxStep,
+      );
+
+      // Limit branches per node to 7 closest values
+      const branchLimit = Math.min(branchValues.length, 7);
+      for (let bi = 0; bi < branchLimit; bi++) {
+        if (nodeCount > nodeLimit) return;
+        const value = branchValues[bi];
+        const nextFixed = [...fixedSteps];
+        nextFixed[pivotBandIndex] = value;
+        const nextPredicted = [...predictedWeighted];
+        const column = columns[pivotBandIndex];
+        for (let row = 0; row < nextPredicted.length; row++) nextPredicted[row] += (column[row] ?? 0) * value;
+        search(nextFixed, nextPredicted);
       }
     }
 
-    const pivotBand = problem.bands[pivotBandIndex];
-    const branchValues = buildBranchOrder(
-      relaxation.solution[pivotLocalIndex] ?? 0,
-      pivotBand.minStep,
-      pivotBand.maxStep,
-    );
+    search(new Array(problem.bands.length).fill(null), new Array(problem.rhs.length).fill(0));
 
-    for (const value of branchValues) {
-      const nextFixed = [...fixedSteps];
-      nextFixed[pivotBandIndex] = value;
-      const nextPredicted = [...predictedWeighted];
-      const column = columns[pivotBandIndex];
-      for (let row = 0; row < nextPredicted.length; row++) nextPredicted[row] += (column[row] ?? 0) * value;
-      search(nextFixed, nextPredicted);
-    }
+    const bestStepMap = new Map(eqModel.bands.map((band, index) => [band.id, bestSteps[index] ?? 0]));
+    return {
+      eqSteps: eqModel.bands.map((band, index) => ({ bandId: band.id, value: bestSteps[index] ?? 0 })),
+      predictedEqDb: evaluateBasisCurve(eqModel.basis, bestStepMap, targetDeltaDb.length),
+    };
   }
 
-  search(new Array(problem.bands.length).fill(null), new Array(problem.rhs.length).fill(0));
+  // ── Fast path: continuous solution quantized to nearest valid step ──
+  // Used when step count is too large for B&B (e.g. 0.1dB steps, ±12dB range)
+  const quantizedSteps = problem.bands.map((band, index) => {
+    const raw = continuousSteps[index];
+    const gainStep = eqModel.bands[index]?.gainStepDb || 1;
+    // Quantize to the nearest gainStep multiple within [minStep, maxStep]
+    const inStepUnits = raw / gainStep;
+    const rounded = band.integerOnly !== false ? Math.round(inStepUnits) : Math.round(inStepUnits * 10) / 10;
+    return Math.max(band.minStep, Math.min(band.maxStep, rounded));
+  });
 
-  const bestStepMap = new Map(eqModel.bands.map((band, index) => [band.id, bestSteps[index] ?? 0]));
+  const quantizedStepMap = new Map(eqModel.bands.map((band, index) => [band.id, quantizedSteps[index]]));
   return {
-    eqSteps: eqModel.bands.map((band, index) => ({ bandId: band.id, value: bestSteps[index] ?? 0 })),
-    predictedEqDb: evaluateBasisCurve(eqModel.basis, bestStepMap, targetDeltaDb.length),
+    eqSteps: eqModel.bands.map((band, index) => ({ bandId: band.id, value: quantizedSteps[index] })),
+    predictedEqDb: evaluateBasisCurve(eqModel.basis, quantizedStepMap, targetDeltaDb.length),
   };
 }

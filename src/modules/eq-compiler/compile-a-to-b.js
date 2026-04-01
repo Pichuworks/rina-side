@@ -6,6 +6,7 @@ import { computeFitScore, fitScoreStatus } from "./fit-score.js";
 import { solveGraphicBasis } from "./solve-graphic-basis.js";
 import { solveGraphicFixed } from "./solve-graphic-fixed.js";
 import { solveParametric } from "./solve-parametric.js";
+import { solveParametricFull } from "./solve-parametric-full.js";
 
 function fail(errorCode, message) {
   return {
@@ -134,7 +135,7 @@ function solveAgainstTarget(normalizedA, target) {
       duplicateStereoCurve(normalizedA.frequencyGridHz),
     );
   } else if (normalizedA.eqModel.kind === "parametric") {
-    solved = solveParametric(
+    solved = solveParametricFull(
       stereo.combinedDeltaDb,
       stereo.combinedWeights,
       stereo.combinedUsableMask,
@@ -191,6 +192,77 @@ export function compileEqAToB(profileA, profileB) {
 export function compileEqAToFlat(profileA) {
   const normalizedA = loadAndNormalizeProfile(profileA);
   return solveAgainstTarget(normalizedA, buildFlatStereoTarget(normalizedA.frequencyGridHz.length));
+}
+
+/**
+ * Built-in target response curves.
+ * Each is an array of [frequencyHz, dB] pairs relative to 1kHz = 0dB.
+ */
+export const TARGET_CURVES = {
+  "vdsf-5128": {
+    name: "VDSF 5128 Demo",
+    points: [[20,-0.5],[50,0],[100,0],[200,0.3],[500,0.5],[1000,0],[2000,-1.5],[3000,-3],[4000,-3.5],[5000,-2.5],[6000,-1.5],[8000,-3],[10000,-5],[12000,-6],[15000,-8],[20000,-12]],
+  },
+  "harman-2019": {
+    name: "Harman 2019 In-Ear",
+    points: [[20,0.5],[50,1],[100,0.5],[200,0],[500,0],[1000,0],[2000,-0.5],[3000,-2],[4000,-2.5],[5000,-1.5],[6000,-0.5],[8000,-3],[10000,-4.5],[12000,-5.5],[15000,-7],[20000,-10]],
+  },
+  "diffuse-field": {
+    name: "Diffuse Field",
+    points: [[20,0],[100,0],[200,0],[500,0],[1000,0],[2000,2],[3000,2.5],[4000,1.5],[5000,0],[6000,-1],[8000,-3],[10000,-5],[12000,-7],[15000,-10],[20000,-14]],
+  },
+};
+
+function interpolateTargetCurve(points, frequencyGridHz) {
+  // points = [[freq, dB], ...] sorted by freq
+  return frequencyGridHz.map((freq) => {
+    if (freq <= points[0][0]) return points[0][1];
+    if (freq >= points[points.length - 1][0]) return points[points.length - 1][1];
+    let lo = 0;
+    for (let i = 1; i < points.length; i++) {
+      if (points[i][0] >= freq) { lo = i - 1; break; }
+    }
+    const [f0, d0] = points[lo];
+    const [f1, d1] = points[lo + 1];
+    const t = Math.log(freq / f0) / Math.log(f1 / f0);
+    return d0 + (d1 - d0) * t;
+  });
+}
+
+function buildCurveStereoTarget(frequencyGridHz, targetCurvePoints, label) {
+  const db = interpolateTargetCurve(targetCurvePoints, frequencyGridHz);
+  const length = frequencyGridHz.length;
+  return {
+    mode: "curve",
+    label: label || "Target Curve",
+    responseDb: { L: [...db], R: [...db] },
+    confidence: { L: new Array(length).fill(1), R: new Array(length).fill(1) },
+    usableMask: { L: new Array(length).fill(true), R: new Array(length).fill(true) },
+  };
+}
+
+export function compileEqAToTarget(profileA, targetCurve) {
+  const normalizedA = loadAndNormalizeProfile(profileA);
+  const target = buildCurveStereoTarget(
+    normalizedA.frequencyGridHz,
+    targetCurve.points,
+    targetCurve.name,
+  );
+  return solveAgainstTarget(normalizedA, target);
+}
+
+export function computeFullResolutionTarget(profileA, targetCurve) {
+  const normalizedA = loadAndNormalizeProfile(profileA);
+  const grid = normalizedA.frequencyGridHz;
+  const targetDb = interpolateTargetCurve(targetCurve.points, grid);
+  const correctionL = grid.map((_, i) => (targetDb[i] || 0) - (normalizedA.responseDb.L[i] || 0));
+  const correctionR = grid.map((_, i) => (targetDb[i] || 0) - (normalizedA.responseDb.R[i] || 0));
+  return {
+    frequencyGridHz: [...grid],
+    correctionDb: { L: correctionL, R: correctionR },
+    sourceLabel: normalizedA.name || "A",
+    targetLabel: targetCurve.name || "Target Curve",
+  };
 }
 
 /**

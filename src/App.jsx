@@ -1709,6 +1709,14 @@ export default function CassetteTool() {
     analyseDeckCalCapture,
     saveResponseProfile,
     saveDeckCalProgramManifest,
+    multiCaptures,
+    importMultiCaptureFiles,
+    clearMultiCaptures,
+    analyseMultiCaptures,
+    standardTapePreset,
+    setStandardTapePreset,
+    analyseStandardTape,
+    standardTapePresets,
   } = useDeckCalibration({ T, showToast, downloadBlob, encodeWAV, decodeExternalAudioFile, setProcessing, setProcMsg, showTools });
 
   const onLoadCalibrationProfile = useCallback((profile) => {
@@ -1747,6 +1755,8 @@ export default function CassetteTool() {
     compilerProfileAName,
     compilerProfileBName,
     compilerTargetMode,
+    compilerTargetCurve,
+    setCompilerTargetCurve,
     playerEqCompileResult,
     compileLoadableProfile,
     importCompilerProfileFile,
@@ -2098,10 +2108,35 @@ export default function CassetteTool() {
     convolver.normalize = false;
     convolver.buffer = createImpulseAudioBuffer(ctx, impulse);
     inputNode.connect(convolver);
-    return {
-      output: convolver,
-      nodes: [convolver],
-    };
+
+    // When simulation is active after correction, the correction's HF boost
+    // can overdrive the saturation WaveShapers, creating sibilance artifacts.
+    // Compensate: measure the correction's broadband energy gain and attenuate
+    // so the simulation receives approximately the same total signal level.
+    // This preserves the corrected frequency shape but prevents level-driven
+    // clipping in downstream nonlinear processors.
+    const ch = loadedCalibrationProfile.channels?.L;
+    if (ch?.correctionDb?.length) {
+      // RMS of correction curve = broadband energy change
+      let sumSq = 0;
+      for (const db of ch.correctionDb) sumSq += db * db;
+      const rmsDb = Math.sqrt(sumSq / ch.correctionDb.length);
+      // Average of positive corrections (net boost)
+      let posSum = 0, posCount = 0;
+      for (const db of ch.correctionDb) { if (db > 0) { posSum += db; posCount++; } }
+      const avgBoostDb = posCount > 0 ? posSum / posCount : 0;
+      // Compensate by half the average boost — enough to reduce WaveShaper
+      // overdriving without making the signal noticeably quieter
+      const compensateDb = Math.min(avgBoostDb * 0.5, 6);
+      if (compensateDb > 0.3) {
+        const compensate = ctx.createGain();
+        compensate.gain.value = Math.pow(10, -compensateDb / 20);
+        convolver.connect(compensate);
+        return { output: compensate, nodes: [convolver, compensate] };
+      }
+    }
+
+    return { output: convolver, nodes: [convolver] };
   }, [applyCalibrationPreview, createImpulseAudioBuffer, getCorrectionImpulse, loadedCalibrationProfile]);
 
   const buildPlaybackSimulationGraph = useCallback((ctx, inputNode, simOutput, playPos, totalDur, initialGain = 1) => {
@@ -2834,6 +2869,14 @@ export default function CassetteTool() {
                 onAnalyseCapture={analyseDeckCalCapture}
                 onSaveResponseProfile={saveResponseProfile}
                 onSaveProgramManifest={saveDeckCalProgramManifest}
+                multiCaptures={multiCaptures}
+                onImportMultiCaptures={importMultiCaptureFiles}
+                onClearMultiCaptures={clearMultiCaptures}
+                onAnalyseMultiCaptures={analyseMultiCaptures}
+                standardTapePreset={standardTapePreset}
+                onSetStandardTapePreset={setStandardTapePreset}
+                onAnalyseStandardTape={analyseStandardTape}
+                standardTapePresets={standardTapePresets}
                 probeCaptureName={probeCaptureName}
                 probeProfile={playerProbeProfile}
                 songRefNames={songReferenceTracks.map((track) => track.name)}
@@ -2849,6 +2892,8 @@ export default function CassetteTool() {
                 compilerProfileAName={compilerProfileAName}
                 compilerProfileBName={compilerProfileBName}
                 compilerTargetMode={compilerTargetMode}
+                compilerTargetCurve={compilerTargetCurve}
+                onSetCompilerTargetCurve={setCompilerTargetCurve}
                 compileResult={playerEqCompileResult}
                 compileLoadProfileName={compileLoadableProfile?.name || ""}
                 onExportProbe={exportPlayerProbe}

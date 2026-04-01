@@ -14,6 +14,7 @@ import {
   analyseStereoBalance,
   analyseTransport,
   analyseEqResult,
+  generateTags,
 } from "./curve-analyzer.js";
 
 // ── Text helpers ─────────────────────────────────────────────
@@ -82,9 +83,20 @@ export function generateDeckCalibrationReport(responseAnalysis, transportAnalysi
     const lines = [];
     lines.push(`## 卡座校准报告`);
     lines.push(``);
-    lines.push(`### 频响特性`);
+    lines.push(`### 测量说明`);
+    lines.push(`这份结果反映的是 **录制 + 回放整条链路** 的综合特性（校准信号 → 磁头录制 → 磁带 → 磁头回放 → 输出）。录制端和回放端的偏差混在一起，无法从单次自录自放中分离。`);
+    lines.push(``);
+    lines.push(`**如何单独测录制特性：**`);
+    lines.push(`方法 A（有标准校准带）：先用标准校准带（如 ABEX/TDK 测试带）回放，测出本机的回放偏差。然后从自录自放结果中减去回放偏差 = 录制特性。`);
+    lines.push(`方法 B（有两台机器）：同一盒带在本机录制，分别在本机和另一台已知回放特性的机器上回放。两次结果的差值 = 两台机器的回放差异。结合自录自放结果即可分离。`);
+    lines.push(`方法 C（只有一台机器）：用 SIDE 导出校准信号录到带上（= 录制链路的输出），然后把这盒带拿到任何一台有 LINE OUT 的设备回放、内录回电脑。如果那台设备的回放特性已知或近似平坦（例如高端三磁头卡座经过方位角校准），那么内录结果 ≈ 本机的录制特性。`);
+    lines.push(``);
+    lines.push(`**如何单独测回放特性：**`);
+    lines.push(`用一盒已知特性的标准校准带（不经过本机录制）直接在本机回放并分析。标准带的规格是已知的，测到的偏差就是本机的回放偏差。`);
+    lines.push(``);
+    lines.push(`### 综合频响特性`);
     lines.push(`整体频响 ${FLAT_TEXT["zh-CN"][a.flatnessLabel]}（RMS 偏差 ${a.flatnessRms} dB），音色取向 ${TILT_TEXT["zh-CN"][a.tiltLabel]}。`);
-    if (a.rolloffHz) lines.push(`高频 -3dB 点在 ${hz(a.rolloffHz)} 附近。${a.rolloffHz >= 15000 ? "高频延伸良好。" : a.rolloffHz >= 12000 ? "高频有一定衰减，录制 Hi-Fi 内容时可能会注意到差异。" : "高频衰减比较明显，高频细节会有一定损失。"}`);
+    if (a.rolloffHz) lines.push(`高频 -3dB 点在 ${hz(a.rolloffHz)} 附近。${a.rolloffHz >= 15000 ? "高频延伸良好——录制端和回放端的高频损失都不大。" : a.rolloffHz >= 12000 ? "高频有一定衰减。可能是磁头磨损、方位角偏差、磁带类型限制、或 BIAS 设定偏高（录制端过度消磁高频）中的一种或多种原因。" : "高频衰减比较明显。建议检查磁头状态和 BIAS 设置。"}`);
 
     const notable = a.bands.filter((b) => Math.abs(b.avg) > 1.5);
     if (notable.length) {
@@ -99,31 +111,32 @@ export function generateDeckCalibrationReport(responseAnalysis, transportAnalysi
       lines.push(``);
       lines.push(`### 声道平衡`);
       lines.push(`左右声道一致性${BALANCE_TEXT["zh-CN"][bal.label]}（RMS 差异 ${bal.rmsDiff} dB，最大差异 ${bal.maxDiff} dB @ ${hz(bal.maxDiffFreq)}）。`);
-      if (bal.rmsDiff > 1.5) lines.push(`左右差异偏大，建议检查磁头方位角和声道间串扰。`);
+      if (bal.rmsDiff > 1.5) lines.push(`左右差异偏大——在自录自放场景下，这可能来自录制磁头或回放磁头的方位角偏差、声道间串扰、或两者兼有。`);
     }
 
     if (tr) {
       lines.push(``);
       lines.push(`### 走带稳定性`);
       lines.push(`速度偏差 ${tr.speedErrorPercent}%（${SPEED_TEXT["zh-CN"][tr.speedLabel]}${tr.speedFast ? "，偏快" : "，偏慢"}），Wow/Flutter ${tr.wfRms}% RMS（${WF_TEXT["zh-CN"][tr.wfLabel]}）。`);
+      lines.push(`注意：自录自放的 W/F 数值包含了录制时和回放时两次走带误差的叠加。实际单程 W/F 会更小一些。`);
       if (tr.wfLabel === "excellent" || tr.wfLabel === "good") {
-        lines.push(`走带机构状态不错，适合录制对音高敏感的内容。`);
+        lines.push(`即便是叠加值也很低，说明走带机构状态不错。`);
       }
     }
 
     lines.push(``);
     lines.push(`### 璃奈的总结`);
     const verdict = [];
-    if (a.flatnessLabel === "very_flat" || a.flatnessLabel === "flat") verdict.push("频响表现很好");
-    else verdict.push("频响有一定个性");
+    if (a.flatnessLabel === "very_flat" || a.flatnessLabel === "flat") verdict.push("综合频响表现很好");
+    else verdict.push("综合频响有一定个性");
     if (tr && (tr.wfLabel === "excellent" || tr.wfLabel === "good")) verdict.push("走带很稳");
     if (bal && (bal.label === "excellent" || bal.label === "good")) verdict.push("声道平衡也不错");
-    lines.push(`${verdict.join("，")}。${a.tiltLabel === "warm" || a.tiltLabel === "slightly_warm" ? "录出来的声音会带一点暖意，很适合人声和原声乐器。" : a.tiltLabel === "bright" || a.tiltLabel === "slightly_bright" ? "整体偏亮，细节会比较突出，但要注意齿音。" : "中性取向，忠实还原原始信号。"}`);
-    lines.push(`加载校准档案后，SIDE 会在试听和导出时自动补偿这些偏差。`);
+    lines.push(`${verdict.join("，")}。${a.tiltLabel === "warm" || a.tiltLabel === "slightly_warm" ? "录出来的声音会带一点暖意——可能是磁头特性或磁带饱和带来的自然染色。" : a.tiltLabel === "bright" || a.tiltLabel === "slightly_bright" ? "整体偏亮——高频通路状况不错，但录制人声类内容时可以关注一下齿音。" : "中性取向，录制链路的染色很小。"}`);
+    lines.push(`加载校准档案后，SIDE 会在试听和导出时补偿这条链路的综合偏差。如果只想补偿回放端（例如在其它卡座上播放），需要单独测量那台卡座的回放特性。`);
 
-    const summary = `${TILT_TEXT["zh-CN"][a.tiltLabel]}，${FLAT_TEXT["zh-CN"][a.flatnessLabel]}${a.rolloffHz ? `，HF -3dB @ ${hz(a.rolloffHz)}` : ""}${tr ? `，W/F ${tr.wfRms}%` : ""}`;
-
-    return { summary, full: lines.join("\n") };
+    const summary = `${TILT_TEXT["zh-CN"][a.tiltLabel]}（录放综合），${FLAT_TEXT["zh-CN"][a.flatnessLabel]}${a.rolloffHz ? `，HF -3dB @ ${hz(a.rolloffHz)}` : ""}${tr ? `，W/F ${tr.wfRms}%` : ""}`;
+    const tags = generateTags(a, { transport: tr, balance: bal });
+    return { summary, full: lines.join("\n"), tags };
   }
 
   // ── English fallback ────────────────────────────────────────
@@ -150,8 +163,8 @@ export function generateDeckCalibrationReport(responseAnalysis, transportAnalysi
   lines.push(`${TILT_TEXT.en[a.tiltLabel].charAt(0).toUpperCase() + TILT_TEXT.en[a.tiltLabel].slice(1)} character, ${FLAT_TEXT.en[a.flatnessLabel]}. Loading the calibration profile will compensate for these deviations.`);
 
   const summary = `${TILT_TEXT.en[a.tiltLabel]}, ${FLAT_TEXT.en[a.flatnessLabel]}${a.rolloffHz ? `, HF -3dB @ ${hz(a.rolloffHz)}` : ""}${tr ? `, W/F ${tr.wfRms}%` : ""}`;
-
-  return { summary, full: lines.join("\n") };
+  const tags = generateTags(a, { transport: tr, balance: bal });
+  return { summary, full: lines.join("\n"), tags };
 }
 
 // ── Report: Player Profile ───────────────────────────────────
@@ -210,7 +223,8 @@ export function generatePlayerProfileReport(profile, label, lang = "zh-CN") {
     }
 
     const summary = `${TILT_TEXT["zh-CN"][a.tiltLabel]}取向${character.length ? "，" + character.join("、") : ""}${a.rolloffHz ? `，HF → ${hz(a.rolloffHz)}` : ""}`;
-    return { summary, full: lines.join("\n") };
+    const tags = generateTags(a, { balance: bal });
+    return { summary, full: lines.join("\n"), tags };
   }
 
   // English fallback
@@ -220,7 +234,8 @@ export function generatePlayerProfileReport(profile, label, lang = "zh-CN") {
   lines.push(`Tonal character: ${TILT_TEXT.en[a.tiltLabel]}, response is ${FLAT_TEXT.en[a.flatnessLabel]}.`);
   if (a.rolloffHz) lines.push(`HF extension to about ${hz(a.rolloffHz)}.`);
   const summary = `${TILT_TEXT.en[a.tiltLabel]}, ${FLAT_TEXT.en[a.flatnessLabel]}${a.rolloffHz ? `, HF → ${hz(a.rolloffHz)}` : ""}`;
-  return { summary, full: lines.join("\n") };
+  const tags = generateTags(a, { balance: bal });
+  return { summary, full: lines.join("\n"), tags };
 }
 
 // ── Report: EQ Compile ───────────────────────────────────────
@@ -229,8 +244,9 @@ export function generateEqCompileReport(compileResult, profileAName, profileBNam
   if (!compileResult) return null;
   const eq = analyseEqResult(compileResult);
   if (!eq) {
-    if (lang === "zh-CN") return { summary: "计算未成功", full: `EQ 计算失败：${compileResult.message || compileResult.errorCode || "未知错误"}` };
-    return { summary: "Compile failed", full: `EQ compile failed: ${compileResult.message || compileResult.errorCode || "unknown"}` };
+    const failTags = generateTags(null, { error: true });
+    if (lang === "zh-CN") return { summary: "计算未成功", full: `EQ 计算失败：${compileResult.message || compileResult.errorCode || "未知错误"}`, tags: failTags };
+    return { summary: "Compile failed", full: `EQ compile failed: ${compileResult.message || compileResult.errorCode || "unknown"}`, tags: failTags };
   }
 
   if (lang === "zh-CN") {
@@ -258,7 +274,8 @@ export function generateEqCompileReport(compileResult, profileAName, profileBNam
     }
 
     const summary = `${FIT_TEXT["zh-CN"][eq.fitLabel]}（${eq.fitScore}），${eq.activeSteps} 个频段`;
-    return { summary, full: lines.join("\n") };
+    const tags = generateTags(null, { eqResult: eq });
+    return { summary, full: lines.join("\n"), tags };
   }
 
   // English fallback
@@ -269,7 +286,8 @@ export function generateEqCompileReport(compileResult, profileAName, profileBNam
   lines.push(``);
   lines.push(`Fit score ${eq.fitScore} (${FIT_TEXT.en[eq.fitLabel]}), ${eq.activeSteps}/${eq.totalSteps} bands active.`);
   const summary = `${FIT_TEXT.en[eq.fitLabel]} (${eq.fitScore}), ${eq.activeSteps} bands`;
-  return { summary, full: lines.join("\n") };
+  const tags = generateTags(null, { eqResult: eq });
+  return { summary, full: lines.join("\n"), tags };
 }
 
 // ── Report: Full-resolution correction ───────────────────────
@@ -310,12 +328,14 @@ export function generateFullResCorrectionReport(profileA, profileB, correctionPr
     }
 
     const summary = `${nameA}→${nameB}，${notable.length ? notable.map((b) => `${b.label} ${sign(b.avg)}`).join(" / ") : "整体微调"}`;
-    return { summary, full: lines.join("\n") };
+    const tags = generateTags(a);
+    return { summary, full: lines.join("\n"), tags };
   }
 
   const lines = [];
   lines.push(`## Full-Resolution Correction Report`);
   lines.push(`${nameA} → ${nameB}`);
   const summary = `${nameA}→${nameB}, correction applied`;
-  return { summary, full: lines.join("\n") };
+  const tags = generateTags(a);
+  return { summary, full: lines.join("\n"), tags };
 }

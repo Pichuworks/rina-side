@@ -494,3 +494,182 @@ export function analyseTestTapeProgram(audioBuffer, program = generateTestTapePr
     transport,
   };
 }
+
+// ── Standard calibration tape analyzer ──────────────────────
+// For tapes with discrete frequency tones (e.g. AIWA 125Hz+1kHz+8kHz)
+
+const STANDARD_TAPE_PRESETS = {
+  "aiwa-3freq": {
+    name: "AIWA 125Hz + 1kHz + 8kHz",
+    frequencies: [125, 1000, 8000],
+    nominalDb: 0, // all tones at same nominal level
+  },
+  "abex-3freq": {
+    name: "ABEX 125Hz + 1kHz + 8kHz",
+    frequencies: [125, 1000, 8000],
+    nominalDb: 0,
+  },
+  "abex-teac-3freq": {
+    name: "ABEX/TEAC 125Hz + 1kHz + 6.3kHz",
+    frequencies: [125, 1000, 6300],
+    nominalDb: 0,
+  },
+  "mrl-4freq": {
+    name: "MRL 315Hz + 1kHz + 10kHz + 16kHz",
+    frequencies: [315, 1000, 10000, 16000],
+    nominalDb: 0,
+  },
+  "victor-3freq": {
+    name: "Victor 63Hz + 1kHz + 10kHz",
+    frequencies: [63, 1000, 10000],
+    nominalDb: 0,
+  },
+};
+
+export { STANDARD_TAPE_PRESETS };
+
+function goertzelPower(data, freqHz, sampleRate, start, length) {
+  const end = Math.min(data.length, start + length);
+  const coeff = 2 * Math.cos((TWO_PI * freqHz) / sampleRate);
+  let s1 = 0, s2 = 0;
+  for (let i = start; i < end; i++) {
+    const s0 = data[i] + coeff * s1 - s2;
+    s2 = s1;
+    s1 = s0;
+  }
+  return Math.sqrt(Math.max(0, s1 * s1 + s2 * s2 - coeff * s1 * s2));
+}
+
+function detectToneSegments(mono, sampleRate, targetFreqs, frameSize = 8192, hopSize = 2048) {
+  // For each target frequency, find the time segment where it's dominant
+  const segments = targetFreqs.map(() => ({ startFrame: -1, endFrame: -1, frames: [] }));
+
+  for (let start = 0; start + frameSize <= mono.length; start += hopSize) {
+    const frameIdx = start / hopSize;
+    // Measure energy at each target frequency
+    const powers = targetFreqs.map((f) => goertzelPower(mono, f, sampleRate, start, frameSize));
+    const totalPower = powers.reduce((s, p) => s + p, 0);
+    if (totalPower < 1e-10) continue;
+
+    // Find dominant frequency in this frame
+    let maxPower = 0, maxIdx = -1;
+    for (let i = 0; i < powers.length; i++) {
+      if (powers[i] > maxPower) { maxPower = powers[i]; maxIdx = i; }
+    }
+    // Dominance test: this frequency has >60% of total energy
+    if (maxIdx >= 0 && maxPower / totalPower > 0.6) {
+      segments[maxIdx].frames.push({ frameStart: start, power: maxPower });
+    }
+  }
+
+  // For each frequency, find the longest contiguous run
+  for (let i = 0; i < segments.length; i++) {
+    const frames = segments[i].frames;
+    if (!frames.length) continue;
+    // Find start/end of the stable region (skip first/last 10% for transients)
+    const trimCount = Math.max(1, Math.floor(frames.length * 0.1));
+    const stable = frames.slice(trimCount, frames.length - trimCount);
+    if (stable.length) {
+      segments[i].startFrame = stable[0].frameStart;
+      segments[i].endFrame = stable[stable.length - 1].frameStart + frameSize;
+      segments[i].stableFrames = stable;
+    }
+  }
+
+  return segments;
+}
+
+export function analyseStandardCalibrationTape(audioBuffer, preset) {
+  const sr = audioBuffer.sampleRate;
+  const channels = Math.max(1, audioBuffer.numberOfChannels || 1);
+  const left = audioBuffer.getChannelData(0);
+  const right = audioBuffer.getChannelData(Math.min(1, channels - 1));
+  const mono = new Float32Array(left.length);
+  for (let i = 0; i < left.length; i++) mono[i] = (left[i] + right[i]) * 0.5;
+
+  const targetFreqs = preset.frequencies;
+  const segments = detectToneSegments(mono, sr, targetFreqs);
+
+  // Measure level at each frequency using the stable segments
+  const measuredDbL = [];
+  const measuredDbR = [];
+  const detectedFreqs = [];
+  const missingFreqs = [];
+
+  for (let i = 0; i < targetFreqs.length; i++) {
+    const seg = segments[i];
+    if (!seg.stableFrames?.length) {
+      missingFreqs.push(targetFreqs[i]);
+      measuredDbL.push(null);
+      measuredDbR.push(null);
+      detectedFreqs.push(targetFreqs[i]);
+      continue;
+    }
+    // Average power across stable frames for L and R separately
+    let sumL = 0, sumR = 0, count = 0;
+    for (const frame of seg.stableFrames) {
+      const len = 8192;
+      sumL += goertzelPower(left, targetFreqs[i], sr, frame.frameStart, Math.min(len, left.length - frame.frameStart));
+      sumR += goertzelPower(right, targetFreqs[i], sr, frame.frameStart, Math.min(len, right.length - frame.frameStart));
+      count++;
+    }
+    const avgL = count > 0 ? sumL / count : 0;
+    const avgR = count > 0 ? sumR / count : 0;
+    measuredDbL.push(20 * Math.log10(Math.max(avgL, 1e-12)));
+    measuredDbR.push(20 * Math.log10(Math.max(avgR, 1e-12)));
+    detectedFreqs.push(targetFreqs[i]);
+  }
+
+  // Normalize to 1kHz reference (or closest frequency)
+  const refIdx = targetFreqs.indexOf(1000) >= 0 ? targetFreqs.indexOf(1000) : 0;
+  const refL = measuredDbL[refIdx] ?? 0;
+  const refR = measuredDbR[refIdx] ?? 0;
+  const relativeDbL = measuredDbL.map((v) => v != null ? v - refL : null);
+  const relativeDbR = measuredDbR.map((v) => v != null ? v - refR : null);
+
+  // Build full correction curve via log interpolation
+  const gridHz = buildFrequencyGridHz(20, 20000, 24);
+  const correctionL = gridHz.map((f) => -interpolateDiscretePoints(detectedFreqs, relativeDbL, f));
+  const correctionR = gridHz.map((f) => -interpolateDiscretePoints(detectedFreqs, relativeDbR, f));
+
+  return {
+    kind: "standard-calibration-tape",
+    preset: preset.name,
+    frequencies: detectedFreqs,
+    measuredDbL: relativeDbL,
+    measuredDbR: relativeDbR,
+    missingFreqs,
+    frequenciesHz: gridHz,
+    channels: {
+      L: { measuredDb: relativeDbL.map((v) => v ?? 0), correctionDb: correctionL },
+      R: { measuredDb: relativeDbR.map((v) => v ?? 0), correctionDb: correctionR },
+    },
+    profile: {
+      type: "deck.playback-correction-profile",
+      name: `Playback Cal (${preset.name})`,
+      createdAt: new Date().toISOString(),
+      channels: {
+        L: { frequenciesHz: gridHz, correctionDb: correctionL },
+        R: { frequenciesHz: gridHz, correctionDb: correctionR },
+      },
+    },
+  };
+}
+
+function interpolateDiscretePoints(freqs, dbValues, targetHz) {
+  const validPairs = [];
+  for (let i = 0; i < freqs.length; i++) {
+    if (dbValues[i] != null && Number.isFinite(dbValues[i])) validPairs.push({ freq: freqs[i], db: dbValues[i] });
+  }
+  if (!validPairs.length) return 0;
+  if (validPairs.length === 1) return validPairs[0].db;
+  if (targetHz <= validPairs[0].freq) return validPairs[0].db;
+  if (targetHz >= validPairs[validPairs.length - 1].freq) return validPairs[validPairs.length - 1].db;
+  for (let i = 0; i < validPairs.length - 1; i++) {
+    if (targetHz >= validPairs[i].freq && targetHz <= validPairs[i + 1].freq) {
+      const t = Math.log(targetHz / validPairs[i].freq) / Math.log(validPairs[i + 1].freq / validPairs[i].freq);
+      return validPairs[i].db + (validPairs[i + 1].db - validPairs[i].db) * t;
+    }
+  }
+  return 0;
+}

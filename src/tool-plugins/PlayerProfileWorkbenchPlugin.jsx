@@ -1,6 +1,7 @@
 import React, { useMemo, useRef, useState } from "react";
 import { ReportCard } from "./ReportCard.jsx";
 import { generatePlayerProfileReport, generateEqCompileReport } from "../modules/report/report-generator.js";
+import { TARGET_CURVES } from "../modules/eq-compiler/compile-a-to-b.js";
 
 export const PLAYER_PROFILE_WORKBENCH_PLUGIN_ID = "player-profile-workbench";
 
@@ -56,13 +57,17 @@ const LABELS = {
     targetMode: "目标",
     targetProfile: "模仿另一台设备",
     targetFlat: "趋向平直",
+    targetCurve: "趋向频响",
+    targetCurveSelect: "目标曲线",
+    targetCurveImport: "导入自定义曲线",
     sourceA: "设备频响（A）",
     sourceB: "目标频响（B）",
     sourceImportFile: "导入文件",
     sourceUseEq: "用 EQ 模型",
     sourceUseProbe: "用测试信号法",
     sourceUseSong: "用曲目对比法",
-    compileActions: "计算与导出",
+    compileActions: "计算与导出（需要 EQ 模型）",
+    eqMissingHint: "设备频响（A）需要包含 EQ 模型才能计算。请使用「设备 EQ 建模」区域生成 EQ 模型，或用「用 EQ 模型」按钮加载。不需要 EQ 模型的场景请使用下方的「全分辨率补偿」。",
     importAProfile: "导入设备频响",
     importBProfile: "导入目标频响",
     useEqAsA: "用上面的 EQ 模型",
@@ -86,7 +91,7 @@ const LABELS = {
     curveLegendCorrected: "修正后听感",
     exportText: "导出文本",
     exportJson: "导出 JSON",
-    loadFullRes: "加载全分辨率补偿",
+    loadFullRes: "加载全分辨率补偿到主页面",
     exportFullRes: "导出全分辨率补偿档案",
     fullResHint: "不受 EQ 频段限制，精度最高。适合不能调 EQ 的设备——把补偿烧进导出音频里。",
     analysisProgress: "分析进度",
@@ -152,13 +157,17 @@ const LABELS = {
     targetMode: "Target",
     targetProfile: "Match Another Device",
     targetFlat: "Flatten",
+    targetCurve: "Target Curve",
+    targetCurveSelect: "Target Curve",
+    targetCurveImport: "Import Custom Curve",
     sourceA: "Device Response (A)",
     sourceB: "Target Response (B)",
     sourceImportFile: "Import File",
     sourceUseEq: "Use EQ Model",
     sourceUseProbe: "Use Probe Result",
     sourceUseSong: "Use Song Result",
-    compileActions: "Compute & Export",
+    compileActions: "Compute & Export (needs EQ model)",
+    eqMissingHint: "Device response (A) must include an EQ model. Build one in the EQ Model section above, or use 'Use EQ Model'. For no-EQ scenarios, use Full-Res Correction below.",
     importAProfile: "Import A Profile",
     importBProfile: "Import B Profile",
     useEqAsA: "Use A Adjustable Profile",
@@ -182,7 +191,7 @@ const LABELS = {
     curveLegendCorrected: "Corrected Response",
     exportText: "Export Text",
     exportJson: "Export JSON",
-    loadFullRes: "Load Full-Res Correction",
+    loadFullRes: "Load Full-Res to Main Page",
     exportFullRes: "Export Full-Res Correction",
     fullResHint: "No EQ band quantization — highest precision. For devices without adjustable EQ — bake the correction into exported audio.",
     analysisProgress: "Analysis Progress",
@@ -248,13 +257,17 @@ const LABELS = {
     targetMode: "目標",
     targetProfile: "他デバイスを模擬",
     targetFlat: "Flat 化",
+    targetCurve: "目標カーブ",
+    targetCurveSelect: "目標カーブ",
+    targetCurveImport: "カスタムカーブ読込",
     sourceA: "デバイス周波数応答 (A)",
     sourceB: "目標周波数応答 (B)",
     sourceImportFile: "ファイル読込",
     sourceUseEq: "EQ モデルを使う",
     sourceUseProbe: "テスト信号の結果",
     sourceUseSong: "楽曲比較の結果",
-    compileActions: "算出と書き出し",
+    compileActions: "算出と書き出し（EQ モデル必要）",
+    eqMissingHint: "デバイス周波数応答 (A) に EQ モデルが必要です。上の「EQ モデル」で生成するか、「EQ モデルを使う」で読み込んでください。EQ 不要の場合は下のフル解像度補正をお使いください。",
     importAProfile: "A Profile 読み込み",
     importBProfile: "B Profile 読み込み",
     useEqAsA: "A 調整可能プロファイルを使う",
@@ -463,6 +476,8 @@ export function PlayerProfileWorkbenchPlugin(props) {
     compilerProfileAName,
     compilerProfileBName,
     compilerTargetMode = "profile",
+    compilerTargetCurve,
+    onSetCompilerTargetCurve,
     compileResult,
     compileLoadProfileName,
     onExportProbe,
@@ -543,8 +558,21 @@ export function PlayerProfileWorkbenchPlugin(props) {
     };
   }, [compileResult, t]);
 
-  const compileActionDisabled = processing || !compilerProfileAName || (compilerTargetMode === "profile" && !compilerProfileBName);
-  const compileTargetName = compilerTargetMode === "flat" ? t.targetFlat : (compilerProfileBName || t.idle);
+  const hasEqModel = !!compileResult || !!(compilerProfileAName && (
+    props.eqReadyProfile?.eqModel || // If A was loaded via "Use EQ Model"
+    false // File import may or may not have eqModel — checked at compile time
+  ));
+  const compileActionDisabled = processing
+    || !compilerProfileAName
+    || (compilerTargetMode === "profile" && !compilerProfileBName)
+    || (compilerTargetMode === "curve" && !compilerTargetCurve);
+  const fullResDisabled = processing
+    || !compilerProfileAName
+    || (compilerTargetMode === "profile" && !compilerProfileBName)
+    || (compilerTargetMode === "curve" && !compilerTargetCurve);
+  const compileTargetName = compilerTargetMode === "flat" ? t.targetFlat
+    : compilerTargetMode === "curve" ? (compilerTargetCurve?.name || t.targetCurve)
+    : (compilerProfileBName || t.idle);
 
   const probeReport = useMemo(
     () => (probeProfile ? generatePlayerProfileReport(probeProfile, probeProfile.name, lang) : null),
@@ -599,7 +627,11 @@ export function PlayerProfileWorkbenchPlugin(props) {
           {statBox(t.probeCapture, probeCaptureName || t.idle)}
           {probeProfile && statBox(t.profileResult, probeProfile.name)}
         </div>
-        {probeReport && <ReportCard summary={probeReport.summary} full={probeReport.full} accentLabel="璃奈" onSave={() => {}} />}
+        {probeReport && <ReportCard summary={probeReport.summary} full={probeReport.full} tags={probeReport.tags} lang={lang}
+          chartData={probeProfile ? { frequencyGridHz: probeProfile.frequencyGridHz, curves: [
+            { db: probeProfile.responseDb?.L, color: "#4080e8", label: "L" },
+            { db: probeProfile.responseDb?.R, color: "#e87040", label: "R" },
+          ] } : null} />}
       </div>
 
       <div style={sectionStyle()}>
@@ -688,7 +720,11 @@ export function PlayerProfileWorkbenchPlugin(props) {
             </div>
           </div>
         )}
-        {songReport && <ReportCard summary={songReport.summary} full={songReport.full} accentLabel="璃奈" onSave={() => {}} />}
+        {songReport && <ReportCard summary={songReport.summary} full={songReport.full} tags={songReport.tags} lang={lang}
+          chartData={songProfile ? { frequencyGridHz: songProfile.frequencyGridHz, curves: [
+            { db: songProfile.responseDb?.L, color: "#4080e8", label: "L" },
+            { db: songProfile.responseDb?.R, color: "#e87040", label: "R" },
+          ] } : null} />}
       </div>
 
       <div style={sectionStyle()}>
@@ -784,10 +820,26 @@ export function PlayerProfileWorkbenchPlugin(props) {
         {/* ── Target mode toggle ─────────────────────────── */}
         <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
           <div style={{ fontSize: 11, color: "var(--text-dim)" }}>{t.targetMode}</div>
-          <div style={{ display: "flex", gap: 8 }}>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <button onClick={() => onSetCompilerTargetMode("profile")} style={actionBtnStyle(compilerTargetMode === "profile")}>{t.targetProfile}</button>
             <button onClick={() => onSetCompilerTargetMode("flat")} style={actionBtnStyle(compilerTargetMode === "flat")}>{t.targetFlat}</button>
+            <button onClick={() => onSetCompilerTargetMode("curve")} style={actionBtnStyle(compilerTargetMode === "curve")}>{t.targetCurve}</button>
           </div>
+          {compilerTargetMode === "curve" && (
+            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", alignItems: "center" }}>
+              <div style={{ fontSize: 11, color: "var(--text-dim)" }}>{t.targetCurveSelect}:</div>
+              {[
+                { id: "vdsf-5128", name: "VDSF 5128 Demo" },
+                { id: "harman-2019", name: "Harman 2019 IE" },
+                { id: "diffuse-field", name: "Diffuse Field" },
+              ].map((c) => (
+                <button key={c.id} onClick={() => onSetCompilerTargetCurve(TARGET_CURVES[c.id])}
+                  style={actionBtnStyle(compilerTargetCurve?.name === TARGET_CURVES[c.id]?.name)}>
+                  {c.name}
+                </button>
+              ))}
+            </div>
+          )}
         </div>
 
         <div style={{ borderTop: "1px solid var(--border)" }} />
@@ -830,7 +882,8 @@ export function PlayerProfileWorkbenchPlugin(props) {
 
         {/* ── Compute & export (quantized EQ) ────────────── */}
         <div style={{ padding: "12px 14px", border: "1px solid var(--border)", borderRadius: 10, background: "var(--bg)" }}>
-          <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>{t.compileActions}</div>
+          <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 4 }}>{t.compileActions}</div>
+          <div style={{ fontSize: 11, color: "var(--text-dim)", marginBottom: 8 }}>{t.eqMissingHint}</div>
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <button onClick={onCompileProfiles} disabled={compileActionDisabled} style={actionBtnStyle(true)}>
               {compilerTargetMode === "flat" ? t.compileNowFlat : t.compileNow}
@@ -849,12 +902,12 @@ export function PlayerProfileWorkbenchPlugin(props) {
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <button
               onClick={onLoadFullResProfile}
-              disabled={!compilerProfileAName || (compilerTargetMode === "profile" && !compilerProfileBName)}
+              disabled={fullResDisabled}
               style={actionBtnStyle(true)}
             >{t.loadFullRes}</button>
             <button
               onClick={onExportFullResProfile}
-              disabled={!compilerProfileAName || (compilerTargetMode === "profile" && !compilerProfileBName)}
+              disabled={fullResDisabled}
               style={actionBtnStyle()}
             >{t.exportFullRes}</button>
           </div>
@@ -925,7 +978,7 @@ export function PlayerProfileWorkbenchPlugin(props) {
             </>
           )}
         </div>
-        {eqReport && <ReportCard summary={eqReport.summary} full={eqReport.full} accentLabel="璃奈" onSave={() => {}} />}
+        {eqReport && <ReportCard summary={eqReport.summary} full={eqReport.full} tags={eqReport.tags} lang={lang} />}
       </div>
     </>
   );

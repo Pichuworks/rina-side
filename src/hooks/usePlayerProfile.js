@@ -8,10 +8,6 @@ import {
   attachEqModel,
   parseAndNormalizeProfileJson,
   serializeProfileJson,
-  compileEqAToB,
-  compileEqAToFlat,
-  computeFullResolutionDelta,
-  computeFullResolutionFlat,
 } from "../modules/index.js";
 import { normalizeCalibrationProfile } from "../calibration-profile.js";
 
@@ -396,24 +392,46 @@ function autoQForBand(centerHz, sortedCenters, index) {
     setPlayerEqCompileResult(null);
   }, []);
 
-  const compilePlayerProfiles = useCallback(() => {
+  const runEqWorker = useCallback((command, profileA, profileB, targetCurve) => {
+    return new Promise((resolve, reject) => {
+      const worker = new Worker(
+        new URL("../workers/eq-compile.worker.js", import.meta.url),
+        { type: "module" },
+      );
+      worker.onmessage = (e) => { worker.terminate(); resolve(e.data); };
+      worker.onerror = (e) => { worker.terminate(); reject(new Error(e.message)); };
+      worker.postMessage({ command, profileA, profileB, targetCurve });
+    });
+  }, []);
+
+  const [compilerTargetCurve, setCompilerTargetCurve] = useState(null);
+
+  const compilePlayerProfiles = useCallback(async () => {
     if (!compilerProfileA) return;
     if (compilerTargetMode === "profile" && !compilerProfileB) return;
+    if (compilerTargetMode === "curve" && !compilerTargetCurve) return;
+    setProcessing(true);
+    setProcMsg("EQ 计算中……");
     try {
-      const result = compilerTargetMode === "flat"
-        ? compileEqAToFlat(compilerProfileA)
-        : compileEqAToB(compilerProfileA, compilerProfileB);
-      setPlayerEqCompileResult(result);
+      const command = compilerTargetMode === "flat" ? "compileFlat"
+        : compilerTargetMode === "curve" ? "compileTarget"
+        : "compileAtoB";
+      const result = await runEqWorker(command, compilerProfileA, compilerProfileB, compilerTargetCurve);
+      if (!result.ok) throw new Error(result.error || "Worker error");
+      setPlayerEqCompileResult(result.result);
       showToast(
-        result.ok
-          ? (compilerTargetMode === "flat" ? "A->Flat EQ generated" : "A->B EQ generated")
-          : (result.message || result.errorCode || "Compile failed"),
-        result.ok ? 3000 : 5000,
+        result.result.ok
+          ? (compilerTargetMode === "flat" ? "趋平 EQ 已生成" : compilerTargetMode === "curve" ? "目标曲线 EQ 已生成" : "EQ 匹配已生成")
+          : (result.result.message || result.result.errorCode || "计算失败"),
+        result.result.ok ? 3000 : 5000,
       );
     } catch (err) {
-      showToast(`Compile failed: ${err.message}`, 5000);
+      showToast(`EQ 计算失败: ${err.message}`, 5000);
+    } finally {
+      setProcessing(false);
+      setProcMsg("");
     }
-  }, [compilerProfileA, compilerProfileB, compilerTargetMode, showToast]);
+  }, [compilerProfileA, compilerProfileB, compilerTargetMode, compilerTargetCurve, runEqWorker, setProcessing, setProcMsg, showToast]);
 
   const compileLoadableProfile = useMemo(() => {
     if (!playerEqCompileResult?.ok) return null;
@@ -497,16 +515,22 @@ function autoQForBand(centerHz, sortedCenters, index) {
 
   // ── Full-resolution correction (no EQ quantization) ────────
 
-  const buildFullResProfile = useCallback(() => {
+  const buildFullResProfileAsync = useCallback(async () => {
     try {
-      let delta;
-      if (compilerTargetMode === "flat") {
-        if (!compilerProfileA) { showToast("需要先导入设备频响", 5000); return null; }
-        delta = computeFullResolutionFlat(compilerProfileA);
-      } else {
-        if (!compilerProfileA || !compilerProfileB) { showToast("需要设备频响和目标频响", 5000); return null; }
-        delta = computeFullResolutionDelta(compilerProfileA, compilerProfileB);
+      if (!compilerProfileA) { showToast("需要先导入设备频响", 5000); return null; }
+      let command;
+      if (compilerTargetMode === "flat") command = "compileFullResFlat";
+      else if (compilerTargetMode === "curve") command = "compileFullResTarget";
+      else {
+        if (!compilerProfileB) { showToast("需要设备频响和目标频响", 5000); return null; }
+        command = "compileFullRes";
       }
+      if (compilerTargetMode === "curve" && !compilerTargetCurve) { showToast("需要选择目标曲线", 5000); return null; }
+      setProcessing(true);
+      setProcMsg("全分辨率补偿计算中……");
+      const result = await runEqWorker(command, compilerProfileA, compilerProfileB, compilerTargetCurve);
+      if (!result.ok) throw new Error(result.error);
+      const delta = result.result;
       const profile = normalizeCalibrationProfile({
         type: "deck.playback-correction-profile",
         name: `${delta.sourceLabel} -> ${delta.targetLabel} (full-res)`,
@@ -520,25 +544,28 @@ function autoQForBand(centerHz, sortedCenters, index) {
     } catch (err) {
       showToast(`全分辨率补偿档案生成失败: ${err.message}`, 5000);
       return null;
+    } finally {
+      setProcessing(false);
+      setProcMsg("");
     }
-  }, [compilerProfileA, compilerProfileB, compilerTargetMode, showToast]);
+  }, [compilerProfileA, compilerProfileB, compilerTargetMode, compilerTargetCurve, runEqWorker, setProcessing, setProcMsg, showToast]);
 
-  const loadFullResProfile = useCallback(() => {
-    const profile = buildFullResProfile();
+  const loadFullResProfile = useCallback(async () => {
+    const profile = await buildFullResProfileAsync();
     if (!profile) return;
     onLoadCalibrationProfile(profile);
-    showToast("全分辨率补偿档案已加载到试听");
-  }, [buildFullResProfile, onLoadCalibrationProfile, showToast]);
+    showToast("全分辨率补偿已加载到主页面");
+  }, [buildFullResProfileAsync, onLoadCalibrationProfile, showToast]);
 
-  const exportFullResProfile = useCallback(() => {
-    const profile = buildFullResProfile();
+  const exportFullResProfile = useCallback(async () => {
+    const profile = await buildFullResProfileAsync();
     if (!profile) return;
     downloadBlob(
       new Blob([JSON.stringify(profile, null, 2)], { type: "application/json" }),
       `${profile.name || "full-res-correction"}.json`,
     );
     showToast("全分辨率补偿档案已导出");
-  }, [buildFullResProfile, downloadBlob, showToast]);
+  }, [buildFullResProfileAsync, downloadBlob, showToast]);
 
   return {
     // Probe
@@ -574,6 +601,8 @@ function autoQForBand(centerHz, sortedCenters, index) {
     compilerProfileAName,
     compilerProfileBName,
     compilerTargetMode,
+    compilerTargetCurve,
+    setCompilerTargetCurve,
     playerEqCompileResult,
     compileLoadableProfile,
     importCompilerProfileFile,

@@ -5,6 +5,8 @@ import {
   TEST_TAPE_PROGRAM_SPEC,
   generateTestTapeProgram,
   analyseTestTapeProgram,
+  analyseStandardCalibrationTape,
+  STANDARD_TAPE_PRESETS,
 } from "../deck-calibration.js";
 import { getProfileCorrectionDb } from "../calibration-profile.js";
 
@@ -129,6 +131,131 @@ export default function useDeckCalibration({ T, showToast, downloadBlob, encodeW
     }
   }, [T, decodeExternalAudioFile, setProcessing, setProcMsg, showToast]);
 
+  // ── Multi-pass capture accumulation ───────────────────────
+  const [multiCaptures, setMultiCaptures] = useState([]);
+
+  const importMultiCaptureFiles = useCallback(async (files) => {
+    if (!files?.length) return;
+    setProcessing(true);
+    const loaded = [];
+    try {
+      for (let i = 0; i < files.length; i++) {
+        setProcMsg(`读取回放录音 [${i + 1}/${files.length}] ${files[i].name}`);
+        const ab = await decodeExternalAudioFile(files[i]);
+        loaded.push({ name: files[i].name, audioBuffer: ab });
+      }
+      setMultiCaptures((prev) => [...prev, ...loaded]);
+      setResponseAnalysis(null);
+      setTransportAnalysis(null);
+      showToast(`已加载 ${loaded.length} 个回放录音（共 ${multiCaptures.length + loaded.length} 个）`);
+    } catch (err) {
+      showToast(`导入失败: ${err.message}`, 5000);
+    } finally {
+      setProcessing(false);
+      setProcMsg("");
+    }
+  }, [decodeExternalAudioFile, multiCaptures.length, setProcessing, setProcMsg, showToast]);
+
+  const clearMultiCaptures = useCallback(() => {
+    setMultiCaptures([]);
+    setResponseAnalysis(null);
+    setTransportAnalysis(null);
+  }, []);
+
+  const analyseMultiCaptures = useCallback((scenario = "self") => {
+    if (!multiCaptures.length) return;
+    setProcessing(true);
+    try {
+      const program = generateTestTapeProgram(TEST_TAPE_PROGRAM_SPEC);
+      const results = [];
+      const failedPasses = [];
+      for (let i = 0; i < multiCaptures.length; i++) {
+        setProcMsg(`分析 [${i + 1}/${multiCaptures.length}] ${multiCaptures[i].name}`);
+        try {
+          results.push(analyseTestTapeProgram(multiCaptures[i].audioBuffer, program));
+        } catch (err) {
+          failedPasses.push({ name: multiCaptures[i].name, error: err.message });
+        }
+      }
+      if (!results.length) throw new Error("所有回放录音分析均失败");
+
+      // Average frequency-domain results across passes
+      const firstResp = results[0].response;
+      const freqs = firstResp.frequenciesHz;
+      const avgL_measured = new Float64Array(freqs.length);
+      const avgR_measured = new Float64Array(freqs.length);
+      const avgL_correction = new Float64Array(freqs.length);
+      const avgR_correction = new Float64Array(freqs.length);
+      for (const r of results) {
+        for (let j = 0; j < freqs.length; j++) {
+          avgL_measured[j] += (r.response.channels?.L?.measuredDb?.[j] || 0);
+          avgR_measured[j] += (r.response.channels?.R?.measuredDb?.[j] || 0);
+          avgL_correction[j] += (r.response.channels?.L?.correctionDb?.[j] || 0);
+          avgR_correction[j] += (r.response.channels?.R?.correctionDb?.[j] || 0);
+        }
+      }
+      const n = results.length;
+      for (let j = 0; j < freqs.length; j++) {
+        avgL_measured[j] /= n;
+        avgR_measured[j] /= n;
+        avgL_correction[j] /= n;
+        avgR_correction[j] /= n;
+      }
+
+      // Build averaged response analysis
+      const avgResponse = {
+        ...firstResp,
+        channels: {
+          L: { measuredDb: Array.from(avgL_measured), correctionDb: Array.from(avgL_correction) },
+          R: { measuredDb: Array.from(avgR_measured), correctionDb: Array.from(avgR_correction) },
+        },
+        profile: {
+          ...firstResp.profile,
+          name: `${firstResp.profile?.name || "Calibration"} (${n}-pass avg)`,
+          channels: {
+            L: { frequenciesHz: [...freqs], correctionDb: Array.from(avgL_correction) },
+            R: { frequenciesHz: [...freqs], correctionDb: Array.from(avgR_correction) },
+          },
+        },
+        passCount: n,
+        failedPasses,
+      };
+
+      // Average transport
+      let avgTransport = results[0].transport;
+      if (results.length > 1 && results[0].transport) {
+        const sumSpeed = results.reduce((s, r) => s + (r.transport?.speedErrorPercent || 0), 0);
+        const sumWfRms = results.reduce((s, r) => s + (r.transport?.wowFlutterPercentRms || 0), 0);
+        const sumWfPk = results.reduce((s, r) => s + (r.transport?.wowFlutterPercentPkPk || 0), 0);
+        const sumMean = results.reduce((s, r) => s + (r.transport?.meanHz || 0), 0);
+        avgTransport = {
+          ...results[0].transport,
+          speedErrorPercent: sumSpeed / n,
+          wowFlutterPercentRms: sumWfRms / n,
+          wowFlutterPercentPkPk: sumWfPk / n,
+          meanHz: sumMean / n,
+        };
+      }
+
+      const shouldApplyManifest = scenario === "test-tape" && deckCalProgramManifest;
+      const nextResponse = shouldApplyManifest ? applyProgramManifestToResponse(avgResponse, deckCalProgramManifest) : avgResponse;
+      const nextTransport = shouldApplyManifest ? applyProgramManifestToTransport(avgTransport, deckCalProgramManifest) : avgTransport;
+      setResponseAnalysis(nextResponse);
+      setTransportAnalysis(nextTransport);
+
+      if (failedPasses.length) {
+        showToast(`分析完成：${n}/${multiCaptures.length} 个成功，${failedPasses.length} 个跳过`, 6000);
+      } else {
+        showToast(`${n} 次回放均值分析完成`);
+      }
+    } catch (err) {
+      showToast(`多次分析失败: ${err.message}`, 5000);
+    } finally {
+      setProcessing(false);
+      setProcMsg("");
+    }
+  }, [applyProgramManifestToResponse, applyProgramManifestToTransport, deckCalProgramManifest, multiCaptures, setProcessing, setProcMsg, showToast]);
+
   const startDeckCalRecording = useCallback(async (kind) => {
     if (!navigator.mediaDevices?.getUserMedia || typeof MediaRecorder === "undefined") {
       showToast(T("toolRecordUnavailable"), 5000);
@@ -184,6 +311,26 @@ export default function useDeckCalibration({ T, showToast, downloadBlob, encodeW
       showToast(`Test tape analysis failed: ${err.message}`, 5000);
     }
   }, [applyProgramManifestToResponse, applyProgramManifestToTransport, deckCalCapture, deckCalProgramManifest, showToast]);
+
+  // ── Standard calibration tape analysis ──────────────────────
+  const [standardTapePreset, setStandardTapePreset] = useState("aiwa-3freq");
+
+  const analyseStandardTape = useCallback(() => {
+    if (!deckCalCapture) return;
+    const preset = STANDARD_TAPE_PRESETS[standardTapePreset];
+    if (!preset) { showToast("未选择测试带预设", 5000); return; }
+    try {
+      const result = analyseStandardCalibrationTape(deckCalCapture, preset);
+      if (result.missingFreqs.length) {
+        showToast(`未检测到: ${result.missingFreqs.join(", ")} Hz`, 6000);
+      }
+      setResponseAnalysis(result);
+      setTransportAnalysis(null); // Standard tapes don't have transport analysis
+      showToast(`${preset.name} 分析完成（${result.frequencies.length - result.missingFreqs.length}/${result.frequencies.length} 频率检测成功）`);
+    } catch (err) {
+      showToast(`标准测试带分析失败: ${err.message}`, 5000);
+    }
+  }, [deckCalCapture, standardTapePreset, showToast]);
 
   const saveResponseProfile = useCallback(() => {
     if (!responseAnalysis?.profile) return;
@@ -252,5 +399,15 @@ export default function useDeckCalibration({ T, showToast, downloadBlob, encodeW
     analyseDeckCalCapture,
     saveResponseProfile,
     saveDeckCalProgramManifest,
+    // Multi-pass
+    multiCaptures,
+    importMultiCaptureFiles,
+    clearMultiCaptures,
+    analyseMultiCaptures,
+    // Standard tape
+    standardTapePreset,
+    setStandardTapePreset,
+    analyseStandardTape,
+    standardTapePresets: STANDARD_TAPE_PRESETS,
   };
 }
