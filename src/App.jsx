@@ -131,8 +131,8 @@ function deriveTapeTypeColors(accent) {
 }
 
 const TAPE_PRESETS = {
-  C46: { label: "C-46", sideMinutes: 23 }, C60: { label: "C-60", sideMinutes: 30 },
-  C54: { label: "C-54", sideMinutes: 27 },
+  C46: { label: "C-46", sideMinutes: 23 }, C54: { label: "C-54", sideMinutes: 27 },
+  C60: { label: "C-60", sideMinutes: 30 },
   C90: { label: "C-90", sideMinutes: 45 }, C120: { label: "C-120", sideMinutes: 60 },
 };
 const TAPE_TYPES = {
