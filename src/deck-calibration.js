@@ -289,20 +289,36 @@ function detectSyncPair(signal, measurement, options = {}) {
   const startProbe = buildSyncProbe(measurement.syncStart);
   const endProbe = buildSyncProbe(measurement.syncEnd);
   const gapSamples = Math.round((measurement.spec.gapSec || 0) * sr);
-  const baseline = meanAbs(signal, 0, Math.max(512, Math.round(sr * 0.15)));
-  const threshold = Math.max(0.015, baseline * 6);
-  let roughStart = -1;
-  for (let i = searchStart; i < searchEnd; i++) {
-    if (Math.abs(signal[i]) >= threshold) {
-      roughStart = i;
-      break;
+  let startSearchA = searchStart;
+  let startSearchB = searchEnd - startProbe.kernel.length - 1;
+  if (Number.isFinite(options.expectedStartPos)) {
+    const expectedStartPos = Math.round(options.expectedStartPos);
+    const margin = Math.max(
+      measurement.syncStart.length * 2,
+      Math.round(sr * 0.8),
+      Math.round(options.startSearchMarginSamples || 0),
+    );
+    startSearchA = Math.max(searchStart, expectedStartPos - margin);
+    startSearchB = Math.min(searchEnd - startProbe.kernel.length - 1, expectedStartPos + margin);
+  } else {
+    const baseline = meanAbs(signal, 0, Math.max(512, Math.round(sr * 0.15)));
+    const threshold = Math.max(0.015, baseline * 6);
+    let roughStart = -1;
+    for (let i = searchStart; i < searchEnd; i++) {
+      if (Math.abs(signal[i]) >= threshold) {
+        roughStart = i;
+        break;
+      }
     }
+    if (roughStart < 0) throw new Error("Failed to locate measurement start");
+    const startBacktrack = measurement.syncStart.length * 2 + gapSamples + Math.round(sr * 0.12);
+    const startLead = measurement.syncStart.length * 1.5;
+    startSearchA = Math.max(searchStart, Math.round(roughStart - startBacktrack));
+    startSearchB = Math.min(searchEnd - startProbe.kernel.length - 1, Math.round(roughStart + startLead));
   }
-  if (roughStart < 0) throw new Error("Failed to locate measurement start");
-  const startBacktrack = measurement.syncStart.length * 2 + gapSamples + Math.round(sr * 0.12);
-  const startLead = measurement.syncStart.length * 1.5;
-  const startSearchA = Math.max(searchStart, Math.round(roughStart - startBacktrack));
-  const startSearchB = Math.min(searchEnd - startProbe.kernel.length - 1, Math.round(roughStart + startLead));
+  if (startSearchB < startSearchA) {
+    throw new Error("Failed to build measurement start search window");
+  }
   const startMatch = findSync(signal, startProbe.kernel, startSearchA, startSearchB);
   const start = { pos: startMatch.pos - startProbe.offset, score: startMatch.score };
   const expectedEndPos = start.pos + measurement.syncStart.length + gapSamples + measurement.mainLength + gapSamples;
@@ -339,6 +355,54 @@ function detectMainBounds(signal, measurement, options = {}) {
   return { startSample: detectedMainStart, endSample: detectedMainEnd };
 }
 
+function detectAnchoredStartSync(signal, measurement, expectedSyncPos, options = {}) {
+  const searchMarginSamples = Math.max(
+    measurement.syncStart.length * 2,
+    Math.round(measurement.spec.sampleRate * 1.5),
+    Math.round(options.searchMarginSamples || 0),
+  );
+  const searchStart = Math.max(0, Math.round(expectedSyncPos - searchMarginSamples));
+  const searchEnd = Math.min(signal.length, Math.round(expectedSyncPos + searchMarginSamples));
+  const { start } = detectSyncPair(signal, measurement, {
+    searchStart,
+    searchEnd,
+    expectedStartPos: expectedSyncPos,
+    startSearchMarginSamples: searchMarginSamples,
+  });
+  if (start.score < 0.03) {
+    throw new Error("Failed to confidently locate tone start sync");
+  }
+  return {
+    start,
+    expectedSyncPos,
+    searchStart,
+    searchEnd,
+  };
+}
+
+function buildAnchoredToneBounds(measurement, startSyncPos, totalLength) {
+  const sr = measurement.spec.sampleRate;
+  const gapSamples = Math.round((measurement.spec.gapSec || 0) * sr);
+  const mainStart = startSyncPos + measurement.syncStart.length + gapSamples;
+  const mainEnd = Math.min(totalLength, mainStart + measurement.mainLength);
+  if (mainEnd <= mainStart) throw new Error("Invalid tone measurement bounds");
+  return {
+    startSample: mainStart,
+    endSample: mainEnd,
+  };
+}
+
+function getExpectedSegmentSyncPos(segment, sampleRate) {
+  const preSamples = Math.round((segment?.measurement?.spec?.preSilenceSec || 0) * sampleRate);
+  return Math.round((segment?.start || 0) + preSamples);
+}
+
+function getDetectedStartSyncPos(measurement, mainStartSample) {
+  const sr = measurement.spec.sampleRate;
+  const gapSamples = Math.round((measurement.spec.gapSec || 0) * sr);
+  return Math.round(mainStartSample - measurement.syncStart.length - gapSamples);
+}
+
 function normalizeMainSlice(signal, measurement, startSample, endSample) {
   const sr = measurement.spec.sampleRate;
   const detectedLength = Math.max(1, endSample - startSample);
@@ -356,6 +420,109 @@ function sliceAndNormalizeMain(signal, measurement, options = {}) {
     startSample: bounds.startSample,
     endSample: bounds.endSample,
   };
+}
+
+function percentile(values, ratio) {
+  if (!values.length) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const index = Math.min(sorted.length - 1, Math.max(0, Math.floor((sorted.length - 1) * ratio)));
+  return sorted[index];
+}
+
+function buildMovingAbsEnvelope(signal, hopSamples) {
+  const points = Math.max(1, Math.ceil(signal.length / hopSamples));
+  const envelope = new Float32Array(points);
+  for (let i = 0; i < points; i++) {
+    const start = i * hopSamples;
+    const end = Math.min(signal.length, start + hopSamples);
+    envelope[i] = meanAbs(signal, start, Math.max(1, end - start));
+  }
+  return envelope;
+}
+
+function detectEnvelopeRegions(envelope, threshold, minLengthPoints, bridgePoints) {
+  const mask = new Uint8Array(envelope.length);
+  for (let i = 0; i < envelope.length; i++) mask[i] = envelope[i] >= threshold ? 1 : 0;
+  for (let i = 0; i < mask.length;) {
+    if (mask[i]) {
+      i += 1;
+      continue;
+    }
+    let j = i;
+    while (j < mask.length && !mask[j]) j += 1;
+    if (i > 0 && j < mask.length && (j - i) <= bridgePoints) {
+      for (let k = i; k < j; k++) mask[k] = 1;
+    }
+    i = j;
+  }
+  const regions = [];
+  for (let i = 0; i < mask.length;) {
+    if (!mask[i]) {
+      i += 1;
+      continue;
+    }
+    let j = i + 1;
+    while (j < mask.length && mask[j]) j += 1;
+    if ((j - i) >= minLengthPoints) regions.push({ startPoint: i, endPoint: j });
+    i = j;
+  }
+  return regions;
+}
+
+function computeRegionToneContrast(signal, startSample, endSample, sampleRate, toneHz = 1000) {
+  const magCenter = goertzelMagnitude(signal, Math.round((startSample + endSample) * 0.5), endSample - startSample, toneHz, sampleRate);
+  const magLower = goertzelMagnitude(signal, Math.round((startSample + endSample) * 0.5), endSample - startSample, toneHz * 0.8, sampleRate);
+  const magUpper = goertzelMagnitude(signal, Math.round((startSample + endSample) * 0.5), endSample - startSample, toneHz * 1.2, sampleRate);
+  return magCenter / Math.max(1e-9, (magLower + magUpper) * 0.5);
+}
+
+function getMeasurementMainStartSample(segment) {
+  const spec = segment.measurement.spec;
+  return Math.round(segment.start + ((spec.preSilenceSec + spec.syncSec + spec.gapSec) * spec.sampleRate));
+}
+
+function getMeasurementMainEndSample(segment) {
+  return getMeasurementMainStartSample(segment) + segment.measurement.mainLength;
+}
+
+function interpolateAnchorSample(leftAnchor, rightAnchor, expectedSample) {
+  const leftExpected = leftAnchor.expectedSample;
+  const rightExpected = rightAnchor.expectedSample;
+  const spanExpected = Math.max(1, rightExpected - leftExpected);
+  const t = (expectedSample - leftExpected) / spanExpected;
+  return leftAnchor.detectedSample + ((rightAnchor.detectedSample - leftAnchor.detectedSample) * t);
+}
+
+function detectProgramRegions(mono, sampleRate, nominalToneHz = 1000) {
+  const hopSamples = Math.max(1, Math.round(sampleRate * 0.02));
+  const envelope = buildMovingAbsEnvelope(mono, hopSamples);
+  const low = percentile(envelope, 0.2);
+  const high = percentile(envelope, 0.85);
+  const threshold = low + ((high - low) * 0.22);
+  const rawRegions = detectEnvelopeRegions(
+    envelope,
+    threshold,
+    Math.round(0.35 / 0.02),
+    Math.round(1.2 / 0.02),
+  );
+  const regions = rawRegions.map((region) => {
+    const startSample = Math.max(0, Math.round(region.startPoint * hopSamples));
+    const endSample = Math.min(mono.length, Math.round(region.endPoint * hopSamples));
+    const durationSec = (endSample - startSample) / sampleRate;
+    const toneContrast = computeRegionToneContrast(mono, startSample, endSample, sampleRate, nominalToneHz);
+    return {
+      startSample,
+      endSample,
+      durationSec,
+      toneContrast,
+    };
+  }).filter((region) => !(region.durationSec < 1.0 && region.toneContrast < 5));
+  return regions.map((region) => ({
+    ...region,
+    kind: region.durationSec > 25
+      ? "transport"
+      : ((region.durationSec >= 1.0 && region.durationSec <= 3.0 && region.toneContrast > 10) ? "tone" : "response"),
+  }));
 }
 
 export function generateTestTapeProgram(spec = TEST_TAPE_PROGRAM_SPEC) {
@@ -742,42 +909,7 @@ function analyseResponseChannel(main, measurement, frequenciesHz) {
   };
 }
 
-function analyseToneChannel(main, measurement) {
-  const sr = measurement.spec.sampleRate;
-  const center = Math.round((measurement.mainLength - 1) * 0.5);
-  const windowLength = Math.max(256, Math.min(measurement.mainLength, Math.round(sr * 0.4)));
-  const half = Math.floor(windowLength / 2);
-  const start = Math.max(0, center - half);
-  const end = Math.min(main.length, start + windowLength);
-  const estimatedFreqHz = estimateFrequencyFromZeroCrossings(main.subarray(start, end), sr) || measurement.spec.toneHz;
-  const refMag = goertzelMagnitude(measurement.referenceMain, center, windowLength, measurement.spec.toneHz, sr);
-  const recMag = goertzelMagnitude(main, center, windowLength, estimatedFreqHz, sr);
-  let harmonicPower = 0;
-  const harmonics = [];
-  for (let harmonic = 2; harmonic <= 5; harmonic++) {
-    const freq = estimatedFreqHz * harmonic;
-    if (freq >= (sr * 0.5)) break;
-    const mag = goertzelMagnitude(main, center, windowLength, freq, sr);
-    harmonicPower += mag * mag;
-    harmonics.push({
-      harmonic,
-      freqHz: freq,
-      magnitude: mag,
-    });
-  }
-  const thdRatio = recMag > 1e-12 ? Math.sqrt(harmonicPower) / recMag : 0;
-  return {
-    measuredDb: 20 * Math.log10((recMag + 1e-12) / (refMag + 1e-12)),
-    estimatedFreqHz,
-    thdPercent: thdRatio * 100,
-    thdDb: 20 * Math.log10(Math.max(thdRatio, 1e-12)),
-    harmonics,
-  };
-}
-
-function analyseResponseStereo(stereo, measurement, detectOptions = {}) {
-  const syncMono = averageStereo(stereo.left, stereo.right);
-  const { startSample, endSample } = detectMainBounds(syncMono, measurement, detectOptions);
+function analyseResponseStereoFromBounds(stereo, measurement, startSample, endSample) {
   const frequenciesHz = buildResponseFrequencies(measurement);
   const leftMain = normalizeMainSlice(stereo.left, measurement, startSample, endSample);
   const rightMain = normalizeMainSlice(stereo.right, measurement, startSample, endSample);
@@ -814,11 +946,50 @@ function analyseResponseStereo(stereo, measurement, detectOptions = {}) {
   };
 }
 
-function analyseToneStereo(stereo, measurement, detectOptions = {}) {
-  const syncMono = averageStereo(stereo.left, stereo.right);
-  const { startSample, endSample } = detectMainBounds(syncMono, measurement, detectOptions);
-  const leftMain = normalizeMainSlice(stereo.left, measurement, startSample, endSample);
-  const rightMain = normalizeMainSlice(stereo.right, measurement, startSample, endSample);
+function analyseToneChannel(main, measurement, estimatedFreqHz = null) {
+  const sr = measurement.spec.sampleRate;
+  const center = Math.round((measurement.mainLength - 1) * 0.5);
+  const windowLength = Math.max(256, Math.min(measurement.mainLength, Math.round(sr * 0.4)));
+  const half = Math.floor(windowLength / 2);
+  const start = Math.max(0, center - half);
+  const end = Math.min(main.length, start + windowLength);
+  const resolvedFreqHz = estimatedFreqHz || estimateFrequencyFromZeroCrossings(main.subarray(start, end), sr) || measurement.spec.toneHz;
+  const refMag = goertzelMagnitude(measurement.referenceMain, center, windowLength, measurement.spec.toneHz, sr);
+  const recMag = goertzelMagnitude(main, center, windowLength, resolvedFreqHz, sr);
+  let harmonicPower = 0;
+  const harmonics = [];
+  for (let harmonic = 2; harmonic <= 5; harmonic++) {
+    const freq = resolvedFreqHz * harmonic;
+    if (freq >= (sr * 0.5)) break;
+    const mag = goertzelMagnitude(main, center, windowLength, freq, sr);
+    harmonicPower += mag * mag;
+    harmonics.push({
+      harmonic,
+      freqHz: freq,
+      magnitude: mag,
+    });
+  }
+  const thdRatio = recMag > 1e-12 ? Math.sqrt(harmonicPower) / recMag : 0;
+  return {
+    measuredDb: 20 * Math.log10((recMag + 1e-12) / (refMag + 1e-12)),
+    estimatedFreqHz: resolvedFreqHz,
+    thdPercent: thdRatio * 100,
+    thdDb: 20 * Math.log10(Math.max(thdRatio, 1e-12)),
+    harmonics,
+  };
+}
+
+function analyseToneStereoFromMainBounds(stereo, measurement, startSample, endSample) {
+  const leftMain = stereo.left.slice(startSample, endSample);
+  const rightMain = stereo.right.slice(startSample, endSample);
+  const monoMain = averageStereo(leftMain, rightMain);
+  const sr = measurement.spec.sampleRate;
+  const center = Math.round((measurement.mainLength - 1) * 0.5);
+  const windowLength = Math.max(256, Math.min(measurement.mainLength, Math.round(sr * 0.4)));
+  const half = Math.floor(windowLength / 2);
+  const start = Math.max(0, center - half);
+  const end = Math.min(monoMain.length, start + windowLength);
+  const estimatedFreqHz = estimateFrequencyFromZeroCrossings(monoMain.subarray(start, end), sr) || measurement.spec.toneHz;
   return {
     kind: "tone",
     sampleRate: measurement.spec.sampleRate,
@@ -829,8 +1000,62 @@ function analyseToneStereo(stereo, measurement, detectOptions = {}) {
     endSample,
     toneHz: measurement.spec.toneHz,
     channels: {
-      L: analyseToneChannel(leftMain, measurement),
-      R: analyseToneChannel(rightMain, measurement),
+      L: analyseToneChannel(leftMain, measurement, estimatedFreqHz),
+      R: analyseToneChannel(rightMain, measurement, estimatedFreqHz),
+    },
+  };
+}
+
+function analyseResponseStereo(stereo, measurement, detectOptions = {}) {
+  const syncMono = averageStereo(stereo.left, stereo.right);
+  const { startSample, endSample } = detectMainBounds(syncMono, measurement, detectOptions);
+  return analyseResponseStereoFromBounds(stereo, measurement, startSample, endSample);
+}
+
+function analyseToneStereo(stereo, measurement, detectOptions = {}) {
+  const syncMono = averageStereo(stereo.left, stereo.right);
+  const { startSample, endSample } = detectMainBounds(syncMono, measurement, detectOptions);
+  return analyseToneStereoFromMainBounds(
+    stereo,
+    measurement,
+    startSample,
+    Math.min(endSample, startSample + measurement.mainLength),
+  );
+}
+
+function analyseAnchoredToneStereo(stereo, measurement, segment, anchorOffsetSamples = 0, expectedSyncPosOverride = null) {
+  const sr = measurement.spec.sampleRate;
+  const syncMono = averageStereo(stereo.left, stereo.right);
+  const expectedSyncPos = Number.isFinite(expectedSyncPosOverride)
+    ? Math.round(expectedSyncPosOverride)
+    : Math.round(getExpectedSegmentSyncPos(segment, sr) + anchorOffsetSamples);
+  const detectedStartSync = Number.isFinite(expectedSyncPosOverride)
+    ? { pos: expectedSyncPos, score: null }
+    : detectAnchoredStartSync(syncMono, measurement, expectedSyncPos).start;
+  const { startSample, endSample } = buildAnchoredToneBounds(measurement, detectedStartSync.pos, syncMono.length);
+  const leftMain = stereo.left.slice(startSample, endSample);
+  const rightMain = stereo.right.slice(startSample, endSample);
+  const monoMain = averageStereo(leftMain, rightMain);
+  const center = Math.round((measurement.mainLength - 1) * 0.5);
+  const windowLength = Math.max(256, Math.min(measurement.mainLength, Math.round(sr * 0.4)));
+  const half = Math.floor(windowLength / 2);
+  const start = Math.max(0, center - half);
+  const end = Math.min(monoMain.length, start + windowLength);
+  const estimatedFreqHz = estimateFrequencyFromZeroCrossings(monoMain.subarray(start, end), sr) || measurement.spec.toneHz;
+  return {
+    kind: "tone",
+    sampleRate: measurement.spec.sampleRate,
+    measuredAt: new Date().toISOString(),
+    inputDb: Number(measurement.spec.inputDb || 0),
+    role: measurement.spec.role || "fit",
+    startSample,
+    endSample,
+    toneHz: measurement.spec.toneHz,
+    startSyncScore: detectedStartSync.score,
+    expectedSyncPos,
+    channels: {
+      L: analyseToneChannel(leftMain, measurement, estimatedFreqHz),
+      R: analyseToneChannel(rightMain, measurement, estimatedFreqHz),
     },
   };
 }
@@ -854,12 +1079,38 @@ function buildAnchoredSegmentSearchWindow(segment, sampleRate, totalLength, anch
 
 function detectProgramAnchorOffset(mono, firstSegment, sampleRate) {
   if (!firstSegment?.measurement) return 0;
+  const expectedStartPos = getExpectedSegmentSyncPos(firstSegment, sampleRate);
+  const margin = Math.max(firstSegment.measurement.syncStart.length * 2, Math.round(sampleRate * 0.8));
   const { start } = detectSyncPair(mono, firstSegment.measurement, {
-    searchStart: 0,
-    searchEnd: mono.length,
+    searchStart: Math.max(0, expectedStartPos - margin),
+    searchEnd: Math.min(mono.length, expectedStartPos + firstSegment.length + margin),
+    expectedStartPos,
+    startSearchMarginSamples: margin,
   });
-  const expectedSyncOffset = Math.round((firstSegment.measurement.spec?.preSilenceSec || 0) * sampleRate);
-  return start.pos - (firstSegment.start + expectedSyncOffset);
+  return start.pos - expectedStartPos;
+}
+
+function validateToneSegments(toneSegments, nominalHz) {
+  if (!toneSegments?.length) throw new Error("Tone validation failed: no tone segments");
+  const observedHz = toneSegments.map((segment) => {
+    const left = Number(segment.channels?.L?.estimatedFreqHz || 0);
+    const right = Number(segment.channels?.R?.estimatedFreqHz || 0);
+    return (left > 0 && right > 0) ? ((left + right) * 0.5) : (left || right || 0);
+  });
+  if (observedHz.some((value) => !Number.isFinite(value) || value <= 0)) {
+    throw new Error("Tone validation failed: invalid frequency estimate");
+  }
+  const medianHz = median(observedHz);
+  const maxDeviationRatio = observedHz.reduce((worst, value) => (
+    Math.max(worst, Math.abs(value - medianHz) / Math.max(1e-9, medianHz))
+  ), 0);
+  const absoluteOffsetRatio = Math.abs(medianHz - nominalHz) / Math.max(1e-9, nominalHz);
+  if (maxDeviationRatio > 0.06) {
+    throw new Error(`Tone validation failed: inconsistent tone frequency (${medianHz.toFixed(1)} Hz median, ${(maxDeviationRatio * 100).toFixed(1)}% spread)`);
+  }
+  if (absoluteOffsetRatio > 0.08) {
+    throw new Error(`Tone validation failed: tone frequency drifted too far from nominal (${medianHz.toFixed(1)} Hz vs ${nominalHz} Hz)`);
+  }
 }
 
 function interpolateLevelCurve(curves, targetDb) {
@@ -967,6 +1218,11 @@ function stabilizeTransportEstimates(estimates, nominalHz) {
 function analyseTransportMono(mono, measurement, detectOptions = {}) {
   const sr = measurement.spec.sampleRate;
   const { startSample, endSample } = detectMainBounds(mono, measurement, detectOptions);
+  return analyseTransportMonoFromBounds(mono, measurement, startSample, endSample);
+}
+
+function analyseTransportMonoFromBounds(mono, measurement, startSample, endSample) {
+  const sr = measurement.spec.sampleRate;
   const trimSamples = Math.min(
     Math.round(sr * 0.25),
     Math.max(0, Math.floor((endSample - startSample - 1) / 4)),
@@ -1015,33 +1271,84 @@ export function analyseTestTapeProgram(audioBuffer, program = generateTestTapePr
     right: resampleLinear(stereo.right, stereo.sampleRate, sr),
   };
   const mono = averageStereo(resampledStereo.left, resampledStereo.right);
+  const detectedRegions = detectProgramRegions(
+    mono,
+    sr,
+    Number(program.spec?.response?.toneHz || RESPONSE_MEASUREMENT_SPEC.toneHz || 1000),
+  );
+  if (detectedRegions.length < 3) throw new Error("Failed to locate recorded test-tape program");
+  const transportRegion = detectedRegions[detectedRegions.length - 1];
+  if (transportRegion.kind !== "transport") throw new Error("Failed to locate transport region");
+  const contentRegions = detectedRegions.slice(0, -1);
+  if (contentRegions.length % 2 !== 0) throw new Error("Failed to resolve tone/response region pairing");
+  const pairCount = contentRegions.length / 2;
+  const expectedPairCount = (program.responseSegments || []).filter((segment) => segment.analysisKind === "tone").length;
+  const missingLeadingPairs = expectedPairCount - pairCount;
+  if (missingLeadingPairs < 0) throw new Error("Detected more response pairs than the test program defines");
+  const alignedSegments = (program.responseSegments || []).slice(missingLeadingPairs * 2);
+  if (alignedSegments.length !== contentRegions.length) {
+    throw new Error("Failed to align detected regions with the test program layout");
+  }
+  const toneAnchors = [];
   const responseSegments = [];
   const toneSegments = [];
-  const anchorOffsetSamples = detectProgramAnchorOffset(
-    mono,
-    program.responseSegments?.[0],
-    sr,
-  );
-
-  for (const segment of program.responseSegments || []) {
-    const detectOptions = buildAnchoredSegmentSearchWindow(
-      segment,
-      sr,
-      mono.length,
-      anchorOffsetSamples,
-    );
-    detectOptions.relaxedValidation = true;
-    if (segment.analysisKind === "tone") {
-      const result = analyseToneStereo(resampledStereo, segment.measurement, detectOptions);
-      toneSegments.push({
-        ...result,
-        id: segment.id,
-        role: segment.role,
-        inputDb: segment.inputDb,
-      });
-      continue;
+  for (let index = 0; index < alignedSegments.length; index += 2) {
+    const segment = alignedSegments[index];
+    const region = contentRegions[index];
+    if (segment.analysisKind !== "tone" || region.kind !== "tone") {
+      throw new Error("Detected tone/response ordering does not match the test program");
     }
-    const result = analyseResponseStereo(resampledStereo, segment.measurement, detectOptions);
+    const regionLength = region.endSample - region.startSample;
+    const centeredStart = Math.round(region.startSample + Math.max(0, (regionLength - segment.measurement.mainLength) * 0.5));
+    const startSample = Math.max(0, centeredStart);
+    const endSample = Math.min(mono.length, startSample + segment.measurement.mainLength);
+    const result = analyseToneStereoFromMainBounds(
+      resampledStereo,
+      segment.measurement,
+      startSample,
+      endSample,
+    );
+    toneSegments.push({
+      ...result,
+      id: segment.id,
+      role: segment.role,
+      inputDb: segment.inputDb,
+    });
+    toneAnchors.push({
+      expectedSample: getMeasurementMainStartSample(segment),
+      detectedSample: startSample,
+    });
+  }
+  const transportRegionLength = transportRegion.endSample - transportRegion.startSample;
+  const transportDetectedMainStart = Math.round(
+    transportRegion.startSample + Math.max(0, (transportRegionLength - program.transportSegment.measurement.mainLength) * 0.5),
+  );
+  const transportAnchor = {
+    expectedSample: getMeasurementMainStartSample(program.transportSegment),
+    detectedSample: transportDetectedMainStart,
+  };
+  for (let index = 1; index < alignedSegments.length; index += 2) {
+    const segment = alignedSegments[index];
+    const region = contentRegions[index];
+    if (segment.analysisKind !== "response" || region.kind !== "response") {
+      throw new Error("Detected tone/response ordering does not match the test program");
+    }
+    const toneAnchorIndex = Math.floor(index / 2);
+    const leftAnchor = toneAnchors[toneAnchorIndex];
+    const rightAnchor = toneAnchors[toneAnchorIndex + 1] || transportAnchor;
+    if (!leftAnchor || !rightAnchor) {
+      throw new Error("Failed to construct response time anchors");
+    }
+    const predictedStart = interpolateAnchorSample(leftAnchor, rightAnchor, getMeasurementMainStartSample(segment));
+    const predictedEnd = interpolateAnchorSample(leftAnchor, rightAnchor, getMeasurementMainEndSample(segment));
+    const startSample = Math.max(0, Math.round(predictedStart));
+    const endSample = Math.min(mono.length, Math.max(startSample + 1, Math.round(predictedEnd)));
+    const result = analyseResponseStereoFromBounds(
+      resampledStereo,
+      segment.measurement,
+      startSample,
+      endSample,
+    );
     responseSegments.push({
       ...result,
       id: segment.id,
@@ -1049,6 +1356,7 @@ export function analyseTestTapeProgram(audioBuffer, program = generateTestTapePr
       inputDb: segment.inputDb,
     });
   }
+  validateToneSegments(toneSegments, Number(program.spec?.response?.toneHz || RESPONSE_MEASUREMENT_SPEC.toneHz || 1000));
 
   const fitCurvesL = responseSegments
     .filter((segment) => segment.role === "fit")
@@ -1099,6 +1407,9 @@ export function analyseTestTapeProgram(audioBuffer, program = generateTestTapePr
   } : null;
   const predictedValidationL = validationCurveL ? interpolateLevelCurve(fitCurvesL, validationCurveL.inputDb) : null;
   const predictedValidationR = validationCurveR ? interpolateLevelCurve(fitCurvesR, validationCurveR.inputDb) : null;
+  const resolvedFitLevelsDb = fitCurvesL.length
+    ? fitCurvesL.map((curve) => curve.inputDb)
+    : fitCurvesR.map((curve) => curve.inputDb);
   const representativeCurveL = pickRepresentativeCurve(
     fitCurvesL,
     validationCurveL,
@@ -1153,7 +1464,7 @@ export function analyseTestTapeProgram(audioBuffer, program = generateTestTapePr
     responseSegments,
     toneSegments,
     dynamicModel: {
-      fitLevelsDb: [...(program.fitLevelsDb || [])],
+      fitLevelsDb: [...resolvedFitLevelsDb],
       validationLevelDb: Number(program.validationLevelDb || 0),
       validationErrorDb: {
         L: validationCurveL && predictedValidationL ? curveFitError(validationCurveL, predictedValidationL) : null,
@@ -1173,11 +1484,11 @@ export function analyseTestTapeProgram(audioBuffer, program = generateTestTapePr
         durationSec: program.spec.response.mainSec,
         toneHz: program.spec.response.toneHz,
         anchorHz: Number(program.spec.response.anchorHz || program.spec.response.toneHz || 1000),
-        fitLevelsDb: [...(program.fitLevelsDb || [])],
+        fitLevelsDb: [...resolvedFitLevelsDb],
         validationLevelDb: Number(program.validationLevelDb || 0),
       },
       dynamicModel: {
-        fitLevelsDb: [...(program.fitLevelsDb || [])],
+        fitLevelsDb: [...resolvedFitLevelsDb],
         validationLevelDb: Number(program.validationLevelDb || 0),
         validationErrorDb: {
           L: validationCurveL && predictedValidationL ? curveFitError(validationCurveL, predictedValidationL) : null,
@@ -1213,15 +1524,11 @@ export function analyseTestTapeProgram(audioBuffer, program = generateTestTapePr
       },
     },
   };
-  const transport = analyseTransportMono(
+  const transport = analyseTransportMonoFromBounds(
     mono,
     program.transportSegment.measurement,
-    buildAnchoredSegmentSearchWindow(
-      program.transportSegment,
-      sr,
-      mono.length,
-      anchorOffsetSamples,
-    ),
+    transportDetectedMainStart,
+    Math.min(mono.length, transportDetectedMainStart + program.transportSegment.measurement.mainLength),
   );
   return {
     kind: "test-tape-program",
