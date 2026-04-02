@@ -378,6 +378,122 @@ function sampleLinear(data, pos) {
   const b = data[idx + 1];
   return a + (b - a) * frac;
 }
+function nextPow2(n) {
+  let value = 1;
+  while (value < n) value <<= 1;
+  return value;
+}
+function fftComplexInPlace(real, imag, inverse = false) {
+  const n = real.length;
+  let j = 0;
+  for (let i = 0; i < n; i++) {
+    if (i < j) {
+      [real[i], real[j]] = [real[j], real[i]];
+      [imag[i], imag[j]] = [imag[j], imag[i]];
+    }
+    let bit = n >> 1;
+    while (j & bit) {
+      j ^= bit;
+      bit >>= 1;
+    }
+    j ^= bit;
+  }
+  for (let len = 2; len <= n; len <<= 1) {
+    const angle = (inverse ? 2 : -2) * Math.PI / len;
+    const wLenCos = Math.cos(angle);
+    const wLenSin = Math.sin(angle);
+    for (let start = 0; start < n; start += len) {
+      let wCos = 1;
+      let wSin = 0;
+      for (let i = 0; i < (len >> 1); i++) {
+        const even = start + i;
+        const odd = even + (len >> 1);
+        const oddReal = (real[odd] * wCos) - (imag[odd] * wSin);
+        const oddImag = (real[odd] * wSin) + (imag[odd] * wCos);
+        real[odd] = real[even] - oddReal;
+        imag[odd] = imag[even] - oddImag;
+        real[even] += oddReal;
+        imag[even] += oddImag;
+        const nextCos = (wCos * wLenCos) - (wSin * wLenSin);
+        const nextSin = (wCos * wLenSin) + (wSin * wLenCos);
+        wCos = nextCos;
+        wSin = nextSin;
+      }
+    }
+  }
+  if (inverse) {
+    for (let i = 0; i < n; i++) {
+      real[i] /= n;
+      imag[i] /= n;
+    }
+  }
+}
+function prepareImpulseConvolver(impulse) {
+  const impulseLength = impulse.length;
+  const fftSize = nextPow2(Math.max(2, impulseLength * 4));
+  const blockSize = fftSize - impulseLength + 1;
+  const impulseReal = new Float64Array(fftSize);
+  const impulseImag = new Float64Array(fftSize);
+  impulseReal.set(impulse);
+  fftComplexInPlace(impulseReal, impulseImag, false);
+  return async (input, { yieldEveryBlocks = 8 } = {}) => {
+    const output = new Float32Array(input.length + impulseLength - 1);
+    const blockReal = new Float64Array(fftSize);
+    const blockImag = new Float64Array(fftSize);
+    let blockIndex = 0;
+    for (let offset = 0; offset < input.length; offset += blockSize, blockIndex += 1) {
+      blockReal.fill(0);
+      blockImag.fill(0);
+      const chunkLength = Math.min(blockSize, input.length - offset);
+      for (let i = 0; i < chunkLength; i++) blockReal[i] = input[offset + i];
+      fftComplexInPlace(blockReal, blockImag, false);
+      for (let i = 0; i < fftSize; i++) {
+        const re = (blockReal[i] * impulseReal[i]) - (blockImag[i] * impulseImag[i]);
+        const im = (blockReal[i] * impulseImag[i]) + (blockImag[i] * impulseReal[i]);
+        blockReal[i] = re;
+        blockImag[i] = im;
+      }
+      fftComplexInPlace(blockReal, blockImag, true);
+      const validLength = Math.min(fftSize, chunkLength + impulseLength - 1);
+      for (let i = 0; i < validLength; i++) output[offset + i] += blockReal[i];
+      if (yieldEveryBlocks > 0 && ((blockIndex + 1) % yieldEveryBlocks) === 0) {
+        await yieldToMainThread();
+      }
+    }
+    return output;
+  };
+}
+function yieldToMainThread() {
+  return new Promise((resolve) => {
+    if (typeof window !== "undefined" && typeof window.requestAnimationFrame === "function") {
+      window.requestAnimationFrame(() => resolve());
+      return;
+    }
+    setTimeout(resolve, 0);
+  });
+}
+async function convolveBufferLikeWithImpulse(bufferLike, impulse) {
+  if (!impulse) return bufferLike;
+  const channelCount = Math.max(1, bufferLike.numberOfChannels || 1);
+  const leftConvolver = prepareImpulseConvolver(impulse.left);
+  const rightConvolver = channelCount > 1 ? prepareImpulseConvolver(impulse.right) : null;
+  const fullLeft = await leftConvolver(bufferLike.getChannelData(0));
+  const channels = [
+    Float32Array.from(fullLeft.slice(impulse.delaySamples, impulse.delaySamples + bufferLike.length)),
+  ];
+  if (channelCount > 1) {
+    const fullRight = await rightConvolver(bufferLike.getChannelData(Math.min(1, channelCount - 1)));
+    channels.push(Float32Array.from(fullRight.slice(impulse.delaySamples, impulse.delaySamples + bufferLike.length)));
+  }
+  return {
+    numberOfChannels: channelCount,
+    sampleRate: bufferLike.sampleRate,
+    length: bufferLike.length,
+    getChannelData(channel) {
+      return channels[channel] || channels[0];
+    },
+  };
+}
 async function encodeMixedWav({
   tracks,
   totalFrames,
@@ -1633,6 +1749,32 @@ export default function CassetteTool() {
       .replace(/\s+/g, " ")
       .trim()
   ), []);
+  const buildExportAudioFilename = useCallback((side, sampleRate, bitDepth) => {
+    const parts = [
+      sanitizeFilenamePart(tapeName) || "SIDE",
+      `side-${side}`,
+      new Date().toISOString().slice(0, 10),
+      `${sampleRate}hz`,
+      `${bitDepth}bit`,
+    ];
+    if (loadedCalibrationProfile) {
+      const profileLabel = sanitizeFilenamePart(
+        String(loadedCalibrationProfileName || loadedCalibrationProfile.name || "calibration")
+          .replace(/\.[^.]+$/, "")
+      );
+      parts.push(`cal-${profileLabel || "loaded"}`);
+      parts.push(`eq-${applyCalibrationEqExport ? "on" : "off"}`);
+      parts.push(`clear-${applyCalibrationClarityExport ? "on" : "off"}`);
+    }
+    return `${parts.join("_")}.wav`;
+  }, [
+    applyCalibrationClarityExport,
+    applyCalibrationEqExport,
+    loadedCalibrationProfile,
+    loadedCalibrationProfileName,
+    sanitizeFilenamePart,
+    tapeName,
+  ]);
   const fillTemplate = useCallback((key, vars = {}) => {
     let message = T(key);
     Object.entries(vars).forEach(([name, value]) => {
@@ -1796,19 +1938,8 @@ export default function CassetteTool() {
     if (!profile) return bufferLike;
     const impulse = getCorrectionImpulse(profile, bufferLike.sampleRate, inverse);
     if (!impulse) return bufferLike;
-    const renderLength = bufferLike.length + impulse.length;
-    const oc = new OfflineAudioContext(bufferLike.numberOfChannels, renderLength, bufferLike.sampleRate);
-    const src = oc.createBufferSource();
-    src.buffer = createAudioBufferFromBufferLike(oc, bufferLike);
-    const conv = oc.createConvolver();
-    conv.normalize = false;
-    conv.buffer = createImpulseAudioBuffer(oc, impulse);
-    src.connect(conv);
-    conv.connect(oc.destination);
-    src.start(0);
-    const rendered = await oc.startRendering();
-    return createBufferLikeSlice(rendered, impulse.delaySamples, bufferLike.length);
-  }, [createAudioBufferFromBufferLike, createBufferLikeSlice, createImpulseAudioBuffer, getCorrectionImpulse]);
+    return convolveBufferLikeWithImpulse(bufferLike, impulse);
+  }, [getCorrectionImpulse]);
 
   const buildDynamicLevelProfiles = useCallback((profile) => {
     if (!profile || !hasDynamicCalibrationProfile(profile)) return [];
@@ -2584,9 +2715,16 @@ export default function CassetteTool() {
       const ok = window.confirm(`${T("bitDepthWarn")}:\n${names}`);
       if (!ok) return;
     }
-    setProcessing(true); setExpProg({ side, step: 0, total: st.length + 3 });
+    setProcessing(true);
+    setProcMsg(`SIDE ${side}: preparing export`);
+    setExpProg({ side, step: 0, total: st.length + 3 });
     try {
+      await yieldToMainThread();
       const exportProfile = activeExportCalibrationProfile;
+      if (exportProfile) {
+        setProcMsg(`SIDE ${side}: rendering compensation`);
+        await yieldToMainThread();
+      }
       const renderedTracks = exportProfile ? await resolveCompensatedTrackRenders(st, sr, exportProfile) : null;
       const renderedByTrackId = renderedTracks ? new Map(renderedTracks.map((entry) => [entry.trackId, entry])) : null;
       const gains = renderedTracks ? st.map(() => 1) : await resolveNormalizedTrackGains(st, sr, exportProfile);
@@ -2628,12 +2766,12 @@ export default function CassetteTool() {
       setExpProg({ side, step: st.length + 3, total: st.length + 3 });
       const u = URL.createObjectURL(blob), a = document.createElement("a");
       a.href = u;
-      a.download = `${sanitizeFilenamePart(tapeName) || "SIDE"}_side-${side}_${new Date().toISOString().slice(0, 10)}_${sr}hz_${bits}bit.wav`;
+      a.download = buildExportAudioFilename(side, sr, bits);
       a.click();
       URL.revokeObjectURL(u);
     } catch (e) { console.error(e); alert(`导出失败：${e.message}`); }
     setProcessing(false); setProcMsg(""); setExpProg(null);
-  }, [tracks, defaultGap, fillTail, sideSec, getAC, T, getGap, resolveExportSr, resolveExportBits, stopSignalOutput, activeExportCalibrationProfile, resolveCompensatedTrackRenders, resolveNormalizedTrackGains, renderBufferLikeWithDynamicProfile, renderBufferLikeWithProfile, sanitizeFilenamePart, tapeName, targetDb]);
+  }, [tracks, defaultGap, fillTail, sideSec, getAC, T, getGap, resolveExportSr, resolveExportBits, stopSignalOutput, activeExportCalibrationProfile, resolveCompensatedTrackRenders, resolveNormalizedTrackGains, renderBufferLikeWithDynamicProfile, renderBufferLikeWithProfile, buildExportAudioFilename, targetDb]);
 
   // ── Playback Engine ───────────────────────────────────────
   const playGenRef = useRef(0); // generation counter to prevent stale callbacks
