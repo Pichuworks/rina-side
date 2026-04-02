@@ -21,6 +21,13 @@ export function parsePcmWavBuffer(buffer) {
   if (readAscii(0, 4) !== "RIFF" || readAscii(8, 4) !== "WAVE") return null;
 
   const view = new DataView(buffer);
+  const resolveWavAudioFormat = (chunkStart, chunkSize) => {
+    const audioFormat = view.getUint16(chunkStart, true);
+    if (audioFormat !== 0xfffe) return audioFormat;
+    if (chunkSize < 40) return audioFormat;
+    const subFormat = view.getUint16(chunkStart + 24, true);
+    return subFormat || audioFormat;
+  };
   let offset = 12;
   let fmt = null;
   let dataOffset = -1;
@@ -32,7 +39,7 @@ export function parsePcmWavBuffer(buffer) {
     const chunkStart = offset + 8;
     if (chunkId === "fmt ") {
       fmt = {
-        audioFormat: view.getUint16(chunkStart, true),
+        audioFormat: resolveWavAudioFormat(chunkStart, chunkSize),
         numChannels: view.getUint16(chunkStart + 2, true),
         sampleRate: view.getUint32(chunkStart + 4, true),
         blockAlign: view.getUint16(chunkStart + 12, true),

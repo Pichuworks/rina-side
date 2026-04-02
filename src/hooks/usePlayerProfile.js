@@ -28,6 +28,9 @@ export default function usePlayerProfile({ showToast, downloadBlob, encodeWAV, d
   const [compilerProfileBName, setCompilerProfileBName] = useState("");
   const [compilerTargetMode, setCompilerTargetMode] = useState("profile");
   const [playerEqCompileResult, setPlayerEqCompileResult] = useState(null);
+  const waitForProgressPaint = useCallback(() => new Promise((resolve) => {
+    requestAnimationFrame(() => requestAnimationFrame(resolve));
+  }), []);
 
   // ── Song pairing ────────────────────────────────────────────
 
@@ -118,16 +121,22 @@ export default function usePlayerProfile({ showToast, downloadBlob, encodeWAV, d
     }
   }, [decodeExternalAudioFile, setProcessing, setProcMsg, showToast]);
 
-  const buildPlayerProbeProfile = useCallback((name) => {
+  const buildPlayerProbeProfile = useCallback(async (name) => {
     if (!probeCaptureBuffer) return;
+    setProcessing(true);
+    setProcMsg("正在生成测试信号法测量结果……");
     try {
+      await waitForProgressPaint();
       const profile = buildProbeProfile(null, probeCaptureBuffer, createProbeManifest(), { name: name || "Probe Profile" });
       setPlayerProbeProfile(profile);
       showToast("测量结果已生成");
     } catch (err) {
       showToast(`生成失败：${err.message}`, 5000);
+    } finally {
+      setProcessing(false);
+      setProcMsg("");
     }
-  }, [probeCaptureBuffer, showToast]);
+  }, [probeCaptureBuffer, setProcessing, setProcMsg, showToast, waitForProgressPaint]);
 
   const savePlayerProbeProfile = useCallback(() => {
     if (!playerProbeProfile) return;
@@ -265,9 +274,12 @@ function autoQForBand(centerHz, sortedCenters, index) {
   return Math.max(0.3, Math.min(10, Math.sqrt(ratio) / (ratio - 1)));
 }
 
-  const buildFixedEqWorkbenchProfile = useCallback((config) => {
+  const buildFixedEqWorkbenchProfile = useCallback(async (config) => {
     if (!eqWorkbenchBaseProfile) return;
+    setProcessing(true);
+    setProcMsg("正在生成设备 EQ 模型……");
     try {
+      await waitForProgressPaint();
       const centers = String(config.customBandsText || "")
         .split(",")
         .map((value) => Number(value.trim()))
@@ -312,8 +324,11 @@ function autoQForBand(centerHz, sortedCenters, index) {
       showToast(`EQ 模型已生成 ${qSummary}`);
     } catch (err) {
       showToast(`EQ 模型生成失败：${err.message}`, 5000);
+    } finally {
+      setProcessing(false);
+      setProcMsg("");
     }
-  }, [eqWorkbenchBaseProfile, showToast]);
+  }, [eqWorkbenchBaseProfile, setProcessing, setProcMsg, showToast, waitForProgressPaint]);
 
   const saveEqReadyProfile = useCallback(() => {
     if (!playerEqReadyProfile) return;

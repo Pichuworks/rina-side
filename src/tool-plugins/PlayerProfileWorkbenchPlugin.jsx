@@ -85,6 +85,8 @@ const LABELS = {
     eqSteps: "EQ 档位",
     eqVisualization: "EQ 可视化",
     correctedVisualization: "修正后听感",
+    enlargeChart: "放大",
+    shrinkChart: "缩小",
     curveLegendTarget: "目标差值",
     curveLegendPredicted: "EQ 预测",
     curveLegendTargetResponse: "目标听感",
@@ -185,6 +187,8 @@ const LABELS = {
     eqSteps: "EQ Steps",
     eqVisualization: "EQ Visualization",
     correctedVisualization: "Corrected Response",
+    enlargeChart: "Enlarge",
+    shrinkChart: "Shrink",
     curveLegendTarget: "Target Delta",
     curveLegendPredicted: "Predicted EQ",
     curveLegendTargetResponse: "Target Response",
@@ -285,6 +289,8 @@ const LABELS = {
     eqSteps: "EQ 値",
     eqVisualization: "EQ 可視化",
     correctedVisualization: "補正後プロファイル",
+    enlargeChart: "拡大",
+    shrinkChart: "縮小",
     curveLegendTarget: "目標 Delta",
     curveLegendPredicted: "予測 EQ",
     curveLegendTargetResponse: "目標プロファイル",
@@ -386,10 +392,10 @@ function EqBars({ steps }) {
   );
 }
 
-function CurveChart({ frequencyGridHz, targetDeltaDb, predictedEqDb, legendTarget, legendPredicted }) {
+function CurveChart({ frequencyGridHz, targetDeltaDb, predictedEqDb, legendTarget, legendPredicted, large = false }) {
   if (!frequencyGridHz?.length || !targetDeltaDb?.length || !predictedEqDb?.length) return null;
   const width = 720;
-  const height = 220;
+  const height = large ? 320 : 220;
   const padX = 36;
   const padY = 20;
   const allValues = [...targetDeltaDb, ...predictedEqDb];
@@ -411,7 +417,7 @@ function CurveChart({ frequencyGridHz, targetDeltaDb, predictedEqDb, legendTarge
 
   return (
     <div style={{ border: "1px solid var(--border)", borderRadius: 8, background: "var(--bg)", padding: 10 }}>
-      <svg viewBox={`0 0 ${width} ${height}`} style={{ width: "100%", height: 220, display: "block" }}>
+      <svg viewBox={`0 0 ${width} ${height}`} style={{ width: "100%", height: large ? 320 : 220, display: "block" }}>
         {guideValues.map((db) => {
           const y = padY + ((maxDb - db) / (maxDb * 2)) * (height - padY * 2);
           return (
@@ -448,10 +454,13 @@ function CurveChart({ frequencyGridHz, targetDeltaDb, predictedEqDb, legendTarge
   );
 }
 
-function ChannelChartBlock({ title, children }) {
+function ChannelChartBlock({ title, action, children }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
-      <div style={{ fontSize: 11, color: "var(--text-dim)" }}>{title}</div>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 8 }}>
+        <div style={{ fontSize: 11, color: "var(--text-dim)" }}>{title}</div>
+        {action || null}
+      </div>
       {children}
     </div>
   );
@@ -525,6 +534,7 @@ export function PlayerProfileWorkbenchPlugin(props) {
   const [maxStep, setMaxStep] = useState("12");
   const [qValue, setQValue] = useState("");
   const [selectedPreset, setSelectedPreset] = useState("car16");
+  const [largeChart, setLargeChart] = useState("");
 
   const EQ_PRESETS = useMemo(() => [
     { id: "car16", label: lang === "ja" ? "車載 16 バンド" : lang === "en" ? "Car 16-band" : "车机 16 段", bands: "31,46,63,125,230,400,630,810,1000,2000,4000,6000,8000,12000,14000,16000", step: "1", min: "-12", max: "12", q: "" },
@@ -586,6 +596,14 @@ export function PlayerProfileWorkbenchPlugin(props) {
     () => (compileResult ? generateEqCompileReport(compileResult, compilerProfileAName, compilerProfileBName, lang) : null),
     [compileResult, compilerProfileAName, compilerProfileBName, lang],
   );
+  const chartToggleButton = (chartKey) => (
+    <button
+      onClick={() => setLargeChart((current) => (current === chartKey ? "" : chartKey))}
+      style={{ padding: "5px 10px", border: "1px solid var(--border)", borderRadius: 8, background: "var(--bg-deep)", cursor: "pointer", color: "var(--text)", fontSize: 11 }}
+    >
+      {largeChart === chartKey ? t.shrinkChart : t.enlargeChart}
+    </button>
+  );
 
   return (
     <>
@@ -593,6 +611,13 @@ export function PlayerProfileWorkbenchPlugin(props) {
         <div style={{ fontSize: 13, fontWeight: 600, color: "var(--accent-ink)", marginBottom: 6 }}>{t.descTitle}</div>
         <div style={{ fontSize: 13, lineHeight: 1.8, color: "var(--text-dim)" }}>{t.desc}</div>
       </div>
+
+      {processing && procMsg && (
+        <div style={{ padding: "10px 12px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--accent-dim)" }}>
+          <div style={{ fontSize: 11, color: "var(--text-dim)", marginBottom: 4 }}>{t.analysisProgress}</div>
+          <div style={{ fontSize: 12, color: "var(--accent-ink)" }}>{procMsg}</div>
+        </div>
+      )}
 
       <div style={sectionStyle()}>
         <div style={{ fontSize: 13, fontWeight: 600 }}>{t.probeTitle}</div>
@@ -668,11 +693,6 @@ export function PlayerProfileWorkbenchPlugin(props) {
           <button onClick={() => onBuildSongProfile(songProfileName)} disabled={processing || !songPairCount || !!songPairError} style={actionBtnStyle(true)}>{t.generateSongProfile}</button>
           <button onClick={onSaveSongProfile} disabled={!songProfile} style={actionBtnStyle()}>{t.saveSongProfile}</button>
         </div>
-        {processing && procMsg && (
-          <div style={{ padding: "8px 12px", borderRadius: 8, background: "var(--accent-dim)", fontSize: 12, color: "var(--accent-ink)" }}>
-            {procMsg}
-          </div>
-        )}
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px,1fr))", gap: 8 }}>
           {statBox(t.refCount, String(songRefNames?.length || 0))}
           {statBox(t.recCount, String(songRecNames?.length || 0))}
@@ -933,44 +953,48 @@ export function PlayerProfileWorkbenchPlugin(props) {
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                 <div style={{ fontSize: 11, color: "var(--text-dim)" }}>{t.eqVisualization}</div>
-                <ChannelChartBlock title="L">
+                <ChannelChartBlock title="L" action={chartToggleButton("eq-L")}>
                   <CurveChart
                     frequencyGridHz={compileResult.frequencyGridHz}
                     targetDeltaDb={compileResult.targetDeltaDb?.L || []}
                     predictedEqDb={compileResult.predictedEqDb || []}
                     legendTarget={t.curveLegendTarget}
                     legendPredicted={t.curveLegendPredicted}
+                    large={largeChart === "eq-L"}
                   />
                 </ChannelChartBlock>
-                <ChannelChartBlock title="R">
+                <ChannelChartBlock title="R" action={chartToggleButton("eq-R")}>
                   <CurveChart
                     frequencyGridHz={compileResult.frequencyGridHz}
                     targetDeltaDb={compileResult.targetDeltaDb?.R || []}
                     predictedEqDb={compileResult.predictedEqDb || []}
                     legendTarget={t.curveLegendTarget}
                     legendPredicted={t.curveLegendPredicted}
+                    large={largeChart === "eq-R"}
                   />
                 </ChannelChartBlock>
               </div>
               {!!compileResult.targetResponseDb?.L?.length && !!compileResult.correctedResponseDb?.L?.length && (
                 <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
                   <div style={{ fontSize: 11, color: "var(--text-dim)" }}>{t.correctedVisualization}</div>
-                  <ChannelChartBlock title="L">
+                  <ChannelChartBlock title="L" action={chartToggleButton("corrected-L")}>
                     <CurveChart
                       frequencyGridHz={compileResult.frequencyGridHz}
                       targetDeltaDb={compileResult.targetResponseDb?.L || []}
                       predictedEqDb={compileResult.correctedResponseDb?.L || []}
                       legendTarget={t.curveLegendTargetResponse}
                       legendPredicted={t.curveLegendCorrected}
+                      large={largeChart === "corrected-L"}
                     />
                   </ChannelChartBlock>
-                  <ChannelChartBlock title="R">
+                  <ChannelChartBlock title="R" action={chartToggleButton("corrected-R")}>
                     <CurveChart
                       frequencyGridHz={compileResult.frequencyGridHz}
                       targetDeltaDb={compileResult.targetResponseDb?.R || []}
                       predictedEqDb={compileResult.correctedResponseDb?.R || []}
                       legendTarget={t.curveLegendTargetResponse}
                       legendPredicted={t.curveLegendCorrected}
+                      large={largeChart === "corrected-R"}
                     />
                   </ChannelChartBlock>
                 </div>

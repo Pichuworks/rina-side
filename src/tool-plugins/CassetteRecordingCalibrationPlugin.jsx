@@ -329,6 +329,7 @@ function CalibrationCurveChart({ title, buttonLabel, onToggleSize, frequencyGrid
 export function CassetteRecordingCalibrationPlugin({
   lang = "zh-CN",
   processing,
+  procMsg,
   captureName,
   responseAnalysis,
   transportAnalysis,
@@ -359,6 +360,7 @@ export function CassetteRecordingCalibrationPlugin({
   const compositeFileRef = useRef(null);
   const playbackFileRef = useRef(null);
   const t = LABELS[lang] || LABELS.en;
+  const progressLabel = lang === "ja" ? "分析進捗" : lang === "en" ? "Analysis Progress" : "分析进度";
   const isRecording = recordingKind === "program";
   const transportRefLabel = transportAnalysis?.transportReferenceMode
     ? (lang === "zh-CN" ? "写入机参考频率" : lang === "ja" ? "録音機基準周波数" : "Writer Reference")
@@ -520,6 +522,13 @@ export function CassetteRecordingCalibrationPlugin({
         <div style={{ fontSize: 11, color: "var(--text-dim)", marginBottom: 4 }}>{t.helpTitle}</div>
         <div style={{ fontSize: 13, lineHeight: 1.8, whiteSpace: "pre-line" }}>{helpText}</div>
       </div>
+
+      {processing && procMsg && (
+        <div style={{ padding: "10px 12px", borderRadius: 10, border: "1px solid var(--border)", background: "var(--accent-dim)" }}>
+          <div style={{ fontSize: 11, color: "var(--text-dim)", marginBottom: 4 }}>{progressLabel}</div>
+          <div style={{ fontSize: 12, color: "var(--accent-ink)" }}>{procMsg}</div>
+        </div>
+      )}
 
       {/* ── Recording derivation UI ──────────────────── */}
       {activeScenario === "recording" && (

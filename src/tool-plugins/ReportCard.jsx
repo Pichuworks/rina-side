@@ -1,4 +1,4 @@
-import React, { useState, useCallback } from "react";
+import React, { useState, useCallback, useMemo } from "react";
 
 function hexToRgba(hex, alpha) {
   const r = parseInt(hex.slice(1, 3), 16);
@@ -27,9 +27,9 @@ function TagBadge({ label, color }) {
  * Mini inline SVG frequency response chart.
  * chartData: { frequencyGridHz: number[], curves: Array<{ db: number[], color: string, label?: string, dash?: string }> }
  */
-function MiniFreqChart({ chartData }) {
+function MiniFreqChart({ chartData, large = false }) {
   if (!chartData?.frequencyGridHz?.length || !chartData.curves?.length) return null;
-  const W = 480, H = 120, PAD = { l: 36, r: 8, t: 12, b: 18 };
+  const W = 760, H = large ? 300 : 180, PAD = { l: 42, r: 12, t: 20, b: 24 };
   const plotW = W - PAD.l - PAD.r;
   const plotH = H - PAD.t - PAD.b;
   const freqs = chartData.frequencyGridHz;
@@ -63,12 +63,12 @@ function MiniFreqChart({ chartData }) {
       {gridDbs.map((db) => (
         <g key={`gd${db}`}>
           <line x1={PAD.l} x2={W - PAD.r} y1={toY(db)} y2={toY(db)} stroke={db === 0 ? "var(--text-dim)" : "var(--border)"} strokeWidth={db === 0 ? 0.8 : 0.5} />
-          <text x={PAD.l - 4} y={toY(db) + 3} textAnchor="end" fontSize={8} fill="var(--text-dim)">{db > 0 ? `+${db}` : db}</text>
+          <text x={PAD.l - 6} y={toY(db) + 4} textAnchor="end" fontSize={10} fill="var(--text-dim)">{db > 0 ? `+${db}` : db}</text>
         </g>
       ))}
       {/* Freq labels */}
       {[100, 1000, 10000].map((f) => (
-        <text key={`fl${f}`} x={toX(f)} y={H - 4} textAnchor="middle" fontSize={8} fill="var(--text-dim)">
+        <text key={`fl${f}`} x={toX(f)} y={H - 4} textAnchor="middle" fontSize={10} fill="var(--text-dim)">
           {f >= 1000 ? `${f / 1000}k` : f}
         </text>
       ))}
@@ -87,7 +87,7 @@ function MiniFreqChart({ chartData }) {
             points={points.join(" ")}
             fill="none"
             stroke={curve.color || "#888"}
-            strokeWidth={1.2}
+            strokeWidth={1.6}
             strokeDasharray={curve.dash || undefined}
           />
         );
@@ -96,15 +96,15 @@ function MiniFreqChart({ chartData }) {
       {chartData.curves.filter((c) => c.label).map((curve, ci) => (
         <g key={`lg${ci}`}>
           <line
-            x1={PAD.l + ci * 90}
-            x2={PAD.l + ci * 90 + 14}
-            y1={6}
-            y2={6}
+            x1={PAD.l + ci * 110}
+            x2={PAD.l + ci * 110 + 18}
+            y1={8}
+            y2={8}
             stroke={curve.color || "#888"}
-            strokeWidth={1.5}
+            strokeWidth={1.8}
             strokeDasharray={curve.dash || undefined}
           />
-          <text x={PAD.l + ci * 90 + 18} y={9} fontSize={8} fill="var(--text-dim)">{curve.label}</text>
+          <text x={PAD.l + ci * 110 + 24} y={11} fontSize={10} fill="var(--text-dim)">{curve.label}</text>
         </g>
       ))}
     </svg>
@@ -123,6 +123,7 @@ function MiniFreqChart({ chartData }) {
  */
 export function ReportCard({ summary, full, tags = [], lang = "zh-CN", chartData }) {
   const [expanded, setExpanded] = useState(false);
+  const [chartLarge, setChartLarge] = useState(false);
 
   const handleSave = useCallback(() => {
     if (!full) return;
@@ -139,6 +140,11 @@ export function ReportCard({ summary, full, tags = [], lang = "zh-CN", chartData
     label: typeof tag.label === "object" ? (tag.label[lang] || tag.label["zh-CN"] || tag.label.en || "?") : tag.label,
     color: tag.color || "#888",
   }));
+  const chartActionLabel = useMemo(() => (
+    chartLarge
+      ? (lang === "ja" ? "縮小" : lang === "en" ? "Shrink" : "缩小")
+      : (lang === "ja" ? "拡大" : lang === "en" ? "Enlarge" : "放大")
+  ), [chartLarge, lang]);
 
   return (
     <div style={{
@@ -161,7 +167,19 @@ export function ReportCard({ summary, full, tags = [], lang = "zh-CN", chartData
       </div>
       {expanded && full && (
         <div style={{ marginTop: 10, borderTop: "1px solid var(--border)", paddingTop: 10 }}>
-          {chartData && <MiniFreqChart chartData={chartData} />}
+          {chartData && (
+            <div style={{ marginBottom: 10 }}>
+              <div style={{ display: "flex", justifyContent: "flex-end", marginBottom: 8 }}>
+                <button
+                  onClick={() => setChartLarge((value) => !value)}
+                  style={{ padding: "5px 10px", border: "1px solid var(--border)", borderRadius: 8, background: "var(--bg-deep)", cursor: "pointer", color: "var(--text)", fontSize: 11 }}
+                >
+                  {chartActionLabel}
+                </button>
+              </div>
+              <MiniFreqChart chartData={chartData} large={chartLarge} />
+            </div>
+          )}
           <pre style={{ fontFamily: "inherit", whiteSpace: "pre-wrap", wordBreak: "break-word", fontSize: 12, lineHeight: 1.8, margin: 0, color: "var(--text-dim)" }}>
             {full}
           </pre>
