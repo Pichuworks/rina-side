@@ -347,6 +347,121 @@ function encodeWAV(ab, bitsPerSample = 16) {
   }
   return new Blob([buf], { type: "audio/wav" });
 }
+function buildWavHeader(numberOfChannels, sampleRate, length, bitsPerSample = 16) {
+  const byPS = bitsPerSample / 8;
+  const ds = length * numberOfChannels * byPS;
+  const buf = new ArrayBuffer(44);
+  const dv = new DataView(buf);
+  const ws = (o, s) => { for (let i = 0; i < s.length; i++) dv.setUint8(o + i, s.charCodeAt(i)); };
+  ws(0, "RIFF");
+  dv.setUint32(4, 36 + ds, true);
+  ws(8, "WAVE");
+  ws(12, "fmt ");
+  dv.setUint32(16, 16, true);
+  dv.setUint16(20, 1, true);
+  dv.setUint16(22, numberOfChannels, true);
+  dv.setUint32(24, sampleRate, true);
+  dv.setUint32(28, sampleRate * numberOfChannels * byPS, true);
+  dv.setUint16(32, numberOfChannels * byPS, true);
+  dv.setUint16(34, bitsPerSample, true);
+  ws(36, "data");
+  dv.setUint32(40, ds, true);
+  return new Uint8Array(buf);
+}
+function sampleLinear(data, pos) {
+  if (!data.length) return 0;
+  if (pos <= 0) return data[0];
+  if (pos >= data.length - 1) return data[data.length - 1];
+  const idx = Math.floor(pos);
+  const frac = pos - idx;
+  const a = data[idx];
+  const b = data[idx + 1];
+  return a + (b - a) * frac;
+}
+async function encodeMixedWav({
+  tracks,
+  totalFrames,
+  sampleRate,
+  bitsPerSample = 16,
+  chunkFrames = 32768,
+  onProgress = null,
+}) {
+  const numberOfChannels = 2;
+  const bytesPerSample = bitsPerSample / 8;
+  const bytesPerFrame = numberOfChannels * bytesPerSample;
+  const parts = [buildWavHeader(numberOfChannels, sampleRate, totalFrames, bitsPerSample)];
+  for (let chunkStart = 0; chunkStart < totalFrames; chunkStart += chunkFrames) {
+    const frameCount = Math.min(chunkFrames, totalFrames - chunkStart);
+    const chunkEnd = chunkStart + frameCount;
+    const mixL = new Float32Array(frameCount);
+    const mixR = new Float32Array(frameCount);
+    for (const track of tracks) {
+      const trackStart = track.startFrame;
+      const trackEnd = track.startFrame + track.outputFrames;
+      const overlapStart = Math.max(chunkStart, trackStart);
+      const overlapEnd = Math.min(chunkEnd, trackEnd);
+      if (overlapStart >= overlapEnd) continue;
+      const buffer = track.buffer;
+      const chCount = Math.max(1, buffer.numberOfChannels || 1);
+      const srcL = buffer.getChannelData(0);
+      const srcR = buffer.getChannelData(Math.min(1, chCount - 1));
+      const gain = track.gain ?? 1;
+      if (buffer.sampleRate === sampleRate) {
+        let srcIndex = overlapStart - trackStart;
+        let dstIndex = overlapStart - chunkStart;
+        const count = overlapEnd - overlapStart;
+        if (chCount === 1) {
+          for (let i = 0; i < count; i++) {
+            const sample = srcL[srcIndex + i] * gain;
+            mixL[dstIndex + i] += sample;
+            mixR[dstIndex + i] += sample;
+          }
+        } else {
+          for (let i = 0; i < count; i++) {
+            mixL[dstIndex + i] += srcL[srcIndex + i] * gain;
+            mixR[dstIndex + i] += srcR[srcIndex + i] * gain;
+          }
+        }
+      } else {
+        const ratio = buffer.sampleRate / sampleRate;
+        for (let frame = overlapStart; frame < overlapEnd; frame++) {
+          const dstIndex = frame - chunkStart;
+          const srcPos = (frame - trackStart) * ratio;
+          const sampleL = sampleLinear(srcL, srcPos) * gain;
+          const sampleR = (chCount === 1 ? sampleLinear(srcL, srcPos) : sampleLinear(srcR, srcPos)) * gain;
+          mixL[dstIndex] += sampleL;
+          mixR[dstIndex] += sampleR;
+        }
+      }
+    }
+    const chunkBytes = new Uint8Array(frameCount * bytesPerFrame);
+    const dv = new DataView(chunkBytes.buffer);
+    let off = 0;
+    if (bitsPerSample === 16) {
+      for (let i = 0; i < frameCount; i++) {
+        const l = Math.max(-1, Math.min(1, mixL[i]));
+        const r = Math.max(-1, Math.min(1, mixR[i]));
+        dv.setInt16(off, l < 0 ? l * 0x8000 : l * 0x7FFF, true); off += 2;
+        dv.setInt16(off, r < 0 ? r * 0x8000 : r * 0x7FFF, true); off += 2;
+      }
+    } else {
+      for (let i = 0; i < frameCount; i++) {
+        const l = Math.max(-1, Math.min(1, mixL[i]));
+        const r = Math.max(-1, Math.min(1, mixR[i]));
+        const lv = l < 0 ? Math.round(l * 0x800000) : Math.round(l * 0x7FFFFF);
+        const rv = r < 0 ? Math.round(r * 0x800000) : Math.round(r * 0x7FFFFF);
+        dv.setUint8(off, lv & 0xFF); dv.setUint8(off + 1, (lv >> 8) & 0xFF); dv.setUint8(off + 2, (lv >> 16) & 0xFF); off += 3;
+        dv.setUint8(off, rv & 0xFF); dv.setUint8(off + 1, (rv >> 8) & 0xFF); dv.setUint8(off + 2, (rv >> 16) & 0xFF); off += 3;
+      }
+    }
+    parts.push(chunkBytes);
+    if (onProgress) onProgress(chunkEnd, totalFrames);
+    if (chunkEnd < totalFrames && (((chunkStart / chunkFrames) + 1) % 8 === 0)) {
+      await new Promise(resolve => setTimeout(resolve, 0));
+    }
+  }
+  return new Blob(parts, { type: "audio/wav" });
+}
 function createSoftSatCurve(drive = 1.0, samples = 2048) {
   const curve = new Float32Array(samples);
   const amount = Math.max(0.01, drive);
@@ -2453,40 +2568,47 @@ export default function CassetteTool() {
     }
     setProcessing(true); setExpProg({ side, step: 0, total: st.length + 3 });
     try {
-      const ch = 2;
       const exportProfile = activeExportCalibrationProfile;
       const renderedTracks = exportProfile ? await resolveCompensatedTrackRenders(st, sr, exportProfile) : null;
       const renderedByTrackId = renderedTracks ? new Map(renderedTracks.map((entry) => [entry.trackId, entry])) : null;
       const gains = renderedTracks ? st.map(() => 1) : await resolveNormalizedTrackGains(st, sr, exportProfile);
-      let len = 0;
-      st.forEach((tr, i) => { len += tr.duration * sr; if (i < st.length - 1) len += getGap(tr, st[i + 1]) * sr; });
-      if (fillTail) len = Math.max(len, sideSec * sr);
-      len = Math.ceil(len);
-      const oc = new OfflineAudioContext(ch, len, sr); let cur = 0;
-      const mixBus = oc.createGain();
-      mixBus.gain.value = 1.0;
-      mixBus.connect(oc.destination);
+      const scheduledTracks = [];
+      let cur = 0;
       for (let i = 0; i < st.length; i++) {
         setExpProg({ side, step: i + 1, total: st.length + 3 }); setProcMsg(`SIDE ${side}: [${i + 1}/${st.length}] ${st[i].name}`);
-        const tr = st[i], src = oc.createBufferSource(), gn = oc.createGain();
+        const tr = st[i];
         const renderedTrack = renderedByTrackId?.get(tr.id);
-        src.buffer = renderedTrack ? createAudioBufferFromBufferLike(oc, renderedTrack.rendered) : tr.audioBuffer;
-        gn.gain.value = gains[i]; src.connect(gn); gn.connect(mixBus);
-        src.start(cur / sr); cur += Math.ceil(tr.duration * sr);
+        const buffer = renderedTrack ? renderedTrack.rendered : tr.audioBuffer;
+        const outputFrames = buffer.sampleRate === sr
+          ? buffer.length
+          : Math.ceil((buffer.length / buffer.sampleRate) * sr);
+        scheduledTracks.push({
+          startFrame: cur,
+          outputFrames,
+          gain: gains[i],
+          buffer,
+        });
+        cur += outputFrames;
         if (i < st.length - 1) cur += Math.ceil(getGap(tr, st[i + 1]) * sr);
       }
-      setProcMsg(`SIDE ${side}: ${T("rendering")}`); setExpProg({ side, step: st.length + 1, total: st.length + 3 });
-      const baseMix = await oc.startRendering();
-      let encodedBuffer = baseMix;
-      if (exportProfile && !renderedTracks) {
-        setProcMsg(`SIDE ${side}: 正在应用补偿……`);
-        setExpProg({ side, step: st.length + 2, total: st.length + 3 });
-        encodedBuffer = hasDynamicCalibrationProfile(exportProfile)
-          ? await renderBufferLikeWithDynamicProfile(baseMix, exportProfile, targetDb)
-          : await renderBufferLikeWithProfile(baseMix, exportProfile);
-      }
-      setProcMsg(`SIDE ${side}: ${T("encoding")}`); setExpProg({ side, step: st.length + 3, total: st.length + 3 });
-      const blob = encodeWAV(encodedBuffer, bits), u = URL.createObjectURL(blob), a = document.createElement("a");
+      let len = cur;
+      if (fillTail) len = Math.max(len, Math.ceil(sideSec * sr));
+      setProcMsg(`SIDE ${side}: ${T("encoding")}`); setExpProg({ side, step: st.length + 2, total: st.length + 3 });
+      let lastPct = -1;
+      const blob = await encodeMixedWav({
+        tracks: scheduledTracks,
+        totalFrames: len,
+        sampleRate: sr,
+        bitsPerSample: bits,
+        onProgress: (doneFrames, totalFrames) => {
+          const pct = totalFrames > 0 ? Math.min(100, Math.round((doneFrames / totalFrames) * 100)) : 100;
+          if (pct === lastPct) return;
+          lastPct = pct;
+          setProcMsg(`SIDE ${side}: ${T("encoding")} ${pct}%`);
+        },
+      });
+      setExpProg({ side, step: st.length + 3, total: st.length + 3 });
+      const u = URL.createObjectURL(blob), a = document.createElement("a");
       a.href = u;
       a.download = `${sanitizeFilenamePart(tapeName) || "SIDE"}_side-${side}_${new Date().toISOString().slice(0, 10)}_${sr}hz_${bits}bit.wav`;
       a.click();
