@@ -677,7 +677,7 @@ export function PlayerProfileWorkbenchPlugin(props) {
           {statBox(t.refCount, String(songRefNames?.length || 0))}
           {statBox(t.recCount, String(songRecNames?.length || 0))}
           {statBox(t.pairCount, String(songPairCount || 0))}
-          {statBox(t.pairError, songPairError === "" ? "✓" : (songPairError || t.none))}
+          {statBox(t.pairError, songPairCount > 0 && songPairError === "" ? "✓" : (songPairError || t.none))}
           {songProfile && statBox(t.profileResult, songProfile.name)}
         </div>
         {!!songPairError && (

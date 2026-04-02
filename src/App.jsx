@@ -1229,9 +1229,8 @@ const HeaderControls = React.memo(function HeaderControls({ lang, setLang, theme
                       导出为 WAV 文件。连接卡座线路输入，直接录制即可。<br />
                       需要降采样或位深转换的音轨，导出前会弹出确认提示。<br />
                       尾部填充：自动补足静音，使总时长对齐磁带标称容量。</p>
-                    <p><b>// 歌单</b><br />
-                      可以导出和导入 JSON 格式的歌单。导入后为占位模式。<br />
-                      也可以导出和导入带音频文件的曲包。导入后会直接恢复完整曲目。<br />
+                    <p><b>// 曲包</b><br />
+                      可以导出和导入带音频文件的曲包。导入后会直接恢复完整曲目。<br />
                       重新添加校验一致的音频文件时，系统会识别为重复文件并提示。</p>
                     <p><b>// 波形 / 声谱图</b><br />
                       每一面下方可以切换显示静态波形或 FFT 声谱图。<br />
@@ -1291,9 +1290,8 @@ const HeaderControls = React.memo(function HeaderControls({ lang, setLang, theme
                       WAV ファイルとして書き出します。デッキのライン入力に繋いで、そのまま録音できます。<br />
                       ダウンサンプルやビット深度の変換が必要なトラックは、書き出し前に確認ダイアログが表示されます。<br />
                       末尾パディング：テープの標準長に合わせて無音を補填します。</p>
-                    <p><b>// プレイリスト</b><br />
-                      JSON 形式で書き出し・読み込みができます。読み込み後はプレースホルダモードです。<br />
-                      音声ファイルを含む曲パックも書き出し・読み込みできます。読み込むと完全なトラック構成をそのまま復元します。<br />
+                    <p><b>// 曲パック</b><br />
+                      音声ファイルを含む曲パックを書き出し・読み込みできます。読み込むと完全なトラック構成をそのまま復元します。<br />
                       同じ内容の音声ファイルを再追加すると、重複として検出して通知します。</p>
                     <p><b>// 波形 / スペクトログラム</b><br />
                       各面の下に静的波形または FFT スペクトログラムを切り替えて表示できます。<br />
@@ -1353,9 +1351,8 @@ const HeaderControls = React.memo(function HeaderControls({ lang, setLang, theme
                       Exports as a WAV file. Connect to the deck's line input and record directly.<br />
                       Tracks that require downsampling or bit-depth conversion will show a confirmation dialog before export.<br />
                       Tail fill: silence is padded to match the tape's rated length.</p>
-                    <p><b>// Playlists</b><br />
-                      Playlists can be exported and imported as JSON. An imported playlist starts in placeholder mode.<br />
-                      You can also export and import a bundle that includes the audio files. Importing it restores the full track list immediately.<br />
+                    <p><b>// Bundles</b><br />
+                      You can export and import a bundle that includes the audio files. Importing it restores the full track list immediately.<br />
                       Re-adding an audio file with the same checksum is treated as a duplicate and will be reported.</p>
                     <p><b>// Waveform / Spectrogram</b><br />
                       Each side can display a static waveform or an FFT spectrogram below the track list.<br />
@@ -1432,6 +1429,7 @@ export default function CassetteTool() {
 
   const [tapePreset, setTapePreset] = useState("C60");
   const [tapeType, setTapeType] = useState("TYPE_I");
+  const [tapeName, setTapeName] = useState("");
   const [customMin, setCustomMin] = useState(30);
   const [tracks, setTracks] = useState([]);
   const [defaultGap, setDefaultGap] = useState(DEFAULT_GAP);
@@ -1496,7 +1494,6 @@ export default function CassetteTool() {
 
   const acRef = useRef(null);
   const fileRef = useRef(null);
-  const plRef = useRef(null);
   const bundleRef = useRef(null);
   const calibrationProfileRef = useRef(null);
   const correctionImpulseCacheRef = useRef(new Map());
@@ -1514,6 +1511,13 @@ export default function CassetteTool() {
     a.click();
     URL.revokeObjectURL(url);
   }, []);
+  const sanitizeFilenamePart = useCallback((value) => (
+    String(value || "")
+      .trim()
+      .replace(/[<>:"/\\|?*\u0000-\u001f]/g, " ")
+      .replace(/\s+/g, " ")
+      .trim()
+  ), []);
   const fillTemplate = useCallback((key, vars = {}) => {
     let message = T(key);
     Object.entries(vars).forEach(([name, value]) => {
@@ -1528,6 +1532,7 @@ export default function CassetteTool() {
       setTapeType(config.tapeType);
       setTargetDb(TAPE_TYPES[config.tapeType]?.peakDb ?? -3);
     }
+    if (config.tapeName != null) setTapeName(String(config.tapeName));
     if (config.customMin != null) setCustomMin(config.customMin);
     if (config.defaultGap != null) setDefaultGap(config.defaultGap);
     if (config.fillTail != null) setFillTail(config.fillTail);
@@ -1541,6 +1546,7 @@ export default function CassetteTool() {
   const buildProjectConfig = useCallback(() => ({
     tapePreset,
     tapeType,
+    tapeName,
     customMin,
     defaultGap,
     fillTail,
@@ -1550,7 +1556,7 @@ export default function CassetteTool() {
     targetDb,
     exportSr,
     exportBits,
-  }), [tapePreset, tapeType, customMin, defaultGap, fillTail, tailMargin, smartGap, normalizeMode, targetDb, exportSr, exportBits]);
+  }), [tapePreset, tapeType, tapeName, customMin, defaultGap, fillTail, tailMargin, smartGap, normalizeMode, targetDb, exportSr, exportBits]);
   const serializeTrack = useCallback((track) => ({
     name: track.name,
     fileName: track.fileName,
@@ -2312,39 +2318,7 @@ export default function CassetteTool() {
     setTracks(p => p.map(t => ({ ...t, side: m.get(t.id) || t.side })));
   }, [tracks, effectiveSec]);
 
-  // ── Playlist I/O ─────────────────────────────────────────
-  const exportPL = useCallback(() => {
-    const pl = {
-      version: PROJECT_FILE_VERSION,
-      generator: "SIDE",
-      config: buildProjectConfig(),
-      tracks: tracks.map(serializeTrack),
-    };
-    const b = new Blob([JSON.stringify(pl, null, 2)], { type: "application/json" });
-    const u = URL.createObjectURL(b), a = document.createElement("a");
-    a.href = u; a.download = `SIDE_playlist_${new Date().toISOString().slice(0, 10)}.json`; a.click();
-    URL.revokeObjectURL(u); showToast(T("playlistExported"));
-  }, [buildProjectConfig, serializeTrack, tracks, T, showToast]);
-
-  const importPL = useCallback(async (e) => {
-    const f = e.target.files?.[0]; if (!f) return;
-    try {
-      const pl = JSON.parse(await f.text());
-      if (pl.kind === AUDIO_BUNDLE_KIND || Array.isArray(pl.files)) throw new Error(T("playlistUseBundleImport"));
-      if (!Array.isArray(pl.tracks)) throw new Error(T("playlistInvalid"));
-      applyImportedConfig(pl.config || {});
-      setTracks(pl.tracks.map((t) => ({
-        id: uid(), name: t.name || "?", fileName: t.fileName || "", side: t.side || "A",
-        duration: t.duration || 0, sampleRate: t.sampleRate || 44100, bitDepth: t.bitDepth ?? null, channels: t.channels || 2, audioBuffer: null,
-        headSilence: t.headSilence || 0, tailSilence: t.tailSilence || 0,
-        peakDb: t.peakDb ?? -Infinity, rmsDb: t.rmsDb ?? -Infinity,
-        peak: t.peakDb != null ? Math.pow(10, t.peakDb / 20) : 0, rms: t.rmsDb != null ? Math.pow(10, t.rmsDb / 20) : 0,
-        gapOverride: t.gapOverride ?? null, format: t.format || "?", fileChecksum: t.fileChecksum || null, sourceFile: null, sourceMimeType: ""
-      })));
-      showToast(T("playlistImportNoAudio"), 6000);
-    } catch (err) { showToast(T("playlistImportError") + ": " + err.message); }
-    e.target.value = "";
-  }, [T, applyImportedConfig, showToast]);
+  // ── Bundle I/O ─────────────────────────────────────────
   const exportBundle = useCallback(async () => {
     if (tracks.some((track) => !track.audioBuffer)) {
       showToast(T("bundleExportNeedsAudio"), 6000);
@@ -2382,7 +2356,7 @@ export default function CassetteTool() {
       };
       downloadBlob(
         buildAudioBundleBlob(bundleManifest, fileEntries),
-        `SIDE_bundle_${new Date().toISOString().slice(0, 10)}.sidepkg`
+        `${sanitizeFilenamePart(tapeName) || "SIDE"}_${new Date().toISOString().slice(0, 10)}.sidepkg`
       );
       showToast(T("bundleExported"));
     } catch (err) {
@@ -2391,7 +2365,7 @@ export default function CassetteTool() {
       setProcessing(false);
       setProcMsg("");
     }
-  }, [T, buildProjectConfig, downloadBlob, serializeTrack, showToast, tracks]);
+  }, [T, buildProjectConfig, downloadBlob, sanitizeFilenamePart, serializeTrack, showToast, tapeName, tracks]);
   const importBundle = useCallback(async (e) => {
     const f = e.target.files?.[0];
     if (!f) return;
@@ -2513,10 +2487,13 @@ export default function CassetteTool() {
       }
       setProcMsg(`SIDE ${side}: ${T("encoding")}`); setExpProg({ side, step: st.length + 3, total: st.length + 3 });
       const blob = encodeWAV(encodedBuffer, bits), u = URL.createObjectURL(blob), a = document.createElement("a");
-      a.href = u; a.download = `SIDE_${side}_${sr}hz_${bits}bit.wav`; a.click(); URL.revokeObjectURL(u);
+      a.href = u;
+      a.download = `${sanitizeFilenamePart(tapeName) || "SIDE"}_side-${side}_${new Date().toISOString().slice(0, 10)}_${sr}hz_${bits}bit.wav`;
+      a.click();
+      URL.revokeObjectURL(u);
     } catch (e) { console.error(e); alert(`导出失败：${e.message}`); }
     setProcessing(false); setProcMsg(""); setExpProg(null);
-  }, [tracks, defaultGap, fillTail, sideSec, getAC, T, getGap, resolveExportSr, resolveExportBits, stopSignalOutput, activeExportCalibrationProfile, resolveCompensatedTrackRenders, resolveNormalizedTrackGains, renderBufferLikeWithDynamicProfile, renderBufferLikeWithProfile, targetDb]);
+  }, [tracks, defaultGap, fillTail, sideSec, getAC, T, getGap, resolveExportSr, resolveExportBits, stopSignalOutput, activeExportCalibrationProfile, resolveCompensatedTrackRenders, resolveNormalizedTrackGains, renderBufferLikeWithDynamicProfile, renderBufferLikeWithProfile, sanitizeFilenamePart, tapeName, targetDb]);
 
   // ── Playback Engine ───────────────────────────────────────
   const playGenRef = useRef(0); // generation counter to prevent stale callbacks
@@ -2613,11 +2590,11 @@ export default function CassetteTool() {
     };
   }, [playerVolume]);
 
-  const buildPlaybackCorrectionGraph = useCallback((ctx, inputNode) => {
-    if (!activePreviewCalibrationProfile) {
+  const buildPlaybackCorrectionGraph = useCallback((ctx, inputNode, profile) => {
+    if (!profile) {
       return { output: inputNode, nodes: [] };
     }
-    const impulse = getCorrectionImpulse(activePreviewCalibrationProfile, ctx.sampleRate);
+    const impulse = getCorrectionImpulse(profile, ctx.sampleRate);
     if (!impulse) return { output: inputNode, nodes: [] };
     const convolver = ctx.createConvolver();
     convolver.normalize = false;
@@ -2630,7 +2607,7 @@ export default function CassetteTool() {
     // so the simulation receives approximately the same total signal level.
     // This preserves the corrected frequency shape but prevents level-driven
     // clipping in downstream nonlinear processors.
-    const ch = activePreviewCalibrationProfile.channels?.L;
+    const ch = profile.channels?.L;
     if (ch?.correctionDb?.length) {
       // RMS of correction curve = broadband energy change
       let sumSq = 0;
@@ -2652,14 +2629,16 @@ export default function CassetteTool() {
     }
 
     return { output: convolver, nodes: [convolver] };
-  }, [activePreviewCalibrationProfile, createImpulseAudioBuffer, getCorrectionImpulse]);
+  }, [createImpulseAudioBuffer, getCorrectionImpulse]);
 
-  const buildPlaybackSimulationGraph = useCallback((ctx, inputNode, simOutput, playPos, totalDur, initialGain = 1) => {
-    let outputNode = inputNode;
+  const buildPlaybackProcessingGraph = useCallback((ctx, inputNode, simOutput, playPos, totalDur, initialGain = 1, correctionProfile = null) => {
+    const correctionStage = buildPlaybackCorrectionGraph(ctx, inputNode, correctionProfile);
+    let outputNode = correctionStage.output;
     const nodes = [];
     const auxSources = [];
+    nodes.push(...correctionStage.nodes);
 
-    const toneTubeStage = buildToneTubeStage(ctx, inputNode, toneProfile, tubeEnabled);
+    const toneTubeStage = buildToneTubeStage(ctx, outputNode, toneProfile, tubeEnabled);
     outputNode = toneTubeStage.output;
     nodes.push(...toneTubeStage.nodes);
 
@@ -2689,20 +2668,21 @@ export default function CassetteTool() {
     nodes.push(outputGain);
 
     return { auxSources, nodes, outputGain };
-  }, [simMode, activeDeckProfile, toneProfile, tubeEnabled, vinylEra, vinylCrackle]);
+  }, [activeDeckProfile, buildPlaybackCorrectionGraph, simMode, toneProfile, tubeEnabled, vinylEra, vinylCrackle]);
 
-  const rebuildPlaybackSimulationGraph = useCallback(() => {
+  const rebuildPlaybackProcessingGraph = useCallback(() => {
     const playback = playRef.current;
     if (!playback.ctx || !playback.masterGain || !playback.simOutput) return;
     clearSimCleanupTimers(playback);
     const playPos = Math.max(0, Math.min(playPosRef.current, playback.totalDur || 0));
-    const nextGraph = buildPlaybackSimulationGraph(
+    const nextGraph = buildPlaybackProcessingGraph(
       playback.ctx,
       playback.masterGain,
       playback.simOutput,
       playPos,
       playback.totalDur || 0,
-      0.0001
+      0.0001,
+      playback.usesDynamicCompensation ? null : activePreviewCalibrationProfile
     );
     const now = playback.ctx.currentTime;
     nextGraph.outputGain.gain.setValueAtTime(0.0001, now);
@@ -2723,7 +2703,7 @@ export default function CassetteTool() {
 
     playback.simGraphs = [...retiringGraphs, nextGraph];
     displayDelayRef.current = getPlaybackDisplayDelay(playback.ctx);
-  }, [buildPlaybackSimulationGraph, clearSimCleanupTimers, disposePlaybackSimGraph, getPlaybackDisplayDelay]);
+  }, [activePreviewCalibrationProfile, buildPlaybackProcessingGraph, clearSimCleanupTimers, disposePlaybackSimGraph, getPlaybackDisplayDelay]);
 
   const stopPlayback = useCallback(() => {
     const cleanup = () => {
@@ -2817,7 +2797,8 @@ export default function CassetteTool() {
     const { schedule, totalDur, contentDur } = buildSchedule(side);
     if (!schedule.length) { stopPlayback(); return; }
     const sideTracks = tracks.filter((track) => track.side === side && track.audioBuffer);
-    const renderedTracks = activePreviewCalibrationProfile
+    const usesDynamicPreviewCompensation = hasDynamicCalibrationProfile(activePreviewCalibrationProfile);
+    const renderedTracks = usesDynamicPreviewCompensation
       ? await resolveCompensatedTrackRenders(sideTracks, ctx.sampleRate, activePreviewCalibrationProfile)
       : null;
     const renderedByTrackId = renderedTracks
@@ -2837,8 +2818,15 @@ export default function CassetteTool() {
     const masterGain = ctx.createGain(); masterGain.gain.value = 1.0;
     const outputChain = buildPlaybackOutputChain(ctx);
     const sourceNodes = [];
-    const correctionGraph = renderedTracks ? { output: masterGain, nodes: [] } : buildPlaybackCorrectionGraph(ctx, masterGain);
-    const simGraph = buildPlaybackSimulationGraph(ctx, correctionGraph.output, outputChain.simOutput, clampedPos, totalDur);
+    const processingGraph = buildPlaybackProcessingGraph(
+      ctx,
+      masterGain,
+      outputChain.simOutput,
+      clampedPos,
+      totalDur,
+      1,
+      renderedTracks ? null : activePreviewCalibrationProfile
+    );
 
     const sources = [];
     const now = ctx.currentTime;
@@ -2870,8 +2858,8 @@ export default function CassetteTool() {
     playRef.current = {
       ...playRef.current,
       sources,
-      sourceNodes: [...sourceNodes, ...(correctionGraph.nodes || [])],
-      simGraphs: [simGraph],
+      sourceNodes,
+      simGraphs: [processingGraph],
       outputNodes: outputChain.outputNodes,
       simCleanupTimers: [],
       startTime,
@@ -2886,6 +2874,7 @@ export default function CassetteTool() {
       simOutput: outputChain.simOutput,
       splitter: outputChain.splitter,
       volumeGain: outputChain.volumeGain,
+      usesDynamicCompensation: usesDynamicPreviewCompensation,
     };
     setPlaybackView({ token: gen, schedule, totalDur, contentDur });
     setPlaying(true); setPlayingSide(side); setPaused(false);
@@ -2910,7 +2899,7 @@ export default function CassetteTool() {
       playRef.current.raf = requestAnimationFrame(tick);
     };
     playRef.current.raf = requestAnimationFrame(tick);
-  }, [getAC, buildPlaybackCorrectionGraph, buildPlaybackOutputChain, buildSchedule, getPlaybackCursor, buildPlaybackSimulationGraph, clearPlaybackOutputChain, clearSimulationGraphs, disconnectNodes, getPlaybackDisplayDelay, stopPlayback, stopSignalOutput, tracks, resolveCompensatedTrackRenders, resolveNormalizedTrackGains, activePreviewCalibrationProfile]);
+  }, [getAC, buildPlaybackOutputChain, buildPlaybackProcessingGraph, buildSchedule, getPlaybackCursor, clearPlaybackOutputChain, clearSimulationGraphs, disconnectNodes, getPlaybackDisplayDelay, stopPlayback, stopSignalOutput, tracks, resolveCompensatedTrackRenders, resolveNormalizedTrackGains, activePreviewCalibrationProfile]);
 
   const playSide = useCallback((side) => {
     playFromPos(side, 0);
@@ -2945,14 +2934,18 @@ export default function CassetteTool() {
     if (appliedSimKeyRef.current === appliedKey) return;
     appliedSimKeyRef.current = appliedKey;
     if (!playing || !playingSide) return;
-    rebuildPlaybackSimulationGraph();
-  }, [simMode, activeDeckProfile, toneProfile, tubeEnabled, vinylEra, vinylCrackle, playing, playingSide, rebuildPlaybackSimulationGraph]);
+    rebuildPlaybackProcessingGraph();
+  }, [simMode, activeDeckProfile, toneProfile, tubeEnabled, vinylEra, vinylCrackle, playing, playingSide, rebuildPlaybackProcessingGraph]);
 
   useEffect(() => {
     const appliedKey = profileSignature(activePreviewCalibrationProfile);
     if (appliedCorrectionKeyRef.current === appliedKey) return;
     appliedCorrectionKeyRef.current = appliedKey;
     if (!playing || !playingSide) return;
+    if (!playRef.current.usesDynamicCompensation && !hasDynamicCalibrationProfile(activePreviewCalibrationProfile) && normalizeMode === "off") {
+      rebuildPlaybackProcessingGraph();
+      return;
+    }
     const wasPaused = paused;
     void (async () => {
       await playFromPos(playingSide, playPosRef.current);
@@ -2962,10 +2955,11 @@ export default function CassetteTool() {
         setPaused(true);
       }
     })();
-  }, [activePreviewCalibrationProfile, getAC, paused, playFromPos, playing, playingSide]);
+  }, [activePreviewCalibrationProfile, getAC, normalizeMode, paused, playFromPos, playing, playingSide, rebuildPlaybackProcessingGraph]);
 
   useEffect(() => {
     if (!playing || !playingSide) return;
+    if (!playRef.current.usesDynamicCompensation && normalizeMode === "off" && !hasDynamicCalibrationProfile(activePreviewCalibrationProfile)) return;
     const wasPaused = paused;
     void (async () => {
       await playFromPos(playingSide, playPosRef.current);
@@ -2975,7 +2969,7 @@ export default function CassetteTool() {
         setPaused(true);
       }
     })();
-  }, [normalizeMode, targetDb, getAC, paused, playFromPos, playing, playingSide]);
+  }, [activePreviewCalibrationProfile, normalizeMode, targetDb, getAC, paused, playFromPos, playing, playingSide]);
 
   useEffect(() => {
     if (simMode.startsWith("TAPE_")) return;
@@ -3083,6 +3077,18 @@ export default function CassetteTool() {
     correctionImpulseCacheRef.current.clear();
     showToast(T("calibrationProfileCleared"));
   }, [T, showToast]);
+
+  const maybeShowPreviewCompensationRecomputeHint = useCallback((nextApplyEq, nextApplyClarity) => {
+    if (!playing || !playingSide || !loadedCalibrationProfile) return;
+    const nextProfile = deriveCompensationProfile(loadedCalibrationProfile, {
+      applyEq: nextApplyEq,
+      applyClarity: nextApplyClarity,
+    });
+    const willRecompute = normalizeMode !== "off"
+      || !!playRef.current.usesDynamicCompensation
+      || hasDynamicCalibrationProfile(nextProfile);
+    if (willRecompute) showToast(T("previewCompensationRecomputeHint"), 3200);
+  }, [T, loadedCalibrationProfile, normalizeMode, playing, playingSide, showToast]);
 
   const renderCapBar = (used, total, eff, side) => {
     const hardOver = used > total, softOver = !hardOver && used > eff;
@@ -3533,6 +3539,20 @@ export default function CassetteTool() {
               })}
             </div>
           </div>
+
+          <div style={{ width: 1, height: 40, background: "var(--border)", alignSelf: "center", flexShrink: 0 }} />
+
+          <div style={{ display: "flex", flexDirection: "column", gap: 5 }}>
+            <label style={lb}>{T("tapeName")}</label>
+            <input
+              className="tapeNameInput"
+              type="text"
+              value={tapeName}
+              onChange={e => setTapeName(e.target.value)}
+              placeholder={T("tapeNamePlaceholder")}
+              style={{ ...inpSm, width: 220 }}
+            />
+          </div>
         </div>
 
         {/* Row 2: Audio processing params */}
@@ -3625,7 +3645,12 @@ export default function CassetteTool() {
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
               <label style={{ ...lb, margin: 0 }}>{T("applyCalibrationEqPreview")}</label>
               <button
-                onClick={() => loadedCalibrationProfile && setApplyCalibrationEqPreview((value) => !value)}
+                onClick={() => {
+                  if (!loadedCalibrationProfile) return;
+                  const nextValue = !applyCalibrationEqPreview;
+                  maybeShowPreviewCompensationRecomputeHint(nextValue, applyCalibrationClarityPreview);
+                  setApplyCalibrationEqPreview(nextValue);
+                }}
                 style={toggleStyle(!!loadedCalibrationProfile && applyCalibrationEqPreview)}
                 disabled={!loadedCalibrationProfile}
               >
@@ -3635,7 +3660,12 @@ export default function CassetteTool() {
             <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
               <label style={{ ...lb, margin: 0 }}>{T("applyCalibrationClarityPreview")}</label>
               <button
-                onClick={() => loadedCalibrationProfile && setApplyCalibrationClarityPreview((value) => !value)}
+                onClick={() => {
+                  if (!loadedCalibrationProfile) return;
+                  const nextValue = !applyCalibrationClarityPreview;
+                  maybeShowPreviewCompensationRecomputeHint(applyCalibrationEqPreview, nextValue);
+                  setApplyCalibrationClarityPreview(nextValue);
+                }}
                 style={toggleStyle(!!loadedCalibrationProfile && applyCalibrationClarityPreview)}
                 disabled={!loadedCalibrationProfile}
               >
@@ -3670,17 +3700,14 @@ export default function CassetteTool() {
       <div className="actionBar" style={{ marginBottom: 12 }}>
         <input ref={fileRef} type="file" multiple accept="audio/*,.ncm" style={{ display: "none" }}
           onChange={e => { if (e.target.files.length > 0) loadFiles(Array.from(e.target.files), activeTab); e.target.value = ""; }} />
-        <input ref={plRef} type="file" accept=".json" style={{ display: "none" }} onChange={importPL} />
         <input ref={bundleRef} type="file" accept=".sidepkg,application/octet-stream" style={{ display: "none" }} onChange={importBundle} />
         <input ref={calibrationProfileRef} type="file" accept=".json,application/json" style={{ display: "none" }}
           onChange={async e => { const file = e.target.files?.[0]; if (file) await loadCalibrationProfileFile(file); e.target.value = ""; }} />
         <div className="actionBarMain">
           <button onClick={() => fileRef.current?.click()} style={btnP} disabled={processing}><IconAdd size={16} /> {T("addFiles")} → SIDE {activeTab}</button>
           <button onClick={autoDistribute} style={btnS} disabled={processing || !tracks.length}><IconAutoAwesome size={16} /> {T("autoDistribute")}</button>
-          <button onClick={() => plRef.current?.click()} style={btnS} disabled={processing}><IconFileOpen size={16} /> {T("importPlaylist")}</button>
-          <button onClick={exportPL} style={btnS} disabled={processing || !tracks.length}><IconSave size={16} /> {T("exportPlaylist")}</button>
-          <button onClick={() => bundleRef.current?.click()} style={btnS} disabled={processing}><IconFileOpen size={16} /> {T("importBundle")}</button>
-          <button onClick={exportBundle} style={btnS} disabled={processing || !tracks.length}><IconSave size={16} /> {T("exportBundle")}</button>
+          <button onClick={() => bundleRef.current?.click()} style={btnS} disabled={processing}><IconFileOpen size={16} /> {T("importPlaylist")}</button>
+          <button onClick={exportBundle} style={btnS} disabled={processing || !tracks.length}><IconSave size={16} /> {T("exportPlaylist")}</button>
           <button onClick={() => { if (tracks.some(t => t.side === activeTab) && window.confirm(T("clearSideConfirm").replace("{side}", activeTab))) setTracks(p => p.filter(t => t.side !== activeTab)); }} style={{ ...btnS, display: "flex", alignItems: "center", gap: 4 }} disabled={processing || !tracks.some(t => t.side === activeTab)}><IconClearSide size={14} />{T("clearSide")}</button>
           <button onClick={() => { if (tracks.length > 0 && window.confirm(T("clearAllConfirm"))) setTracks([]); }} style={{ ...btnS, display: "flex", alignItems: "center", gap: 4 }} disabled={processing || !tracks.length}><IconClearAll size={14} />{T("clearAll")}</button>
         </div>
@@ -3791,6 +3818,9 @@ export default function CassetteTool() {
         .modalScroll::-webkit-scrollbar-track{background:transparent;margin:10px 0}
         .modalScroll::-webkit-scrollbar-thumb{background:var(--border);border-radius:999px;border:3px solid transparent;background-clip:content-box}
         input[type="number"]{-moz-appearance:textfield}input[type="number"]::-webkit-inner-spin-button{opacity:0.5}
+        .tapeNameInput::placeholder{font-style:italic}
+        .tapeNameInput::-webkit-input-placeholder{font-style:italic}
+        .tapeNameInput::-moz-placeholder{font-style:italic}
         .playerVolRange{-webkit-appearance:none;appearance:none;height:16px;background:transparent;outline:none}
         .playerVolRange::-webkit-slider-runnable-track{height:4px;border-radius:999px;background:linear-gradient(to right,var(--accent) 0,var(--accent) var(--vol-pct),var(--accent-dim) var(--vol-pct),var(--accent-dim) 100%)}
         .playerVolRange::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;width:12px;height:12px;border-radius:50%;background:var(--bg-card);border:2px solid var(--accent);margin-top:-4px;box-shadow:0 0 0 1px color-mix(in srgb,var(--accent) 18%, transparent)}
