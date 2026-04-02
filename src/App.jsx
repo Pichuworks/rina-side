@@ -132,6 +132,7 @@ function deriveTapeTypeColors(accent) {
 
 const TAPE_PRESETS = {
   C46: { label: "C-46", sideMinutes: 23 }, C60: { label: "C-60", sideMinutes: 30 },
+  C54: { label: "C-54", sideMinutes: 27 },
   C90: { label: "C-90", sideMinutes: 45 }, C120: { label: "C-120", sideMinutes: 60 },
 };
 const TAPE_TYPES = {
@@ -1205,7 +1206,7 @@ const HeaderControls = React.memo(function HeaderControls({ lang, setLang, theme
                       FLAC 和 AIFF 会优先读取原始文件头的采样率和位深。只有在浏览器无法直接解码时，才会调用 ffmpeg.wasm 进行格式转换。<br />
                       顺序可以拖动调整。↑↓ 可以微调。→A / →B 可以把音轨移到另一面。</p>
                     <p><b>// 磁带规格</b><br />
-                      选择磁带型号（C-46 / C-60 / C-90 / C-120 / 自定义）和类型（Type I / II / IV）。<br />
+                      选择磁带型号（C-46 / C-54 / C-60 / C-90 / C-120 / 自定义）和类型（Type I / II / IV）。<br />
                       磁带类型会影响响度归一化的目标电平。Type II 和 Type IV 可以录制更高的电平。这不是小事。</p>
                     <p><b>// 编排</b><br />
                       「自动分面」会按时长重新分配，让 A/B 两面的容量尽量接近。<br />
@@ -1267,7 +1268,7 @@ const HeaderControls = React.memo(function HeaderControls({ lang, setLang, theme
                       FLAC と AIFF はまずファイルヘッダから元の SR とビット深度を読み取ります。ブラウザでデコードできない場合のみ、ffmpeg.wasm が呼ばれます。<br />
                       ドラッグで順番を変えられます。↑↓ で細かく調整。→A / →B で面を移動。</p>
                     <p><b>// テープ規格</b><br />
-                      テープ長（C-46 / C-60 / C-90 / C-120 / カスタム）と種類（Type I / II / IV）を選びます。<br />
+                      テープ長（C-46 / C-54 / C-60 / C-90 / C-120 / カスタム）と種類（Type I / II / IV）を選びます。<br />
                       テープ種類はラウドネス正規化のターゲットレベルに影響します。Type II と Type IV はより高い録音レベルが使えます。これは小さくない違いです。</p>
                     <p><b>// 配置</b><br />
                       「自動振り分け」は時間をもとに再配置して、A/B 面の使用率を揃えます。<br />
@@ -1329,7 +1330,7 @@ const HeaderControls = React.memo(function HeaderControls({ lang, setLang, theme
                       For FLAC and AIFF, the original sample rate and bit depth are read from the file header first. ffmpeg.wasm is only called when the browser cannot decode the file natively.<br />
                       Drag to reorder. ↑↓ to nudge. →A / →B to move a track to the other side.</p>
                     <p><b>// Tape settings</b><br />
-                      Choose a tape length (C-46 / C-60 / C-90 / C-120 / Custom) and type (Type I / II / IV).<br />
+                      Choose a tape length (C-46 / C-54 / C-60 / C-90 / C-120 / Custom) and type (Type I / II / IV).<br />
                       Tape type sets the normalization target level. Type II and Type IV support higher recording levels. That is not a small difference.</p>
                     <p><b>// Arrangement</b><br />
                       "Auto Distribute" reallocates tracks by duration to keep A and B sides balanced.<br />
