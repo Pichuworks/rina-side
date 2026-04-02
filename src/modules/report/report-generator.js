@@ -179,7 +179,7 @@ export function generateDeckCalibrationReport(responseAnalysis, transportAnalysi
     if (tr && (tr.wfLabel === "excellent" || tr.wfLabel === "good")) verdict.push("走带很稳");
     if (bal && (bal.label === "excellent" || bal.label === "good")) verdict.push("声道平衡也不错");
     lines.push(`${verdict.join("，")}。${a.tiltLabel === "warm" || a.tiltLabel === "slightly_warm" ? "录出来的声音会带一点暖意——可能是磁头特性或磁带饱和带来的自然染色。" : a.tiltLabel === "bright" || a.tiltLabel === "slightly_bright" ? "整体偏亮——高频通路状况不错，但录制人声类内容时可以关注一下齿音。" : "中性取向，录制链路的染色很小。"}`);
-    lines.push(`加载校准档案后，SIDE 会在试听和导出时补偿这条链路的综合偏差。如果只想补偿回放端（例如在其它卡座上播放），需要单独测量那台卡座的回放特性。`);
+    lines.push(`加载校准档案后，SIDE 会在预览和导出时补偿这条链路的综合偏差。如果只想补偿回放端（例如在其它卡座上播放），需要单独测量那台卡座的回放特性。`);
 
     const transportSummary = tr
       ? (transportIsRelative ? `，相对参考 W/F ${tr.wfRms}%` : `，W/F ${tr.wfRms}%`)
