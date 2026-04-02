@@ -1814,8 +1814,16 @@ export default function CassetteTool() {
     if (!profile || !hasDynamicCalibrationProfile(profile)) return [];
     const leftCurves = getProfileLevelCurves(profile, "L");
     const rightCurves = getProfileLevelCurves(profile, "R");
+    const representativeLeft = profile.channels?.L || {};
+    const representativeRight = profile.channels?.R || representativeLeft;
     return leftCurves.map((curve, index) => {
       const rightCurve = rightCurves[index] || rightCurves[rightCurves.length - 1] || curve;
+      const leftPhaseRad = (representativeLeft.phaseRad?.length === curve.frequenciesHz?.length)
+        ? representativeLeft.phaseRad
+        : curve.phaseRad;
+      const rightPhaseRad = (representativeRight.phaseRad?.length === rightCurve.frequenciesHz?.length)
+        ? representativeRight.phaseRad
+        : rightCurve.phaseRad;
       return {
         inputDb: curve.inputDb,
         profile: {
@@ -1825,12 +1833,12 @@ export default function CassetteTool() {
             L: {
               frequenciesHz: curve.frequenciesHz,
               correctionDb: curve.correctionDb,
-              phaseRad: curve.phaseRad,
+              phaseRad: leftPhaseRad,
             },
             R: {
               frequenciesHz: rightCurve.frequenciesHz,
               correctionDb: rightCurve.correctionDb,
-              phaseRad: rightCurve.phaseRad,
+              phaseRad: rightPhaseRad,
             },
           },
         },
@@ -1853,14 +1861,21 @@ export default function CassetteTool() {
       const center = frame * hopSize;
       const start = Math.max(0, center - (frameSize >> 1));
       const end = Math.min(bufferLike.length, start + frameSize);
-      let peak = 1e-6;
+      let sumSqL = 0;
+      let sumSqR = 0;
+      let sampleCount = 0;
       for (let i = start; i < end; i++) {
-        const absL = Math.abs(left[i] || 0);
-        const absR = Math.abs(right[i] || 0);
-        if (absL > peak) peak = absL;
-        if (absR > peak) peak = absR;
+        const sampleL = left[i] || 0;
+        const sampleR = right[i] || 0;
+        sumSqL += sampleL * sampleL;
+        sumSqR += sampleR * sampleR;
+        sampleCount += 1;
       }
-      const relDb = 20 * Math.log10(peak / targetAmp);
+      const rmsL = sampleCount > 0 ? Math.sqrt(sumSqL / sampleCount) : 0;
+      const rmsR = sampleCount > 0 ? Math.sqrt(sumSqR / sampleCount) : 0;
+      // Map short-term energy to the equivalent sine peak used by the calibration tones.
+      const equivalentPeak = Math.max(1e-6, Math.max(rmsL, rmsR) * Math.SQRT2);
+      const relDb = 20 * Math.log10(equivalentPeak / targetAmp);
       if (relDb <= levelsDb[0]) {
         weights[0][frame] = 1;
         continue;
@@ -1924,10 +1939,12 @@ export default function CassetteTool() {
 
   const renderBufferLikeWithCompensation = useCallback(async (bufferLike, profile, peakTargetDb) => {
     if (!profile) return bufferLike;
-    return hasDynamicCalibrationProfile(profile)
-      ? await renderBufferLikeWithDynamicProfile(bufferLike, profile, peakTargetDb)
-      : await renderBufferLikeWithProfile(bufferLike, profile);
-  }, [renderBufferLikeWithDynamicProfile, renderBufferLikeWithProfile]);
+    // The measured level dependence is a nonlinear medium effect. Blending multiple
+    // linear FIR inverses by short-term program level is not a physically correct
+    // inverse for real music, and it was the direct cause of the excessive EQ
+    // headroom loss here. Apply only the validated representative linear response.
+    return await renderBufferLikeWithProfile(bufferLike, profile);
+  }, [renderBufferLikeWithProfile]);
 
   const renderBufferLikeAtSampleRate = useCallback(async (bufferLike, sampleRate) => {
     if (!bufferLike || !sampleRate || bufferLike.sampleRate === sampleRate) return bufferLike;
@@ -1941,11 +1958,12 @@ export default function CassetteTool() {
   }, [createAudioBufferFromBufferLike]);
 
   const renderTrackCompensatedAtGain = useCallback(async (track, sampleRate, profile, inputGain, peakTargetDb) => {
-    const source = Math.abs((inputGain ?? 1) - 1) > 1e-6
-      ? scaleBufferLike(track.audioBuffer, inputGain)
-      : track.audioBuffer;
-    const resampledSource = await renderBufferLikeAtSampleRate(source, sampleRate);
-    const rendered = await renderBufferLikeWithCompensation(resampledSource, profile, peakTargetDb);
+    const resampledSource = await renderBufferLikeAtSampleRate(track.audioBuffer, sampleRate);
+    const compensated = await renderBufferLikeWithCompensation(resampledSource, profile, peakTargetDb);
+    // Headroom / normalization gain must not change which dynamic calibration curve is selected.
+    const rendered = Math.abs((inputGain ?? 1) - 1) > 1e-6
+      ? scaleBufferLike(compensated, inputGain)
+      : compensated;
     return {
       rendered,
       peak: getPeak(rendered),

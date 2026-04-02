@@ -3,6 +3,13 @@ import { interpolateLogValue, smoothLogCurve } from "./modules/player-profile/re
 
 const TWO_PI = Math.PI * 2;
 
+function wrapPhaseRad(value) {
+  let wrapped = value % TWO_PI;
+  if (wrapped > Math.PI) wrapped -= TWO_PI;
+  if (wrapped < -Math.PI) wrapped += TWO_PI;
+  return wrapped;
+}
+
 export const RESPONSE_MEASUREMENT_SPEC = {
   sampleRate: 48000,
   preSilenceSec: 0.5,
@@ -1159,6 +1166,203 @@ function curveFitError(actual, predicted) {
   };
 }
 
+function buildValidationConfidence(actual, predicted, goodErrorDb = 1.5, badErrorDb = 6) {
+  if (!actual?.frequenciesHz?.length || !actual?.correctionDb?.length || !predicted?.correctionDb?.length) return null;
+  const count = Math.min(actual.frequenciesHz.length, actual.correctionDb.length, predicted.correctionDb.length);
+  const raw = new Array(count).fill(1);
+  for (let i = 0; i < count; i++) {
+    const absError = Math.abs((actual.correctionDb[i] || 0) - (predicted.correctionDb[i] || 0));
+    if (absError <= goodErrorDb) {
+      raw[i] = 1;
+      continue;
+    }
+    if (absError >= badErrorDb) {
+      raw[i] = 0;
+      continue;
+    }
+    raw[i] = 1 - ((absError - goodErrorDb) / Math.max(1e-9, badErrorDb - goodErrorDb));
+  }
+  const smoothed = smoothLogCurve(actual.frequenciesHz.slice(0, count), raw, 1 / 3);
+  return smoothed.map((value, index) => Math.max(0, Math.min(1, Math.min(raw[index], value))));
+}
+
+function buildPhaseValidationConfidence(actual, predicted, goodErrorRad = 0.35, badErrorRad = 1.2) {
+  if (!actual?.frequenciesHz?.length || !actual?.phaseRad?.length || !predicted?.phaseRad?.length) return null;
+  const count = Math.min(actual.frequenciesHz.length, actual.phaseRad.length, predicted.phaseRad.length);
+  const raw = new Array(count).fill(1);
+  for (let i = 0; i < count; i++) {
+    const absError = Math.abs(wrapPhaseRad((actual.phaseRad[i] || 0) - (predicted.phaseRad[i] || 0)));
+    if (absError <= goodErrorRad) {
+      raw[i] = 1;
+      continue;
+    }
+    if (absError >= badErrorRad) {
+      raw[i] = 0;
+      continue;
+    }
+    raw[i] = 1 - ((absError - goodErrorRad) / Math.max(1e-9, badErrorRad - goodErrorRad));
+  }
+  const smoothed = smoothLogCurve(actual.frequenciesHz.slice(0, count), raw, 1 / 3);
+  return smoothed.map((value, index) => Math.max(0, Math.min(1, Math.min(raw[index], value))));
+}
+
+function applyCurveConfidence(curve, confidence) {
+  if (!curve || !confidence?.length) return curve;
+  const count = Math.min(
+    curve.frequenciesHz?.length || 0,
+    curve.correctionDb?.length || 0,
+    confidence.length,
+  );
+  if (!count) return curve;
+  return {
+    ...curve,
+    correctionDb: curve.correctionDb.map((value, index) => (
+      index < count ? value * confidence[index] : value
+    )),
+    phaseRad: (curve.phaseRad || []).map((value, index) => (
+      index < count ? value * confidence[index] : value
+    )),
+  };
+}
+
+function applyPhaseConfidence(curve, confidence) {
+  if (!curve || !confidence?.length) return curve;
+  const count = Math.min(
+    curve.frequenciesHz?.length || 0,
+    curve.phaseRad?.length || 0,
+    confidence.length,
+  );
+  if (!count) return curve;
+  return {
+    ...curve,
+    phaseRad: curve.phaseRad.map((value, index) => (
+      index < count ? value * confidence[index] : value
+    )),
+  };
+}
+
+function computeResidualGroupDelayMsFromPhase(frequenciesHz, phaseRad) {
+  if (!frequenciesHz?.length || !phaseRad?.length) return [];
+  const residualGroupDelayMs = new Array(frequenciesHz.length).fill(0);
+  for (let i = 0; i < frequenciesHz.length; i++) {
+    const prev = Math.max(0, i - 1);
+    const next = Math.min(frequenciesHz.length - 1, i + 1);
+    const omegaA = TWO_PI * frequenciesHz[prev];
+    const omegaB = TWO_PI * frequenciesHz[next];
+    const phaseA = phaseRad[prev] || 0;
+    const phaseB = phaseRad[next] || 0;
+    const deltaOmega = Math.max(1e-9, omegaB - omegaA);
+    residualGroupDelayMs[i] = -((phaseB - phaseA) / deltaOmega) * 1000;
+  }
+  return residualGroupDelayMs;
+}
+
+function sanitizePhaseCurve(curve, minHz = 500, maxHz = 8000, maxRmsMs = 1, maxAbsMs = 4) {
+  if (!curve?.frequenciesHz?.length || !curve?.phaseRad?.length) return curve;
+  const wrappedPhaseRad = curve.phaseRad.map((value) => wrapPhaseRad(value || 0));
+  const residualGroupDelayMs = computeResidualGroupDelayMsFromPhase(curve.frequenciesHz, wrappedPhaseRad);
+  const summary = summarizeGroupDelayResidual(curve.frequenciesHz, residualGroupDelayMs, minHz, maxHz);
+  if (!summary || summary.rmsMs > maxRmsMs || summary.maxAbsMs > maxAbsMs) {
+    return {
+      ...curve,
+      phaseRad: wrappedPhaseRad.map(() => 0),
+      residualGroupDelayMs: wrappedPhaseRad.map(() => 0),
+      clarity: null,
+    };
+  }
+  return {
+    ...curve,
+    phaseRad: wrappedPhaseRad,
+    residualGroupDelayMs,
+    clarity: {
+      groupDelayResidualRmsMs: Number(summary.rmsMs.toFixed(3)),
+      groupDelayResidualMaxMs: Number(summary.maxAbsMs.toFixed(3)),
+      groupDelayResidualMaxFreqHz: Number(summary.maxAbsFreqHz.toFixed(0)),
+      transientSpreadMs: null,
+    },
+  };
+}
+
+function getTailTrustForFrequency(freqHz, startHz = 12000, stopHz = 16000) {
+  if (!Number.isFinite(freqHz) || freqHz <= startHz) return 1;
+  if (freqHz >= stopHz) return 0;
+  return 1 - ((freqHz - startHz) / Math.max(1e-9, stopHz - startHz));
+}
+
+function getBoostCapDbForFrequency(freqHz) {
+  if (!Number.isFinite(freqHz)) return 6;
+  if (freqHz >= 16000) return 0;
+  if (freqHz >= 12000) {
+    const t = (freqHz - 12000) / 4000;
+    return 3 * (1 - Math.max(0, Math.min(1, t)));
+  }
+  if (freqHz >= 8000) {
+    const t = (freqHz - 8000) / 4000;
+    return 6 - (3 * Math.max(0, Math.min(1, t)));
+  }
+  return 6;
+}
+
+function getStereoDifferenceCapDbForFrequency(freqHz) {
+  return Math.min(1.5, getBoostCapDbForFrequency(freqHz) * 0.5);
+}
+
+function stabilizeStereoCurvePair(leftCurve, rightCurve) {
+  if (!leftCurve || !rightCurve) {
+    return { leftCurve, rightCurve };
+  }
+  const count = Math.min(
+    leftCurve.frequenciesHz?.length || 0,
+    rightCurve.frequenciesHz?.length || 0,
+    leftCurve.correctionDb?.length || 0,
+    rightCurve.correctionDb?.length || 0,
+  );
+  if (!count) {
+    return { leftCurve, rightCurve };
+  }
+  const nextLeftCorrectionDb = [...leftCurve.correctionDb];
+  const nextRightCorrectionDb = [...rightCurve.correctionDb];
+  for (let index = 0; index < count; index++) {
+    const freqHz = leftCurve.frequenciesHz[index] || rightCurve.frequenciesHz[index] || 0;
+    const leftValue = leftCurve.correctionDb[index] || 0;
+    const rightValue = rightCurve.correctionDb[index] || 0;
+    const common = (leftValue + rightValue) * 0.5;
+    const diff = (leftValue - rightValue) * 0.5;
+    const diffCapDb = getStereoDifferenceCapDbForFrequency(freqHz);
+    const limitedDiff = Math.max(-diffCapDb, Math.min(diffCapDb, diff));
+    nextLeftCorrectionDb[index] = common + limitedDiff;
+    nextRightCorrectionDb[index] = common - limitedDiff;
+  }
+  return {
+    leftCurve: {
+      ...leftCurve,
+      correctionDb: nextLeftCorrectionDb,
+    },
+    rightCurve: {
+      ...rightCurve,
+      correctionDb: nextRightCorrectionDb,
+    },
+  };
+}
+
+function applyHighFrequencyTailPolicy(curve, startHz = 12000, stopHz = 16000) {
+  if (!curve?.frequenciesHz?.length || !curve?.correctionDb?.length) return curve;
+  return {
+    ...curve,
+    correctionDb: curve.correctionDb.map((value, index) => {
+      const freqHz = curve.frequenciesHz[index];
+      const trust = getTailTrustForFrequency(freqHz, startHz, stopHz);
+      const taperedValue = value * trust;
+      const boostCapDb = getBoostCapDbForFrequency(freqHz);
+      return Math.min(boostCapDb, taperedValue);
+    }),
+    phaseRad: (curve.phaseRad || []).map((value, index) => {
+      const freqHz = curve.frequenciesHz[index];
+      return value * getTailTrustForFrequency(freqHz, startHz, stopHz);
+    }),
+  };
+}
+
 function pickRepresentativeCurve(curves, validationCurve, fallbackLevelDb) {
   if (validationCurve) return validationCurve;
   if (!curves.length) return null;
@@ -1407,17 +1611,58 @@ export function analyseTestTapeProgram(audioBuffer, program = generateTestTapePr
   } : null;
   const predictedValidationL = validationCurveL ? interpolateLevelCurve(fitCurvesL, validationCurveL.inputDb) : null;
   const predictedValidationR = validationCurveR ? interpolateLevelCurve(fitCurvesR, validationCurveR.inputDb) : null;
+  const validationConfidenceL = buildValidationConfidence(validationCurveL, predictedValidationL);
+  const validationConfidenceR = buildValidationConfidence(validationCurveR, predictedValidationR);
+  const phaseValidationConfidenceL = buildPhaseValidationConfidence(validationCurveL, predictedValidationL);
+  const phaseValidationConfidenceR = buildPhaseValidationConfidence(validationCurveR, predictedValidationR);
+  const perChannelFitCurvesL = fitCurvesL.map((curve) => sanitizePhaseCurve(
+    applyHighFrequencyTailPolicy(
+      applyPhaseConfidence(
+        applyCurveConfidence(curve, validationConfidenceL),
+        phaseValidationConfidenceL,
+      ),
+    ),
+  ));
+  const perChannelFitCurvesR = fitCurvesR.map((curve) => sanitizePhaseCurve(
+    applyHighFrequencyTailPolicy(
+      applyPhaseConfidence(
+        applyCurveConfidence(curve, validationConfidenceR),
+        phaseValidationConfidenceR,
+      ),
+    ),
+  ));
+  const stereoStabilizedFitCurvePairs = perChannelFitCurvesL.map((leftCurve, index) => (
+    stabilizeStereoCurvePair(leftCurve, perChannelFitCurvesR[index])
+  ));
+  const stabilizedFitCurvesL = stereoStabilizedFitCurvePairs.map((pair) => pair.leftCurve).filter(Boolean);
+  const stabilizedFitCurvesR = stereoStabilizedFitCurvePairs.map((pair) => pair.rightCurve).filter(Boolean);
+  const perChannelValidationCurveL = sanitizePhaseCurve(applyHighFrequencyTailPolicy(
+    applyPhaseConfidence(
+      applyCurveConfidence(validationCurveL, validationConfidenceL),
+      phaseValidationConfidenceL,
+    ),
+  ));
+  const perChannelValidationCurveR = sanitizePhaseCurve(applyHighFrequencyTailPolicy(
+    applyPhaseConfidence(
+      applyCurveConfidence(validationCurveR, validationConfidenceR),
+      phaseValidationConfidenceR,
+    ),
+  ));
+  const {
+    leftCurve: stabilizedValidationCurveL,
+    rightCurve: stabilizedValidationCurveR,
+  } = stabilizeStereoCurvePair(perChannelValidationCurveL, perChannelValidationCurveR);
   const resolvedFitLevelsDb = fitCurvesL.length
     ? fitCurvesL.map((curve) => curve.inputDb)
     : fitCurvesR.map((curve) => curve.inputDb);
   const representativeCurveL = pickRepresentativeCurve(
-    fitCurvesL,
-    validationCurveL,
+    stabilizedFitCurvesL,
+    stabilizedValidationCurveL,
     program.validationLevelDb,
   );
   const representativeCurveR = pickRepresentativeCurve(
-    fitCurvesR,
-    validationCurveR,
+    stabilizedFitCurvesR,
+    stabilizedValidationCurveR,
     program.validationLevelDb,
   );
   const toneMap = {
@@ -1448,8 +1693,8 @@ export function analyseTestTapeProgram(audioBuffer, program = generateTestTapePr
         phaseRad: representativeCurveL?.phaseRad || [],
         residualGroupDelayMs: representativeCurveL?.residualGroupDelayMs || [],
         clarity: representativeCurveL?.clarity || null,
-        levelCurves: fitCurvesL,
-        validationCurve: validationCurveL,
+        levelCurves: stabilizedFitCurvesL,
+        validationCurve: stabilizedValidationCurveL,
       },
       R: {
         measuredDb: representativeCurveR?.measuredDb || [],
@@ -1457,8 +1702,8 @@ export function analyseTestTapeProgram(audioBuffer, program = generateTestTapePr
         phaseRad: representativeCurveR?.phaseRad || [],
         residualGroupDelayMs: representativeCurveR?.residualGroupDelayMs || [],
         clarity: representativeCurveR?.clarity || null,
-        levelCurves: fitCurvesR,
-        validationCurve: validationCurveR,
+        levelCurves: stabilizedFitCurvesR,
+        validationCurve: stabilizedValidationCurveR,
       },
     },
     responseSegments,
@@ -1501,7 +1746,7 @@ export function analyseTestTapeProgram(audioBuffer, program = generateTestTapePr
           frequenciesHz: representativeCurveL?.frequenciesHz || [],
           correctionDb: representativeCurveL?.correctionDb || [],
           phaseRad: representativeCurveL?.phaseRad || [],
-          levelCurves: fitCurvesL.map((curve) => ({
+          levelCurves: stabilizedFitCurvesL.map((curve) => ({
             inputDb: curve.inputDb,
             role: curve.role,
             frequenciesHz: curve.frequenciesHz,
@@ -1513,7 +1758,7 @@ export function analyseTestTapeProgram(audioBuffer, program = generateTestTapePr
           frequenciesHz: representativeCurveR?.frequenciesHz || [],
           correctionDb: representativeCurveR?.correctionDb || [],
           phaseRad: representativeCurveR?.phaseRad || [],
-          levelCurves: fitCurvesR.map((curve) => ({
+          levelCurves: stabilizedFitCurvesR.map((curve) => ({
             inputDb: curve.inputDb,
             role: curve.role,
             frequenciesHz: curve.frequenciesHz,
