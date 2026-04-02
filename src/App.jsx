@@ -1065,6 +1065,45 @@ function computeSpectrogramPreview(ab, frames = Math.max(96, Math.min(320, Math.
 function fmtTime(s) { if (!s || s < 0) return "0:00"; return `${Math.floor(s / 60)}:${String(Math.floor(s % 60)).padStart(2, "0")}`; }
 function fmtTimeMs(s) { if (!s || s < 0) return "0:00.0"; return `${Math.floor(s / 60)}:${(s % 60).toFixed(1).padStart(4, "0")}`; }
 let _id = 0; const uid = () => `t_${++_id}_${Date.now()}`;
+const PROJECT_FILE_VERSION = "0.4";
+const AUDIO_BUNDLE_KIND = "side-audio-bundle";
+const AUDIO_BUNDLE_MAGIC = "SIDEPKG1";
+const TEXT_ENCODER = new TextEncoder();
+const TEXT_DECODER = new TextDecoder();
+
+async function sha256Hex(buffer) {
+  const digest = await window.crypto.subtle.digest("SHA-256", buffer);
+  return Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function buildAudioBundleBlob(manifest, fileEntries) {
+  const magicBytes = TEXT_ENCODER.encode(AUDIO_BUNDLE_MAGIC);
+  const manifestBytes = TEXT_ENCODER.encode(JSON.stringify(manifest));
+  const header = new ArrayBuffer(magicBytes.length + 4);
+  const headerBytes = new Uint8Array(header);
+  headerBytes.set(magicBytes, 0);
+  new DataView(header).setUint32(magicBytes.length, manifestBytes.length, true);
+  return new Blob(
+    [header, manifestBytes, ...fileEntries.map((entry) => entry.dataBuffer)],
+    { type: "application/octet-stream" }
+  );
+}
+
+function parseAudioBundleBuffer(buffer) {
+  const magicBytes = TEXT_ENCODER.encode(AUDIO_BUNDLE_MAGIC);
+  const minLength = magicBytes.length + 4;
+  if (!(buffer instanceof ArrayBuffer) || buffer.byteLength < minLength) throw new Error("Invalid bundle header");
+  const bytes = new Uint8Array(buffer);
+  for (let i = 0; i < magicBytes.length; i++) {
+    if (bytes[i] !== magicBytes[i]) throw new Error("Invalid bundle header");
+  }
+  const manifestLength = new DataView(buffer).getUint32(magicBytes.length, true);
+  const manifestStart = minLength;
+  const manifestEnd = manifestStart + manifestLength;
+  if (manifestLength <= 0 || manifestEnd > buffer.byteLength) throw new Error("Invalid bundle manifest");
+  const manifest = JSON.parse(TEXT_DECODER.decode(bytes.subarray(manifestStart, manifestEnd)));
+  return { manifest, payloadStart: manifestEnd };
+}
 
 const HeaderControls = React.memo(function HeaderControls({ lang, setLang, theme, setTheme, onOpenTools, T }) {
   const [showThemePicker, setShowThemePicker] = useState(false);
@@ -1191,7 +1230,8 @@ const HeaderControls = React.memo(function HeaderControls({ lang, setLang, theme
                       尾部填充：自动补足静音，使总时长对齐磁带标称容量。</p>
                     <p><b>// 歌单</b><br />
                       可以导出和导入 JSON 格式的歌单。导入后为占位模式。<br />
-                      重新添加同名的音频文件，会自动完成匹配。不需要重新配置。</p>
+                      也可以导出和导入带音频文件的曲包。导入后会直接恢复完整曲目。<br />
+                      重新添加校验一致的音频文件时，系统会识别为重复文件并提示。</p>
                     <p><b>// 波形 / 声谱图</b><br />
                       每一面下方可以切换显示静态波形或 FFT 声谱图。<br />
                       声谱图的纵轴是对数频率。颜色深浅对应电平强度。</p>
@@ -1252,7 +1292,8 @@ const HeaderControls = React.memo(function HeaderControls({ lang, setLang, theme
                       末尾パディング：テープの標準長に合わせて無音を補填します。</p>
                     <p><b>// プレイリスト</b><br />
                       JSON 形式で書き出し・読み込みができます。読み込み後はプレースホルダモードです。<br />
-                      同じファイル名の音声ファイルを再追加すると、自動でマッチングされます。再設定は不要です。</p>
+                      音声ファイルを含む曲パックも書き出し・読み込みできます。読み込むと完全なトラック構成をそのまま復元します。<br />
+                      同じ内容の音声ファイルを再追加すると、重複として検出して通知します。</p>
                     <p><b>// 波形 / スペクトログラム</b><br />
                       各面の下に静的波形または FFT スペクトログラムを切り替えて表示できます。<br />
                       スペクトログラムの縦軸は対数周波数スケールです。色の濃淡がレベルに対応しています。</p>
@@ -1313,7 +1354,8 @@ const HeaderControls = React.memo(function HeaderControls({ lang, setLang, theme
                       Tail fill: silence is padded to match the tape's rated length.</p>
                     <p><b>// Playlists</b><br />
                       Playlists can be exported and imported as JSON. An imported playlist starts in placeholder mode.<br />
-                      Re-adding audio files with matching filenames will hydrate the stubs automatically. No reconfiguration is needed.</p>
+                      You can also export and import a bundle that includes the audio files. Importing it restores the full track list immediately.<br />
+                      Re-adding an audio file with the same checksum is treated as a duplicate and will be reported.</p>
                     <p><b>// Waveform / Spectrogram</b><br />
                       Each side can display a static waveform or an FFT spectrogram below the track list.<br />
                       The spectrogram's vertical axis is logarithmic frequency. Color intensity maps to level.</p>
@@ -1454,9 +1496,12 @@ export default function CassetteTool() {
   const acRef = useRef(null);
   const fileRef = useRef(null);
   const plRef = useRef(null);
+  const bundleRef = useRef(null);
   const calibrationProfileRef = useRef(null);
   const correctionImpulseCacheRef = useRef(new Map());
   const trackOutputStatsCacheRef = useRef(new Map());
+  const compensatedTrackStatsCacheRef = useRef(new Map());
+  const compensatedTrackRenderCacheRef = useRef(new Map());
 
   const showToast = useCallback((m, d = 4000) => { setToast(m); setTimeout(() => setToast(null), d); }, []);
 
@@ -1468,6 +1513,59 @@ export default function CassetteTool() {
     a.click();
     URL.revokeObjectURL(url);
   }, []);
+  const fillTemplate = useCallback((key, vars = {}) => {
+    let message = T(key);
+    Object.entries(vars).forEach(([name, value]) => {
+      message = message.replace(`{${name}}`, String(value));
+    });
+    return message;
+  }, [T]);
+  const joinMessages = useCallback((messages) => messages.filter(Boolean).join(lang === "en" ? "; " : "；"), [lang]);
+  const applyImportedConfig = useCallback((config = {}) => {
+    if (config.tapePreset) setTapePreset(config.tapePreset);
+    if (config.tapeType) {
+      setTapeType(config.tapeType);
+      setTargetDb(TAPE_TYPES[config.tapeType]?.peakDb ?? -3);
+    }
+    if (config.customMin != null) setCustomMin(config.customMin);
+    if (config.defaultGap != null) setDefaultGap(config.defaultGap);
+    if (config.fillTail != null) setFillTail(config.fillTail);
+    if (config.tailMargin != null) setTailMargin(config.tailMargin);
+    if (config.smartGap != null) setSmartGap(config.smartGap);
+    if (config.normalizeMode) setNormalizeMode(config.normalizeMode);
+    if (config.targetDb != null) setTargetDb(config.targetDb);
+    if (config.exportSr) setExportSr(config.exportSr);
+    if (config.exportBits) setExportBits(config.exportBits);
+  }, []);
+  const buildProjectConfig = useCallback(() => ({
+    tapePreset,
+    tapeType,
+    customMin,
+    defaultGap,
+    fillTail,
+    tailMargin,
+    smartGap,
+    normalizeMode,
+    targetDb,
+    exportSr,
+    exportBits,
+  }), [tapePreset, tapeType, customMin, defaultGap, fillTail, tailMargin, smartGap, normalizeMode, targetDb, exportSr, exportBits]);
+  const serializeTrack = useCallback((track) => ({
+    name: track.name,
+    fileName: track.fileName,
+    side: track.side,
+    duration: track.duration,
+    sampleRate: track.sampleRate,
+    bitDepth: track.bitDepth,
+    channels: track.channels,
+    peakDb: track.peakDb,
+    rmsDb: track.rmsDb,
+    gapOverride: track.gapOverride,
+    headSilence: track.headSilence,
+    tailSilence: track.tailSilence,
+    format: track.format || "?",
+    fileChecksum: track.fileChecksum || null,
+  }), []);
 
   const buildPreviewGains = useCallback((audioTracks) => {
     const gains = audioTracks.map(() => 1.0);
@@ -1702,6 +1800,136 @@ export default function CassetteTool() {
     return blendDynamicLevelRenders(renderedLevels, weightFrames, bufferLike.length, bufferLike.sampleRate);
   }, [blendDynamicLevelRenders, buildDynamicLevelProfiles, buildDynamicWeightFrames, renderBufferLikeWithProfile]);
 
+  const renderBufferLikeWithCompensation = useCallback(async (bufferLike, profile, peakTargetDb) => {
+    if (!profile) return bufferLike;
+    return hasDynamicCalibrationProfile(profile)
+      ? await renderBufferLikeWithDynamicProfile(bufferLike, profile, peakTargetDb)
+      : await renderBufferLikeWithProfile(bufferLike, profile);
+  }, [renderBufferLikeWithDynamicProfile, renderBufferLikeWithProfile]);
+
+  const renderBufferLikeAtSampleRate = useCallback(async (bufferLike, sampleRate) => {
+    if (!bufferLike || !sampleRate || bufferLike.sampleRate === sampleRate) return bufferLike;
+    const renderLength = Math.ceil((bufferLike.length / bufferLike.sampleRate) * sampleRate);
+    const oc = new OfflineAudioContext(bufferLike.numberOfChannels, renderLength, sampleRate);
+    const src = oc.createBufferSource();
+    src.buffer = createAudioBufferFromBufferLike(oc, bufferLike);
+    src.connect(oc.destination);
+    src.start(0);
+    return await oc.startRendering();
+  }, [createAudioBufferFromBufferLike]);
+
+  const renderTrackCompensatedAtGain = useCallback(async (track, sampleRate, profile, inputGain, peakTargetDb) => {
+    const source = Math.abs((inputGain ?? 1) - 1) > 1e-6
+      ? scaleBufferLike(track.audioBuffer, inputGain)
+      : track.audioBuffer;
+    const resampledSource = await renderBufferLikeAtSampleRate(source, sampleRate);
+    const rendered = await renderBufferLikeWithCompensation(resampledSource, profile, peakTargetDb);
+    return {
+      rendered,
+      peak: getPeak(rendered),
+      rms: getRMS(rendered),
+    };
+  }, [renderBufferLikeAtSampleRate, renderBufferLikeWithCompensation, scaleBufferLike]);
+
+  const getTrackUnityCompensatedStats = useCallback(async (track, sampleRate, profile, peakTargetDb) => {
+    const key = `${track.id}|${sampleRate}|${profileSignature(profile)}|${peakTargetDb}|unity`;
+    const cache = compensatedTrackStatsCacheRef.current;
+    if (!cache.has(key)) {
+      cache.set(key, (async () => {
+        const result = await renderTrackCompensatedAtGain(track, sampleRate, profile, 1, peakTargetDb);
+        return { peak: result.peak, rms: result.rms };
+      })());
+    }
+    return cache.get(key);
+  }, [renderTrackCompensatedAtGain]);
+
+  const solveTrackCompensatedRender = useCallback(async (
+    track,
+    sampleRate,
+    profile,
+    { targetPeakAmp = null, targetRms = null, peakTargetDb, ceilingAmp = 0.999 } = {}
+  ) => {
+    let inputGain = 1;
+    let renderedState = await renderTrackCompensatedAtGain(track, sampleRate, profile, inputGain, peakTargetDb);
+
+    const targetMetric = targetPeakAmp != null ? "peak" : (targetRms != null ? "rms" : null);
+    const targetValue = targetMetric === "peak" ? targetPeakAmp : targetRms;
+
+    if (targetMetric && Number.isFinite(targetValue) && targetValue > 0) {
+      for (let pass = 0; pass < 4; pass++) {
+        const currentValue = targetMetric === "peak" ? renderedState.peak : renderedState.rms;
+        if (!(currentValue > 0)) break;
+        const ratio = targetValue / currentValue;
+        if (!Number.isFinite(ratio) || ratio <= 0) break;
+        if (Math.abs(1 - ratio) <= 0.005) break;
+        inputGain *= ratio;
+        renderedState = await renderTrackCompensatedAtGain(track, sampleRate, profile, inputGain, peakTargetDb);
+      }
+    }
+
+    if (Number.isFinite(ceilingAmp) && ceilingAmp > 0) {
+      for (let pass = 0; pass < 3; pass++) {
+        if (!(renderedState.peak > ceilingAmp * 1.0005)) break;
+        const safetyRatio = ceilingAmp / renderedState.peak;
+        if (!Number.isFinite(safetyRatio) || safetyRatio <= 0) break;
+        inputGain *= safetyRatio;
+        renderedState = await renderTrackCompensatedAtGain(track, sampleRate, profile, inputGain, peakTargetDb);
+      }
+    }
+
+    return {
+      trackId: track.id,
+      inputGain,
+      rendered: renderedState.rendered,
+      peak: renderedState.peak,
+      rms: renderedState.rms,
+    };
+  }, [renderTrackCompensatedAtGain]);
+
+  const resolveCompensatedTrackRenders = useCallback(async (audioTracks, sampleRate, profile) => {
+    if (!audioTracks.length) return [];
+    const cacheKey = JSON.stringify({
+      trackIds: audioTracks.map((track) => track.id),
+      sampleRate,
+      profile: profileSignature(profile),
+      normalizeMode,
+      targetDb,
+    });
+    const cache = compensatedTrackRenderCacheRef.current;
+    if (!cache.has(cacheKey)) {
+      cache.set(cacheKey, (async () => {
+        const peakTargetAmp = Math.min(0.999, Math.pow(10, targetDb / 20));
+        if (normalizeMode === "rms") {
+          const unityStats = await Promise.all(
+            audioTracks.map((track) => getTrackUnityCompensatedStats(track, sampleRate, profile, targetDb))
+          );
+          const avgRms = unityStats.reduce((sum, stat) => sum + stat.rms, 0) / unityStats.length;
+          return await Promise.all(audioTracks.map((track) => solveTrackCompensatedRender(
+            track,
+            sampleRate,
+            profile,
+            { targetRms: avgRms, peakTargetDb: targetDb, ceilingAmp: 0.999 }
+          )));
+        }
+        if (normalizeMode === "peak") {
+          return await Promise.all(audioTracks.map((track) => solveTrackCompensatedRender(
+            track,
+            sampleRate,
+            profile,
+            { targetPeakAmp: peakTargetAmp, peakTargetDb: targetDb, ceilingAmp: 0.999 }
+          )));
+        }
+        return await Promise.all(audioTracks.map((track) => solveTrackCompensatedRender(
+          track,
+          sampleRate,
+          profile,
+          { peakTargetDb: targetDb, ceilingAmp: 0.999 }
+        )));
+      })());
+    }
+    return cache.get(cacheKey);
+  }, [getTrackUnityCompensatedStats, normalizeMode, solveTrackCompensatedRender, targetDb]);
+
   const getTrackOutputStats = useCallback(async (track, sampleRate, profile) => {
     if (!track?.audioBuffer) return { peak: 0, rms: 0 };
     if (!profile) return { peak: track.peak || 0, rms: track.rms || 0 };
@@ -1804,6 +2032,50 @@ export default function CassetteTool() {
       setProcMsg,
     });
   }, [T, ffmpegStatus, setFfmpegStatus]);
+  const buildLoadedTrack = useCallback(async ({
+    file,
+    side,
+    displayName = file.name.replace(/\.[^.]+$/, ""),
+    fileBuffer = null,
+    sourceMeta = null,
+    fileChecksum = null,
+    gapOverride = null,
+  }) => {
+    const ctx = getAC();
+    const decoded = await decodeExternalAudioFile(file, file.name, fileBuffer);
+    const ab = createAudioBufferFromBufferLike(ctx, decoded);
+    const sil = detectSilence(ab);
+    const pk = getPeak(ab);
+    const rms = getRMS(ab);
+    const ext = (file.name.match(/\.([^.]+)$/) || [])[1]?.toUpperCase() || "?";
+    const peaks = downsamplePeaks(ab, 4096);
+    const spectrogram = computeSpectrogramPreview(ab);
+    const resolvedMeta = sourceMeta || (fileBuffer ? detectSourceAudioMeta(file.name, fileBuffer) : null);
+    return {
+      id: uid(),
+      name: displayName,
+      fileName: file.name,
+      side: side || "A",
+      gapOverride,
+      format: ext,
+      audioBuffer: ab,
+      duration: ab.duration,
+      sampleRate: resolvedMeta?.sampleRate || ab.sampleRate,
+      channels: resolvedMeta?.channels || ab.numberOfChannels,
+      headSilence: sil.headSilence,
+      tailSilence: sil.tailSilence,
+      peakDb: toDb(pk),
+      rmsDb: toDb(rms),
+      peak: pk,
+      rms,
+      bitDepth: resolvedMeta?.bitDepth ?? null,
+      peaks,
+      spectrogram,
+      fileChecksum,
+      sourceFile: file,
+      sourceMimeType: file.type || "",
+    };
+  }, [decodeExternalAudioFile, getAC]);
 
   // ── Tool hooks ────────────────────────────────────────────
   const {
@@ -1906,16 +2178,25 @@ export default function CassetteTool() {
 
   // ── File loading ─────────────────────────────────────────
   const loadFiles = useCallback(async (files, side) => {
-    const ctx = getAC(); setProcessing(true);
+    setProcessing(true);
     const nw = [];
     const hydratedIds = new Set(); // track which stubs got matched
+    const duplicateNames = [];
+    const loadedTracksByChecksum = new Map(
+      tracks
+        .filter((track) => track.audioBuffer && track.fileChecksum)
+        .map((track) => [track.fileChecksum, track])
+    );
+    const existingChecksums = new Set(loadedTracksByChecksum.keys());
+    const batchChecksums = new Set();
+    const batchLoadedTracks = new Map();
     for (const f of files) {
       setProcMsg(`${T("decoding")}: ${f.name}`);
-      let ab = null;
       let fileBuf = null;
       let sourceMeta = null;
       let importFile = f;
       let displayName = f.name.replace(/\.[^.]+$/, "");
+      let checksum = null;
       try {
         if (isW1File(f.name)) {
           setProcMsg(`${T("w1Decrypting")}: ${f.name}`);
@@ -1927,8 +2208,7 @@ export default function CassetteTool() {
           fileBuf = await f.arrayBuffer();
           sourceMeta = detectSourceAudioMeta(f.name, fileBuf);
         }
-        const decoded = await decodeExternalAudioFile(importFile, importFile.name, fileBuf);
-        ab = createAudioBufferFromBufferLike(ctx, decoded);
+        checksum = await sha256Hex(fileBuf);
       } catch (err) {
         console.error(`Failed to decode ${f.name}:`, err);
         if (isW1File(f.name) && importFile === f) {
@@ -1938,34 +2218,63 @@ export default function CassetteTool() {
           showToast("SharedArrayBuffer unavailable — COOP/COEP headers missing. FLAC/AIFF decoding disabled.", 6000);
         }
       }
-      if (!ab) continue;
-      const sil = detectSilence(ab); const pk = getPeak(ab); const rms = getRMS(ab);
-      const ext = (importFile.name.match(/\.([^.]+)$/) || [])[1]?.toUpperCase() || "?";
-      const peaks = downsamplePeaks(ab, 4096);
-      const spectrogram = computeSpectrogramPreview(ab);
-      const audioMeta = {
-        audioBuffer: ab, duration: ab.duration, sampleRate: sourceMeta?.sampleRate || ab.sampleRate,
-        channels: sourceMeta?.channels || ab.numberOfChannels, headSilence: sil.headSilence, tailSilence: sil.tailSilence,
-        peakDb: toDb(pk), rmsDb: toDb(rms), peak: pk, rms, format: ext, bitDepth: sourceMeta?.bitDepth ?? null, peaks, spectrogram
-      };
+      if (!checksum) continue;
       // Check for stub match: same fileName, no audioBuffer, not already matched this batch
-      const stubMatch = tracks.find(t => !t.audioBuffer && !hydratedIds.has(t.id) &&
-        (t.fileName === f.name || t.name === f.name.replace(/\.[^.]+$/, "")));
+      const stubMatch = tracks.find((track) => !track.audioBuffer && !hydratedIds.has(track.id) &&
+        (track.fileName === f.name || track.name === f.name.replace(/\.[^.]+$/, "")) &&
+        (!track.fileChecksum || track.fileChecksum === checksum));
+      const duplicateChecksum = existingChecksums.has(checksum) || batchChecksums.has(checksum);
+      if (duplicateChecksum && !stubMatch) {
+        duplicateNames.push(f.name);
+        continue;
+      }
+      let loadedTrack = batchLoadedTracks.get(checksum) || loadedTracksByChecksum.get(checksum) || null;
+      if (!loadedTrack) {
+        try {
+          loadedTrack = await buildLoadedTrack({
+            file: importFile,
+            side,
+            displayName,
+            fileBuffer: fileBuf,
+            sourceMeta,
+            fileChecksum: checksum,
+          });
+          batchChecksums.add(checksum);
+          batchLoadedTracks.set(checksum, loadedTrack);
+        } catch (err) {
+          console.error(`Failed to decode ${f.name}:`, err);
+          if (err.message?.includes("SharedArrayBuffer")) {
+            showToast("SharedArrayBuffer unavailable — COOP/COEP headers missing. FLAC/AIFF decoding disabled.", 6000);
+          }
+          continue;
+        }
+      }
       if (stubMatch) {
         hydratedIds.add(stubMatch.id);
-        setTracks(p => p.map(t => t.id === stubMatch.id ? { ...t, ...audioMeta } : t));
+        setTracks((prev) => prev.map((track) => track.id === stubMatch.id
+          ? {
+            ...track,
+            ...loadedTrack,
+            id: track.id,
+            name: track.name,
+            fileName: track.fileName,
+            side: track.side,
+            gapOverride: track.gapOverride,
+          }
+          : track));
       } else {
-        nw.push({
-          id: uid(), name: displayName, fileName: f.name,
-          side: side || "A", gapOverride: null, format: ext, ...audioMeta
-        });
+        nw.push(loadedTrack);
       }
     }
-    if (nw.length > 0) setTracks(p => [...p, ...nw]);
+    if (nw.length > 0) setTracks((prev) => [...prev, ...nw]);
     const matched = hydratedIds.size;
-    if (matched > 0) showToast(`${matched} ${T("stubsHydrated")}`, 3000);
+    const summary = [];
+    if (matched > 0) summary.push(fillTemplate("stubsHydrated", { count: matched }));
+    if (duplicateNames.length === 1) summary.push(fillTemplate("duplicateFileSkipped", { name: duplicateNames[0] }));
+    else if (duplicateNames.length > 1) summary.push(fillTemplate("duplicateFilesSkipped", { count: duplicateNames.length }));
+    if (summary.length > 0) showToast(joinMessages(summary), 5000);
     setProcessing(false); setProcMsg("");
-  }, [decodeExternalAudioFile, getAC, T, showToast, tracks]);
+  }, [T, buildLoadedTrack, fillTemplate, joinMessages, showToast, tracks]);
 
   const handleDrop = useCallback((e, side) => {
     e.preventDefault(); e.stopPropagation(); setDragOverSide(null);
@@ -2005,43 +2314,141 @@ export default function CassetteTool() {
   // ── Playlist I/O ─────────────────────────────────────────
   const exportPL = useCallback(() => {
     const pl = {
-      version: "0.3", generator: "SIDE",
-      config: { tapePreset, tapeType, customMin, defaultGap, fillTail, tailMargin, smartGap, normalizeMode, targetDb, exportSr, exportBits },
-      tracks: tracks.map(t => ({
-        name: t.name, fileName: t.fileName, side: t.side, duration: t.duration,
-        sampleRate: t.sampleRate, bitDepth: t.bitDepth, channels: t.channels, peakDb: t.peakDb, rmsDb: t.rmsDb,
-        gapOverride: t.gapOverride, headSilence: t.headSilence, tailSilence: t.tailSilence, format: t.format || "?"
-      }))
+      version: PROJECT_FILE_VERSION,
+      generator: "SIDE",
+      config: buildProjectConfig(),
+      tracks: tracks.map(serializeTrack),
     };
     const b = new Blob([JSON.stringify(pl, null, 2)], { type: "application/json" });
     const u = URL.createObjectURL(b), a = document.createElement("a");
     a.href = u; a.download = `SIDE_playlist_${new Date().toISOString().slice(0, 10)}.json`; a.click();
     URL.revokeObjectURL(u); showToast(T("playlistExported"));
-  }, [tracks, tapePreset, tapeType, customMin, defaultGap, fillTail, tailMargin, smartGap, normalizeMode, targetDb, exportSr, exportBits, T, showToast]);
+  }, [buildProjectConfig, serializeTrack, tracks, T, showToast]);
 
   const importPL = useCallback(async (e) => {
     const f = e.target.files?.[0]; if (!f) return;
     try {
       const pl = JSON.parse(await f.text());
-      if (!pl.tracks) throw new Error("no tracks");
-      const c = pl.config || {};
-      if (c.tapePreset) setTapePreset(c.tapePreset); if (c.tapeType) { setTapeType(c.tapeType); setTargetDb(TAPE_TYPES[c.tapeType]?.peakDb ?? -3); }
-      if (c.customMin != null) setCustomMin(c.customMin); if (c.defaultGap != null) setDefaultGap(c.defaultGap);
-      if (c.fillTail != null) setFillTail(c.fillTail); if (c.tailMargin != null) setTailMargin(c.tailMargin);
-      if (c.smartGap != null) setSmartGap(c.smartGap); if (c.normalizeMode) setNormalizeMode(c.normalizeMode);
-      if (c.targetDb != null) setTargetDb(c.targetDb); if (c.exportSr) setExportSr(c.exportSr); if (c.exportBits) setExportBits(c.exportBits);
-      setTracks(pl.tracks.map(t => ({
+      if (pl.kind === AUDIO_BUNDLE_KIND || Array.isArray(pl.files)) throw new Error(T("playlistUseBundleImport"));
+      if (!Array.isArray(pl.tracks)) throw new Error(T("playlistInvalid"));
+      applyImportedConfig(pl.config || {});
+      setTracks(pl.tracks.map((t) => ({
         id: uid(), name: t.name || "?", fileName: t.fileName || "", side: t.side || "A",
         duration: t.duration || 0, sampleRate: t.sampleRate || 44100, bitDepth: t.bitDepth ?? null, channels: t.channels || 2, audioBuffer: null,
         headSilence: t.headSilence || 0, tailSilence: t.tailSilence || 0,
         peakDb: t.peakDb ?? -Infinity, rmsDb: t.rmsDb ?? -Infinity,
         peak: t.peakDb != null ? Math.pow(10, t.peakDb / 20) : 0, rms: t.rmsDb != null ? Math.pow(10, t.rmsDb / 20) : 0,
-        gapOverride: t.gapOverride ?? null, format: t.format || "?"
+        gapOverride: t.gapOverride ?? null, format: t.format || "?", fileChecksum: t.fileChecksum || null, sourceFile: null, sourceMimeType: ""
       })));
       showToast(T("playlistImportNoAudio"), 6000);
     } catch (err) { showToast(T("playlistImportError") + ": " + err.message); }
     e.target.value = "";
-  }, [T, showToast]);
+  }, [T, applyImportedConfig, showToast]);
+  const exportBundle = useCallback(async () => {
+    if (tracks.some((track) => !track.audioBuffer)) {
+      showToast(T("bundleExportNeedsAudio"), 6000);
+      return;
+    }
+    if (tracks.some((track) => !track.sourceFile || !track.fileChecksum)) {
+      showToast(T("bundleExportMissingSource"), 6000);
+      return;
+    }
+    setProcessing(true);
+    setProcMsg(T("bundleExporting"));
+    try {
+      const fileEntries = [];
+      let nextOffset = 0;
+      for (const track of tracks) {
+        if (fileEntries.some((entry) => entry.checksum === track.fileChecksum)) continue;
+        const sourceBuffer = await track.sourceFile.arrayBuffer();
+        fileEntries.push({
+          checksum: track.fileChecksum,
+          fileName: track.fileName || track.sourceFile.name,
+          mimeType: track.sourceMimeType || track.sourceFile.type || "",
+          offset: nextOffset,
+          size: sourceBuffer.byteLength,
+          dataBuffer: sourceBuffer,
+        });
+        nextOffset += sourceBuffer.byteLength;
+      }
+      const bundleManifest = {
+        version: PROJECT_FILE_VERSION,
+        generator: "SIDE",
+        kind: AUDIO_BUNDLE_KIND,
+        config: buildProjectConfig(),
+        tracks: tracks.map(serializeTrack),
+        files: fileEntries.map(({ dataBuffer, ...entry }) => entry),
+      };
+      downloadBlob(
+        buildAudioBundleBlob(bundleManifest, fileEntries),
+        `SIDE_bundle_${new Date().toISOString().slice(0, 10)}.sidepkg`
+      );
+      showToast(T("bundleExported"));
+    } catch (err) {
+      showToast(`${T("bundleExportError")}: ${err.message}`, 5000);
+    } finally {
+      setProcessing(false);
+      setProcMsg("");
+    }
+  }, [T, buildProjectConfig, downloadBlob, serializeTrack, showToast, tracks]);
+  const importBundle = useCallback(async (e) => {
+    const f = e.target.files?.[0];
+    if (!f) return;
+    setProcessing(true);
+    setProcMsg(T("bundleImporting"));
+    try {
+      const bundleBuffer = await f.arrayBuffer();
+      const { manifest: bundle, payloadStart } = parseAudioBundleBuffer(bundleBuffer);
+      if (bundle.kind !== AUDIO_BUNDLE_KIND || !Array.isArray(bundle.tracks) || !Array.isArray(bundle.files)) {
+        throw new Error(T("bundleInvalid"));
+      }
+      const fileMap = new Map(bundle.files.map((entry) => [entry.checksum, entry]));
+      const decodedByChecksum = new Map();
+      const importedTracks = [];
+      for (const trackMeta of bundle.tracks) {
+        if (!trackMeta.fileChecksum) throw new Error(T("bundleTrackMissingFile"));
+        if (!decodedByChecksum.has(trackMeta.fileChecksum)) {
+          const fileEntry = fileMap.get(trackMeta.fileChecksum);
+          if (!fileEntry) throw new Error(T("bundleTrackMissingFile"));
+          const offset = Number(fileEntry.offset);
+          const size = Number(fileEntry.size);
+          if (!Number.isFinite(offset) || offset < 0 || !Number.isFinite(size) || size <= 0) throw new Error(T("bundleInvalid"));
+          const start = payloadStart + offset;
+          const end = start + size;
+          if (end > bundleBuffer.byteLength) throw new Error(T("bundleInvalid"));
+          const sourceBuffer = bundleBuffer.slice(start, end);
+          const fileName = fileEntry.fileName || trackMeta.fileName || `${trackMeta.name || "track"}.bin`;
+          const sourceFile = new File([sourceBuffer], fileName, { type: fileEntry.mimeType || "" });
+          decodedByChecksum.set(trackMeta.fileChecksum, await buildLoadedTrack({
+            file: sourceFile,
+            side: trackMeta.side || "A",
+            displayName: trackMeta.name || fileName.replace(/\.[^.]+$/, ""),
+            fileBuffer: sourceBuffer,
+            fileChecksum: trackMeta.fileChecksum,
+            gapOverride: trackMeta.gapOverride ?? null,
+          }));
+        }
+        const decoded = decodedByChecksum.get(trackMeta.fileChecksum);
+        importedTracks.push({
+          ...decoded,
+          id: uid(),
+          name: trackMeta.name || decoded.name,
+          fileName: trackMeta.fileName || decoded.fileName,
+          side: trackMeta.side || "A",
+          gapOverride: trackMeta.gapOverride ?? null,
+        });
+      }
+      applyImportedConfig(bundle.config || {});
+      setTracks(importedTracks);
+      showToast(T("bundleImported"), 6000);
+    } catch (err) {
+      showToast(`${T("bundleImportError")}: ${err.message}`, 5000);
+    } finally {
+      setProcessing(false);
+      setProcMsg("");
+      e.target.value = "";
+    }
+  }, [T, applyImportedConfig, buildLoadedTrack, showToast]);
 
   // ── Export Audio ──────────────────────────────────────────
   const expSide = useCallback(async (side) => {
@@ -2073,7 +2480,9 @@ export default function CassetteTool() {
     try {
       const ch = 2;
       const exportProfile = activeExportCalibrationProfile;
-      const gains = await resolveNormalizedTrackGains(st, sr, exportProfile);
+      const renderedTracks = exportProfile ? await resolveCompensatedTrackRenders(st, sr, exportProfile) : null;
+      const renderedByTrackId = renderedTracks ? new Map(renderedTracks.map((entry) => [entry.trackId, entry])) : null;
+      const gains = renderedTracks ? st.map(() => 1) : await resolveNormalizedTrackGains(st, sr, exportProfile);
       let len = 0;
       st.forEach((tr, i) => { len += tr.duration * sr; if (i < st.length - 1) len += getGap(tr, st[i + 1]) * sr; });
       if (fillTail) len = Math.max(len, sideSec * sr);
@@ -2085,29 +2494,28 @@ export default function CassetteTool() {
       for (let i = 0; i < st.length; i++) {
         setExpProg({ side, step: i + 1, total: st.length + 3 }); setProcMsg(`SIDE ${side}: [${i + 1}/${st.length}] ${st[i].name}`);
         const tr = st[i], src = oc.createBufferSource(), gn = oc.createGain();
-        src.buffer = tr.audioBuffer; gn.gain.value = gains[i]; src.connect(gn); gn.connect(mixBus);
+        const renderedTrack = renderedByTrackId?.get(tr.id);
+        src.buffer = renderedTrack ? createAudioBufferFromBufferLike(oc, renderedTrack.rendered) : tr.audioBuffer;
+        gn.gain.value = gains[i]; src.connect(gn); gn.connect(mixBus);
         src.start(cur / sr); cur += Math.ceil(tr.duration * sr);
         if (i < st.length - 1) cur += Math.ceil(getGap(tr, st[i + 1]) * sr);
       }
       setProcMsg(`SIDE ${side}: ${T("rendering")}`); setExpProg({ side, step: st.length + 1, total: st.length + 3 });
       const baseMix = await oc.startRendering();
       let encodedBuffer = baseMix;
-      if (exportProfile) {
+      if (exportProfile && !renderedTracks) {
         setProcMsg(`SIDE ${side}: 正在应用补偿……`);
         setExpProg({ side, step: st.length + 2, total: st.length + 3 });
         encodedBuffer = hasDynamicCalibrationProfile(exportProfile)
           ? await renderBufferLikeWithDynamicProfile(baseMix, exportProfile, targetDb)
           : await renderBufferLikeWithProfile(baseMix, exportProfile);
-        const renderedPeak = getPeak(encodedBuffer);
-        const postGain = renderedPeak > 0.999 ? 0.999 / renderedPeak : 1;
-        encodedBuffer = scaleBufferLike(encodedBuffer, postGain);
       }
       setProcMsg(`SIDE ${side}: ${T("encoding")}`); setExpProg({ side, step: st.length + 3, total: st.length + 3 });
       const blob = encodeWAV(encodedBuffer, bits), u = URL.createObjectURL(blob), a = document.createElement("a");
       a.href = u; a.download = `SIDE_${side}_${sr}hz_${bits}bit.wav`; a.click(); URL.revokeObjectURL(u);
     } catch (e) { console.error(e); alert(`导出失败：${e.message}`); }
     setProcessing(false); setProcMsg(""); setExpProg(null);
-  }, [tracks, defaultGap, fillTail, sideSec, getAC, T, getGap, resolveExportSr, resolveExportBits, stopSignalOutput, activeExportCalibrationProfile, scaleBufferLike, resolveNormalizedTrackGains, renderBufferLikeWithDynamicProfile, renderBufferLikeWithProfile, targetDb]);
+  }, [tracks, defaultGap, fillTail, sideSec, getAC, T, getGap, resolveExportSr, resolveExportBits, stopSignalOutput, activeExportCalibrationProfile, resolveCompensatedTrackRenders, resolveNormalizedTrackGains, renderBufferLikeWithDynamicProfile, renderBufferLikeWithProfile, targetDb]);
 
   // ── Playback Engine ───────────────────────────────────────
   const playGenRef = useRef(0); // generation counter to prevent stale callbacks
@@ -2129,11 +2537,9 @@ export default function CassetteTool() {
       : simMode === "vinyl"
         ? VINYL_SIM_PROFILE.warpBaseDelayMs / 1000
         : 0;
-    const correctionDelay = activePreviewCalibrationProfile
-      ? (getCorrectionImpulse(activePreviewCalibrationProfile, ctx?.sampleRate || 48000)?.delaySamples || 0) / (ctx?.sampleRate || 48000)
-      : 0;
+    const correctionDelay = 0;
     return Math.max(0, baseLatency + outputLatency + mediumDelay + correctionDelay);
-  }, [activePreviewCalibrationProfile, getCorrectionImpulse, simMode]);
+  }, [simMode]);
 
   const stopAuxSources = useCallback((sources) => {
     sources.forEach((source) => {
@@ -2410,11 +2816,19 @@ export default function CassetteTool() {
     const { schedule, totalDur, contentDur } = buildSchedule(side);
     if (!schedule.length) { stopPlayback(); return; }
     const sideTracks = tracks.filter((track) => track.side === side && track.audioBuffer);
-    const gains = await resolveNormalizedTrackGains(
-      sideTracks,
-      ctx.sampleRate,
-      activePreviewCalibrationProfile
-    );
+    const renderedTracks = activePreviewCalibrationProfile
+      ? await resolveCompensatedTrackRenders(sideTracks, ctx.sampleRate, activePreviewCalibrationProfile)
+      : null;
+    const renderedByTrackId = renderedTracks
+      ? new Map(renderedTracks.map((entry) => [entry.trackId, entry]))
+      : null;
+    const gains = renderedTracks
+      ? sideTracks.map(() => 1)
+      : await resolveNormalizedTrackGains(
+        sideTracks,
+        ctx.sampleRate,
+        activePreviewCalibrationProfile
+      );
     if (playGenRef.current !== gen) return;
     const gainByTrackId = new Map(sideTracks.map((track, index) => [track.id, gains[index] || 1]));
     const clampedPos = Math.max(0, Math.min(fromPos, totalDur));
@@ -2422,7 +2836,7 @@ export default function CassetteTool() {
     const masterGain = ctx.createGain(); masterGain.gain.value = 1.0;
     const outputChain = buildPlaybackOutputChain(ctx);
     const sourceNodes = [];
-    const correctionGraph = buildPlaybackCorrectionGraph(ctx, masterGain);
+    const correctionGraph = renderedTracks ? { output: masterGain, nodes: [] } : buildPlaybackCorrectionGraph(ctx, masterGain);
     const simGraph = buildPlaybackSimulationGraph(ctx, correctionGraph.output, outputChain.simOutput, clampedPos, totalDur);
 
     const sources = [];
@@ -2432,7 +2846,8 @@ export default function CassetteTool() {
       const trackEnd = s.start + s.dur;
       if (trackEnd <= clampedPos) return;
       const src = ctx.createBufferSource();
-      src.buffer = s.buffer;
+      const renderedTrack = renderedByTrackId?.get(s.id);
+      src.buffer = renderedTrack ? createAudioBufferFromBufferLike(ctx, renderedTrack.rendered) : s.buffer;
       const gn = ctx.createGain(); gn.gain.value = gainByTrackId.get(s.id) || 1;
       src.connect(gn); gn.connect(masterGain);
       sourceNodes.push(gn, src);
@@ -2494,7 +2909,7 @@ export default function CassetteTool() {
       playRef.current.raf = requestAnimationFrame(tick);
     };
     playRef.current.raf = requestAnimationFrame(tick);
-  }, [getAC, buildPlaybackCorrectionGraph, buildPlaybackOutputChain, buildSchedule, getPlaybackCursor, buildPlaybackSimulationGraph, clearPlaybackOutputChain, clearSimulationGraphs, disconnectNodes, getPlaybackDisplayDelay, stopPlayback, stopSignalOutput, tracks, resolveNormalizedTrackGains, activePreviewCalibrationProfile]);
+  }, [getAC, buildPlaybackCorrectionGraph, buildPlaybackOutputChain, buildSchedule, getPlaybackCursor, buildPlaybackSimulationGraph, clearPlaybackOutputChain, clearSimulationGraphs, disconnectNodes, getPlaybackDisplayDelay, stopPlayback, stopSignalOutput, tracks, resolveCompensatedTrackRenders, resolveNormalizedTrackGains, activePreviewCalibrationProfile]);
 
   const playSide = useCallback((side) => {
     playFromPos(side, 0);
@@ -2547,6 +2962,19 @@ export default function CassetteTool() {
       }
     })();
   }, [activePreviewCalibrationProfile, getAC, paused, playFromPos, playing, playingSide]);
+
+  useEffect(() => {
+    if (!playing || !playingSide) return;
+    const wasPaused = paused;
+    void (async () => {
+      await playFromPos(playingSide, playPosRef.current);
+      if (wasPaused) {
+        const ctx = getAC();
+        ctx.suspend();
+        setPaused(true);
+      }
+    })();
+  }, [normalizeMode, targetDb, getAC, paused, playFromPos, playing, playingSide]);
 
   useEffect(() => {
     if (simMode.startsWith("TAPE_")) return;
@@ -3242,6 +3670,7 @@ export default function CassetteTool() {
         <input ref={fileRef} type="file" multiple accept="audio/*,.ncm" style={{ display: "none" }}
           onChange={e => { if (e.target.files.length > 0) loadFiles(Array.from(e.target.files), activeTab); e.target.value = ""; }} />
         <input ref={plRef} type="file" accept=".json" style={{ display: "none" }} onChange={importPL} />
+        <input ref={bundleRef} type="file" accept=".sidepkg,application/octet-stream" style={{ display: "none" }} onChange={importBundle} />
         <input ref={calibrationProfileRef} type="file" accept=".json,application/json" style={{ display: "none" }}
           onChange={async e => { const file = e.target.files?.[0]; if (file) await loadCalibrationProfileFile(file); e.target.value = ""; }} />
         <div className="actionBarMain">
@@ -3249,6 +3678,8 @@ export default function CassetteTool() {
           <button onClick={autoDistribute} style={btnS} disabled={processing || !tracks.length}><IconAutoAwesome size={16} /> {T("autoDistribute")}</button>
           <button onClick={() => plRef.current?.click()} style={btnS} disabled={processing}><IconFileOpen size={16} /> {T("importPlaylist")}</button>
           <button onClick={exportPL} style={btnS} disabled={processing || !tracks.length}><IconSave size={16} /> {T("exportPlaylist")}</button>
+          <button onClick={() => bundleRef.current?.click()} style={btnS} disabled={processing}><IconFileOpen size={16} /> {T("importBundle")}</button>
+          <button onClick={exportBundle} style={btnS} disabled={processing || !tracks.length}><IconSave size={16} /> {T("exportBundle")}</button>
           <button onClick={() => { if (tracks.some(t => t.side === activeTab) && window.confirm(T("clearSideConfirm").replace("{side}", activeTab))) setTracks(p => p.filter(t => t.side !== activeTab)); }} style={{ ...btnS, display: "flex", alignItems: "center", gap: 4 }} disabled={processing || !tracks.some(t => t.side === activeTab)}><IconClearSide size={14} />{T("clearSide")}</button>
           <button onClick={() => { if (tracks.length > 0 && window.confirm(T("clearAllConfirm"))) setTracks([]); }} style={{ ...btnS, display: "flex", alignItems: "center", gap: 4 }} disabled={processing || !tracks.length}><IconClearAll size={14} />{T("clearAll")}</button>
         </div>

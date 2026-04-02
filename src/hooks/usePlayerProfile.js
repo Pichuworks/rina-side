@@ -445,11 +445,11 @@ function autoQForBand(centerHz, sortedCenters, index) {
       channels: {
         L: {
           frequenciesHz: [...playerEqCompileResult.frequencyGridHz],
-          correctionDb: [...(playerEqCompileResult.correctedResponseDb?.L || [])],
+          correctionDb: [...(playerEqCompileResult.predictedEqDb || [])],
         },
         R: {
           frequenciesHz: [...playerEqCompileResult.frequencyGridHz],
-          correctionDb: [...(playerEqCompileResult.correctedResponseDb?.R || [])],
+          correctionDb: [...(playerEqCompileResult.predictedEqDb || [])],
         },
       },
     });

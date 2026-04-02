@@ -2,6 +2,9 @@ import { PROGRAM_ALIGN_MIN_SCORE } from "../player-profile/constants.js";
 
 const ENV_FRAME = 2048;
 const ENV_HOP = 512;
+const STRETCH_SEARCH_STEPS = 17;
+const STRETCH_MIN_SCALE = 0.85;
+const STRETCH_MAX_SCALE = 1.15;
 
 function monoAverage(left, right) {
   const length = Math.min(left.length, right.length);
@@ -20,10 +23,6 @@ function rmsEnvelope(signal, frame = ENV_FRAME, hop = ENV_HOP) {
   return out;
 }
 
-/**
- * Find onset frame — the first point where the envelope exceeds
- * `threshold × peak`. Uses a small look-ahead to skip isolated clicks.
- */
 function findEnvelopeOnset(envelope, threshold = 0.05, lookAhead = 3) {
   let peak = 0;
   for (let i = 0; i < envelope.length; i++) {
@@ -39,6 +38,39 @@ function findEnvelopeOnset(envelope, threshold = 0.05, lookAhead = 3) {
     if (count >= 2) return i;
   }
   return 0;
+}
+
+function findEnvelopeTail(envelope, threshold = 0.05, lookBehind = 3) {
+  let peak = 0;
+  for (let i = 0; i < envelope.length; i++) {
+    if (envelope[i] > peak) peak = envelope[i];
+  }
+  if (peak < 1e-8) return Math.max(0, envelope.length - 1);
+  const th = peak * threshold;
+  for (let i = envelope.length - 1; i >= lookBehind - 1; i--) {
+    let count = 0;
+    for (let j = 0; j < lookBehind; j++) {
+      if (envelope[i - j] > th) count++;
+    }
+    if (count >= 2) return i;
+  }
+  return Math.max(0, envelope.length - 1);
+}
+
+function resampleByFactor(signal, factor) {
+  if (!Number.isFinite(factor) || factor <= 0) throw new Error("Invalid resample factor");
+  if (Math.abs(factor - 1) < 1e-6) return signal.slice();
+  const outLength = Math.max(1, Math.round(signal.length * factor));
+  const out = new Float32Array(outLength);
+  for (let i = 0; i < outLength; i++) {
+    const pos = i / factor;
+    const idx = Math.floor(pos);
+    const frac = pos - idx;
+    const a = signal[Math.max(0, Math.min(signal.length - 1, idx))];
+    const b = signal[Math.max(0, Math.min(signal.length - 1, idx + 1))];
+    out[i] = a + (b - a) * frac;
+  }
+  return out;
 }
 
 function normalizedCorrelation(a, b, offset) {
@@ -59,26 +91,13 @@ function normalizedCorrelation(a, b, offset) {
   return dot / Math.sqrt((aPow + 1e-12) * (bPow + 1e-12));
 }
 
-export function alignProgramPair(referenceStereo, recordedStereo) {
-  const refMono = monoAverage(referenceStereo.left, referenceStereo.right);
-  const recMono = monoAverage(recordedStereo.left, recordedStereo.right);
-  const refEnv = rmsEnvelope(refMono);
-  const recEnv = rmsEnvelope(recMono);
-
-  // ── onset-guided search ────────────────────────────────────
-  // Estimate rough offset from onset positions, then do fine
-  // correlation search around that estimate. This handles cases
-  // where the recording has many seconds of leading/trailing silence.
+function alignEnvelopePair(refEnv, recEnv) {
   const refOnset = findEnvelopeOnset(refEnv);
   const recOnset = findEnvelopeOnset(recEnv);
   const estimatedOffset = recOnset - refOnset;
-
-  // Search ±radius around the estimated offset.
-  // Also always include a ±200 window around 0 as fallback.
   const fineRadius = 250;
   const searchMin = Math.min(-fineRadius, estimatedOffset - fineRadius);
   const searchMax = Math.max(fineRadius, estimatedOffset + fineRadius);
-  // Clamp to signal bounds
   const envLen = Math.max(refEnv.length, recEnv.length);
   const lo = Math.max(-envLen + 1, searchMin);
   const hi = Math.min(envLen - 1, searchMax);
@@ -93,18 +112,76 @@ export function alignProgramPair(referenceStereo, recordedStereo) {
     }
   }
 
-  if (bestScore < PROGRAM_ALIGN_MIN_SCORE) {
+  return {
+    refOnset,
+    recOnset,
+    estimatedOffset,
+    bestOffsetFrames,
+    bestScore,
+  };
+}
+
+function buildStretchCandidates(refEnv, recEnv) {
+  const refOnset = findEnvelopeOnset(refEnv);
+  const recOnset = findEnvelopeOnset(recEnv);
+  const refTail = findEnvelopeTail(refEnv);
+  const recTail = findEnvelopeTail(recEnv);
+  const refSpan = Math.max(1, refTail - refOnset);
+  const recSpan = Math.max(1, recTail - recOnset);
+  const rawSpanScale = refSpan / recSpan;
+  const spanScale = Math.max(STRETCH_MIN_SCALE, Math.min(STRETCH_MAX_SCALE, rawSpanScale));
+  const radius = Math.min(0.06, Math.max(0.01, Math.abs(spanScale - 1) + 0.01));
+  const candidates = new Set([1, spanScale]);
+  for (let i = 0; i < STRETCH_SEARCH_STEPS; i++) {
+    const t = STRETCH_SEARCH_STEPS === 1 ? 0.5 : (i / (STRETCH_SEARCH_STEPS - 1));
+    const scale = spanScale * (1 + (((t * 2) - 1) * radius));
+    if (Number.isFinite(scale) && scale > STRETCH_MIN_SCALE && scale < STRETCH_MAX_SCALE) {
+      candidates.add(Number(scale.toFixed(6)));
+    }
+  }
+  return [...candidates];
+}
+
+export function alignProgramPair(referenceStereo, recordedStereo) {
+  const refMono = monoAverage(referenceStereo.left, referenceStereo.right);
+  const recMono = monoAverage(recordedStereo.left, recordedStereo.right);
+  const refEnv = rmsEnvelope(refMono);
+  const recEnv = rmsEnvelope(recMono);
+
+  let bestScale = 1;
+  let bestAligned = null;
+  for (const scale of buildStretchCandidates(refEnv, recEnv)) {
+    const scaledRecEnv = resampleByFactor(recEnv, scale);
+    const aligned = alignEnvelopePair(refEnv, scaledRecEnv);
+    if (!bestAligned || aligned.bestScore > bestAligned.bestScore) {
+      bestScale = scale;
+      bestAligned = aligned;
+    }
+  }
+
+  if (!bestAligned || bestAligned.bestScore < PROGRAM_ALIGN_MIN_SCORE) {
     const error = new Error(
-      `Alignment score ${bestScore.toFixed(3)} < ${PROGRAM_ALIGN_MIN_SCORE} `
-      + `(onset ref=${refOnset} rec=${recOnset} est=${estimatedOffset} best=${bestOffsetFrames})`
+      `Alignment score ${(bestAligned?.bestScore ?? -1).toFixed(3)} < ${PROGRAM_ALIGN_MIN_SCORE} `
+      + `(onset ref=${bestAligned?.refOnset ?? 0} rec=${bestAligned?.recOnset ?? 0} `
+      + `est=${bestAligned?.estimatedOffset ?? 0} best=${bestAligned?.bestOffsetFrames ?? 0} `
+      + `scale=${bestScale.toFixed(6)})`
     );
     error.code = "PROGRAM_ALIGN_FAILED";
-    error.detail = { bestScore, estimatedOffset, bestOffsetFrames, refOnset, recOnset };
+    error.detail = {
+      bestScore: bestAligned?.bestScore ?? -1,
+      estimatedOffset: bestAligned?.estimatedOffset ?? 0,
+      bestOffsetFrames: bestAligned?.bestOffsetFrames ?? 0,
+      refOnset: bestAligned?.refOnset ?? 0,
+      recOnset: bestAligned?.recOnset ?? 0,
+      timeScale: bestScale,
+    };
     throw error;
   }
+
   return {
-    sampleOffset: bestOffsetFrames * ENV_HOP,
-    alignmentScore: bestScore,
+    sampleOffset: bestAligned.bestOffsetFrames * ENV_HOP,
+    alignmentScore: bestAligned.bestScore,
+    timeScale: bestScale,
   };
 }
 

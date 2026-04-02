@@ -30,6 +30,16 @@ function toStandardRate(stereo) {
   };
 }
 
+function resampleStereoByFactor(stereo, factor) {
+  if (!Number.isFinite(factor) || factor <= 0) throw new Error("Invalid stereo resample factor");
+  if (Math.abs(factor - 1) < 1e-6) return stereo;
+  return {
+    left: resampleLinear(stereo.left, 1, factor),
+    right: resampleLinear(stereo.right, 1, factor),
+    sampleRate: stereo.sampleRate,
+  };
+}
+
 self.onmessage = (event) => {
   const { command, id, title, ref, rec } = event.data;
   if (command !== "analyse") return;
@@ -38,10 +48,11 @@ self.onmessage = (event) => {
     const refStereo = toStandardRate(ref);
     const recStereo = toStandardRate(rec);
     const alignment = alignProgramPair(refStereo, recStereo);
-    const trimmed = trimAlignedStereo(refStereo, recStereo, alignment.sampleOffset);
+    const driftCorrectedRecorded = resampleStereoByFactor(recStereo, alignment.timeScale || 1);
+    const trimmed = trimAlignedStereo(refStereo, driftCorrectedRecorded, alignment.sampleOffset);
     const analysis = analyseProgramTransfer(
       { ...trimmed.reference, sampleRate: refStereo.sampleRate },
-      { ...trimmed.recorded, sampleRate: recStereo.sampleRate },
+      { ...trimmed.recorded, sampleRate: driftCorrectedRecorded.sampleRate },
     );
     self.postMessage({
       id,
@@ -50,6 +61,7 @@ self.onmessage = (event) => {
         ...analysis,
         title,
         alignmentScore: alignment.alignmentScore,
+        timeScale: alignment.timeScale || 1,
       },
     });
   } catch (err) {

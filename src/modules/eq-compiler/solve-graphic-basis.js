@@ -266,10 +266,7 @@ export function solveGraphicBasis(targetDeltaDb, weights, usableMask, eqModel) {
   // Used when step count is too large for B&B (e.g. 0.1dB steps, ±12dB range)
   const quantizedSteps = problem.bands.map((band, index) => {
     const raw = continuousSteps[index];
-    const gainStep = eqModel.bands[index]?.gainStepDb || 1;
-    // Quantize to the nearest gainStep multiple within [minStep, maxStep]
-    const inStepUnits = raw / gainStep;
-    const rounded = band.integerOnly !== false ? Math.round(inStepUnits) : Math.round(inStepUnits * 10) / 10;
+    const rounded = band.integerOnly !== false ? Math.round(raw) : Math.round(raw * 10) / 10;
     return Math.max(band.minStep, Math.min(band.maxStep, rounded));
   });
 

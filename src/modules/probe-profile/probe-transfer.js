@@ -31,9 +31,9 @@ function analyseSweepChannel(referenceSweep, recordedSweep, sampleRate, gridHz, 
     const freq = gridHz[i];
     const t = Math.log(freq / startHz) / logSpan;
     const center = Math.round(t * (referenceSweep.length - 1));
-    const cycles = Math.max(8, Math.min(96, Math.round((sampleRate / Math.max(freq, 1)) * 10)));
-    const refMag = goertzelMagnitude(referenceSweep, center, cycles, freq, sampleRate);
-    const recMag = goertzelMagnitude(recordedSweep, center, cycles, freq, sampleRate);
+    const windowLength = Math.max(8, Math.round((sampleRate / Math.max(freq, 1)) * 10));
+    const refMag = goertzelMagnitude(referenceSweep, center, windowLength, freq, sampleRate);
+    const recMag = goertzelMagnitude(recordedSweep, center, windowLength, freq, sampleRate);
     const response = dbFromAmplitude((recMag + 1e-12) / (refMag + 1e-12));
     measuredDb.push(response);
     const refDb = dbFromAmplitude(refMag);
