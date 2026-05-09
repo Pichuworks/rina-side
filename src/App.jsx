@@ -35,7 +35,7 @@ function themeName(key, lang) {
 // ── Constants ────────────────────────────────────────────────
 // ── Character Themes ────────────────────────────────────────
 const THEMES = {
-  default: { accent: "#D4859A", bg: "#E8ECF2", bgCard: "#F4F6FA", bgDeep: "#DCE2EA", border: "#C8CED8", accentDim: "#F2D6DE", group: "" },
+  rina: { accent: "#D4859A", bg: "#E8ECF2", bgCard: "#F4F6FA", bgDeep: "#DCE2EA", border: "#C8CED8", accentDim: "#F2D6DE", group: "" },
   keke: { accent: "#49BDF0", bg: "#F2F7FA", bgCard: "#FAFCFF", bgDeep: "#E4EEF5", border: "#C8D8E4", accentDim: "#CCE8FA", group: "liella" },
   omgkawaiiangel: { accent: "#8FDDF7", bg: "#FAF7FD", bgCard: "#FFFDFF", bgDeep: "#EEE9F6", border: "#DDD4E8", accentDim: "#EAF8FE", sideA: "#8FDDF7", sideB: "#F2A8E2", accentInk: "#557A95", warning: "#F0A4D2", group: "ngo" },
   amechan: { accent: "#B54857", bg: "#F4F1F3", bgCard: "#FBFAFB", bgDeep: "#E8E2E6", border: "#D4CBD1", accentDim: "#F0D8DD", sideA: "#B54857", sideB: "#70758F", accentInk: "#883030", warning: "#B29663", group: "ngo" },
@@ -48,24 +48,24 @@ const THEMES = {
   mutsumi: { accent: "#779977", bg: "#F3F7F3", bgCard: "#FAFFF9", bgDeep: "#E4EDE3", border: "#C8D5C6", accentDim: "#CCE0CC", group: "mujica" },
   nyamu: { accent: "#AA4477", bg: "#F8F2F5", bgCard: "#FFFAFC", bgDeep: "#F0E4EA", border: "#DDD0D6", accentDim: "#E8C4D6", group: "mujica" },
   hatsuka: { accent: "#BB9955", bg: "#F8F6F0", bgCard: "#FFFDF8", bgDeep: "#EFEBDF", border: "#D8D2C2", accentDim: "#E8DCC0", group: "mujica" },
-  uika: { accent: "#335566", bg: "#F0F4F6", bgCard: "#F8FBFC", bgDeep: "#E0E8EC", border: "#C4D0D6", accentDim: "#BCCDD8", group: "mujica" },
+  umiri: { accent: "#335566", bg: "#F0F4F6", bgCard: "#F8FBFC", bgDeep: "#E0E8EC", border: "#C4D0D6", accentDim: "#BCCDD8", group: "mujica" },
   mana: { accent: "#E8A68F", bg: "#FBF6F2", bgCard: "#FFFDFC", bgDeep: "#F2E8E1", border: "#E3D3C8", accentDim: "#F7DDD0", sideA: "#E8A68F", sideB: "#C7B48C", accentInk: "#9A5E4C", warning: "#D9B15E", group: "sumimi" },
   nozomu: { accent: "#D4600A", bg: "#F8F4EE", bgCard: "#FFFBF7", bgDeep: "#EDE5D8", border: "#D8CCBC", accentDim: "#F2DCC0", sideA: "#D4600A", sideB: "#6A7A8F", accentInk: "#8A3A08", warning: "#B89040", group: "crisiris" },
   eri: { accent: "#800020", bg: "#F6EFF1", bgCard: "#FFFDFB", bgDeep: "#ECDDE2", bgHover: "#F3E6EA", border: "#D6BEC6", accentDim: "#E8CDD5", sideA: "#800020", sideB: "#D9A11E", accentInk: "#5E1021", accentContrast: "#F7E8C1", warning: "#B06A1F", text: "#34292C", textDim: "#75656A", group: "crisiris" },
 };  
 
 const THEME_ORDER = [
-  "default",
+  "rina",
   "keke",
   "omgkawaiiangel", "amechan",
   "tomori", "raana", "soyo", "anon", "taki",
-  "sakiko", "mutsumi", "nyamu", "hatsuka", "uika",
+  "sakiko", "mutsumi", "nyamu", "hatsuka", "umiri",
   "mana",
   "nozomu", "eri",
 ];
 
 const THEME_NAMES = {
-  default: { "zh-CN": "天王寺璃奈", ja: "天王寺 璃奈", en: "Rina Tennoji" },
+  rina: { "zh-CN": "天王寺璃奈", ja: "天王寺 璃奈", en: "Rina Tennoji" },
   keke: { "zh-CN": "唐可可", ja: "唐 可可", en: "Keke Tang" },
   omgkawaiiangel: { "zh-CN": "超绝最可爱天使酱", ja: "超絶最かわてんしちゃん", en: "OMGkawaiiAngel" },
   amechan: { "zh-CN": "糖糖", ja: "あめちゃん", en: "Ame-chan" },
@@ -78,7 +78,7 @@ const THEME_NAMES = {
   mutsumi: { "zh-CN": "若叶睦", ja: "若葉 睦", en: "Mutsumi Wakaba" },
   nyamu: { "zh-CN": "祐天寺若麦", ja: "祐天寺 にゃむ", en: "Nyamu Yutenji" },
   hatsuka: { "zh-CN": "三角初华", ja: "三角 初華", en: "Uika Misumi" },
-  uika: { "zh-CN": "八幡海铃", ja: "八幡 海鈴", en: "Umiri Yahata" },
+  umiri: { "zh-CN": "八幡海铃", ja: "八幡 海鈴", en: "Umiri Yahata" },
   mana: { "zh-CN": "纯田真奈", ja: "純田 まな", en: "Mana Sumita" },
   nozomu: { "zh-CN": "星街望", ja: "星街 望", en: "Nozomu Hoshimachi" },
   eri: { "zh-CN": "高桥绘理", ja: "高橋 絵理", en: "Eri Takahashi" },
@@ -1638,8 +1638,8 @@ const HeaderControls = React.memo(function HeaderControls({ lang, setLang, theme
 // ═══════════════════════════════════════════════════════════════
 export default function CassetteTool() {
   const [lang, setLang] = useState("zh-CN");
-  const [theme, setTheme] = useState("default");
-  const th = THEMES[theme] || THEMES.default;
+  const [theme, setTheme] = useState("rina");
+  const th = THEMES[theme] || THEMES.rina;
   const sideColors = useMemo(
     () => (th.sideA && th.sideB
       ? { sideA: th.sideA, sideB: th.sideB }
