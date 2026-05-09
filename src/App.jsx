@@ -71,7 +71,7 @@ const THEME_NAMES = {
   amechan: { "zh-CN": "糖糖", ja: "あめちゃん", en: "Ame-chan" },
   tomori: { "zh-CN": "高松灯", ja: "高松 燈", en: "Tomori Takamatsu" },
   raana: { "zh-CN": "要乐奈", ja: "要 楽奈", en: "Rana Kaname" },
-  soyo: { "zh-CN": "长崎爽世", ja: "長崎 そよ", en: "Soyo Nagasaki" },
+  soyo: { "zh-CN": "长崎素世", ja: "長崎 そよ", en: "Soyo Nagasaki" },
   anon: { "zh-CN": "千早爱音", ja: "千早 愛音", en: "Anon Chihaya" },
   taki: { "zh-CN": "椎名立希", ja: "椎名 立希", en: "Taki Shiina" },
   sakiko: { "zh-CN": "丰川祥子", ja: "豊川 祥子", en: "Sakiko Togawa" },
